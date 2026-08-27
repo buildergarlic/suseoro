@@ -32,6 +32,7 @@ NO_STREAM = 0xFFFFFFFF
 MAX_STREAM_BYTES = 64 * 1024 * 1024
 MAX_DECOMPRESSED_SECTION_BYTES = 64 * 1024 * 1024
 MAX_DIRECTORY_BYTES = 16 * 1024 * 1024
+MAX_DIRECTORY_NODES = 1024
 MAX_CHAIN_SECTORS = 131_072
 
 HWPTAG_PARA_HEADER = 66
@@ -129,7 +130,7 @@ class _CompoundFile:
         if not self.entries or self.entries[0].object_type != 5:
             raise HwpStructureError("OLE root directory entry is missing")
         self.paths: dict[str, _DirectoryEntry] = {}
-        self._walk_sibling_tree(self.entries[0].child, "", set())
+        self._index_directory_tree(self.entries[0].child)
 
         self.mini_fat: list[int] = []
         if self.number_of_mini_fat_sectors:
@@ -212,21 +213,31 @@ class _CompoundFile:
             )
         return entries
 
-    def _walk_sibling_tree(self, entry_id: int, parent: str, active: set[int]) -> None:
-        if entry_id == NO_STREAM:
-            return
-        if entry_id >= len(self.entries) or entry_id in active:
-            raise HwpStructureError("invalid OLE directory tree")
-        active.add(entry_id)
-        entry = self.entries[entry_id]
-        self._walk_sibling_tree(entry.left, parent, active)
-        path = f"{parent}/{entry.name}" if parent else entry.name
-        if entry.object_type in {1, 2}:
+    def _index_directory_tree(self, start_entry: int) -> None:
+        pending = [(start_entry, "")]
+        visited = {0}
+        while pending:
+            entry_id, parent = pending.pop()
+            if entry_id == NO_STREAM:
+                continue
+            if entry_id >= len(self.entries) or entry_id in visited:
+                raise HwpStructureError("invalid or cyclic OLE directory tree")
+            if len(visited) >= MAX_DIRECTORY_NODES:
+                raise HwpStructureError("OLE directory tree exceeds node safety limit")
+            entry = self.entries[entry_id]
+            if entry.object_type not in {1, 2} or not entry.name:
+                raise HwpStructureError(
+                    "OLE directory tree references an invalid entry"
+                )
+            visited.add(entry_id)
+            path = f"{parent}/{entry.name}" if parent else entry.name
+            if path in self.paths:
+                raise HwpStructureError("OLE directory tree contains a duplicate path")
             self.paths[path] = entry
-        if entry.object_type == 1:
-            self._walk_sibling_tree(entry.child, path, active)
-        self._walk_sibling_tree(entry.right, parent, active)
-        active.remove(entry_id)
+            pending.append((entry.right, parent))
+            if entry.object_type == 1:
+                pending.append((entry.child, path))
+            pending.append((entry.left, parent))
 
     def read_stream(self, name: str) -> bytes:
         entry = self.paths.get(name)
@@ -503,38 +514,42 @@ def parse_hwp(
                 if not section_streams:
                     raise HwpStructureError("HWP BodyText Section stream is missing")
                 for section, stream in section_streams:
-                    contents = compound.read_stream(stream)
-                    if compressed:
-                        try:
+                    try:
+                        contents = compound.read_stream(stream)
+                        if compressed:
                             contents = _decompress_section(contents)
-                        except (HwpStructureError, zlib.error) as error:
-                            rows.append(
-                                _error_row(
-                                    digest=digest,
-                                    code="HWP_DAMAGED",
-                                    message=f"Could not decompress {stream}: {error}; convert to HWPX and retry",
-                                    stream=stream,
-                                    section=section,
-                                )
-                            )
-                            continue
-                    rows.extend(
-                        _parse_section(
+                        section_rows = _parse_section(
                             contents,
                             digest=digest,
                             stream=stream,
                             section=section,
                         )
-                    )
+                    except (
+                        OSError,
+                        HwpStructureError,
+                        struct.error,
+                        UnicodeError,
+                        zlib.error,
+                    ) as error:
+                        rows.append(
+                            _error_row(
+                                digest=digest,
+                                code="HWP_DAMAGED",
+                                message=f"Could not read {stream}: {error}; convert to HWPX and retry",
+                                stream=stream,
+                                section=section,
+                            )
+                        )
+                        continue
+                    rows.extend(section_rows)
     except (OSError, HwpStructureError, struct.error, UnicodeError) as error:
-        if not rows:
-            rows.append(
-                _error_row(
-                    digest=digest,
-                    code="HWP_DAMAGED",
-                    message=f"{error}; recover the file or convert it to HWPX and retry",
-                )
+        rows.append(
+            _error_row(
+                digest=digest,
+                code="HWP_DAMAGED",
+                message=f"{error}; recover the file or convert it to HWPX and retry",
             )
+        )
     return ParseResult(
         role=role,
         detected_format="HWP",

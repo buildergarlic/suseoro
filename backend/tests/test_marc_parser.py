@@ -189,6 +189,28 @@ def test_incremental_marc_rejects_blank_001_and_warns_on_formula_like_text(
     }
 
 
+def test_marc_requires_one_nonblank_001_even_without_incremental_mode(
+    tmp_path: Path,
+) -> None:
+    """A blank record identity must block activation in every import mode."""
+    marc = _module("suseoro.ingestion.parsers.marc")
+    target = tmp_path / "blank-id-non-incremental.mrc"
+    digest = _write(target, _catalog_record(identifier="   "))
+
+    result = marc.parse_marc(
+        target,
+        role=DocumentRole.INVENTORY,
+        sha256=digest,
+        incremental=False,
+    )
+
+    assert len(result.rows) == 1
+    assert result.rows[0].status == RowStatus.ROW_ERROR
+    assert result.rows[0].error_code == "MARC_STABLE_ID_REQUIRED"
+    assert result.rows[0].provenance.source_file_sha256 == digest
+    assert result.activation_allowed is False
+
+
 def test_incremental_marc_rejects_duplicate_ids_and_empty_files(tmp_path: Path) -> None:
     """Allowing ambiguous duplicate changes or activating an empty source must fail."""
     marc = _module("suseoro.ingestion.parsers.marc")
@@ -212,6 +234,59 @@ def test_incremental_marc_rejects_duplicate_ids_and_empty_files(tmp_path: Path) 
     assert len(empty_result.rows) == 1
     assert empty_result.rows[0].error_code == "MARC_FILE_STRUCTURE_UNTRUSTWORTHY"
     assert empty_result.activation_allowed is False
+
+
+def test_marc_rejects_multiple_001_fields_but_continues_at_trusted_boundary(
+    tmp_path: Path,
+) -> None:
+    """Selecting the first of multiple record identities or stopping afterward must fail."""
+    marc = _module("suseoro.ingestion.parsers.marc")
+    invalid = _record(
+        [
+            ("001", _control("FIRST")),
+            ("001", _control("SECOND")),
+            ("245", _data("10", [("a", "Ambiguous identity")])),
+        ]
+    )
+    later = _catalog_record("LATER")
+    target = tmp_path / "double-001.mrc"
+    digest = _write(target, invalid + later)
+
+    result = marc.parse_marc(target, role=DocumentRole.INVENTORY, sha256=digest)
+
+    assert len(result.rows) == 2
+    assert result.rows[0].status == RowStatus.ROW_ERROR
+    assert result.rows[0].error_code == "MARC_IDENTITY_INVALID"
+    assert result.rows[0].raw_values["byte_offset"] == 0
+    assert result.rows[0].provenance.source_file_sha256 == digest
+    assert result.rows[1].fields["source_item_id"].value == "LATER"
+    assert result.activation_allowed is False
+
+
+def test_marc_rejects_data_field_without_initial_subfield_delimiter_and_continues(
+    tmp_path: Path,
+) -> None:
+    """Accepting indicator-following text without a subfield delimiter must fail."""
+    marc = _module("suseoro.ingestion.parsers.marc")
+    invalid = _record(
+        [
+            ("001", _control("GRAMMAR")),
+            ("245", b"10aMissing delimiter"),
+        ]
+    )
+    later = _catalog_record("AFTER-GRAMMAR")
+    target = tmp_path / "missing-delimiter.mrc"
+    digest = _write(target, invalid + later)
+
+    result = marc.parse_marc(target, role=DocumentRole.INVENTORY, sha256=digest)
+
+    assert len(result.rows) == 2
+    assert result.rows[0].status == RowStatus.ROW_ERROR
+    assert result.rows[0].error_code == "MARC_FIELD_GRAMMAR_INVALID"
+    assert result.rows[0].raw_values["byte_offset"] == 0
+    assert result.rows[0].provenance.source_file_sha256 == digest
+    assert result.rows[1].fields["source_item_id"].value == "AFTER-GRAMMAR"
+    assert result.activation_allowed is False
 
 
 def test_untrustworthy_marc_length_fails_activation_with_positioned_error(

@@ -29,6 +29,14 @@ class MarcRecordError(ValueError):
     pass
 
 
+class MarcIdentityError(MarcRecordError):
+    pass
+
+
+class MarcFieldGrammarError(MarcRecordError):
+    pass
+
+
 @dataclass(frozen=True)
 class MarcParseResult(ParseResult):
     activation_allowed: bool = True
@@ -41,6 +49,32 @@ def _decode(value: bytes) -> str:
         except UnicodeDecodeError:
             continue
     raise MarcRecordError("field text is not UTF-8, CP949, or EUC-KR")
+
+
+def _validate_data_field(tag: str, value: bytes) -> None:
+    if len(value) < 4:
+        raise MarcFieldGrammarError(
+            f"data field {tag} lacks indicators or a complete subfield"
+        )
+    data = value[2:]
+    if not data.startswith(b"\x1f"):
+        raise MarcFieldGrammarError(
+            f"data field {tag} does not begin with a subfield delimiter"
+        )
+    for subfield in data[1:].split(b"\x1f"):
+        if len(subfield) < 2:
+            raise MarcFieldGrammarError(
+                f"data field {tag} has an empty or truncated subfield"
+            )
+        code = subfield[0]
+        if not (
+            ord("0") <= code <= ord("9")
+            or ord("A") <= code <= ord("Z")
+            or ord("a") <= code <= ord("z")
+        ):
+            raise MarcFieldGrammarError(
+                f"data field {tag} has an invalid subfield code"
+            )
 
 
 def _fields(record: bytes) -> dict[str, list[bytes]]:
@@ -90,9 +124,11 @@ def _fields(record: bytes) -> dict[str, list[bytes]]:
         if record[absolute_end - 1 : absolute_end] != b"\x1e":
             raise MarcRecordError("field terminator is missing")
         ranges.append((absolute_start, absolute_end))
-        parsed.setdefault(tag_bytes.decode("ascii"), []).append(
-            record[absolute_start : absolute_end - 1]
-        )
+        tag = tag_bytes.decode("ascii")
+        field_value = record[absolute_start : absolute_end - 1]
+        if tag >= "010":
+            _validate_data_field(tag, field_value)
+        parsed.setdefault(tag, []).append(field_value)
     ordered = sorted(ranges)
     if any(previous_end > start for (_, previous_end), (start, _) in pairwise(ordered)):
         raise MarcRecordError("directory fields overlap")
@@ -150,6 +186,8 @@ def _mapped_row(
     incremental: bool,
 ) -> ParsedRow:
     fields = _fields(record)
+    if len(fields.get("001", [])) > 1:
+        raise MarcIdentityError("MARC record contains multiple 001 control fields")
     identifiers = _control(fields, "001")
     updated = _control(fields, "005")
     fixed = _control(fields, "008")
@@ -211,7 +249,7 @@ def _mapped_row(
         if value is not None:
             mapped[name] = _field(value, raw)
     warnings = tuple(warning for field in mapped.values() for warning in field.warnings)
-    missing_stable_id = incremental and source_item_id is None
+    missing_stable_id = source_item_id is None
     return ParsedRow(
         status=RowStatus.ROW_ERROR if missing_stable_id else RowStatus.SUCCESS,
         provenance=Provenance(
@@ -317,6 +355,24 @@ def parse_marc(
                     byte_offset=byte_offset,
                     incremental=incremental,
                 )
+            except MarcIdentityError as error:
+                row = _error_row(
+                    digest=digest,
+                    record_number=record_number,
+                    byte_offset=byte_offset,
+                    code="MARC_IDENTITY_INVALID",
+                    message=str(error),
+                )
+                activation_allowed = False
+            except MarcFieldGrammarError as error:
+                row = _error_row(
+                    digest=digest,
+                    record_number=record_number,
+                    byte_offset=byte_offset,
+                    code="MARC_FIELD_GRAMMAR_INVALID",
+                    message=str(error),
+                )
+                activation_allowed = False
             except (MarcRecordError, UnicodeError, ValueError) as error:
                 row = _error_row(
                     digest=digest,

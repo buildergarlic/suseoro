@@ -237,3 +237,13 @@ def test_pdf_detection_is_signature_based(tmp_path: Path) -> None:
     _write_pdf(target, ["PDF signature"])
 
     assert detect_file_type(target).format == "PDF"
+
+
+def test_pdf_detection_rejects_magic_bytes_without_bounded_structure(
+    tmp_path: Path,
+) -> None:
+    """Classifying arbitrary percent-PDF-prefixed bytes as supported must fail."""
+    spoof = tmp_path / "spoof.pdf"
+    spoof.write_bytes(b"%PDF-this is not a PDF")
+
+    assert detect_file_type(spoof).format == "UNKNOWN"

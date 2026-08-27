@@ -17,6 +17,8 @@ from suseoro.ingestion.mapping import infer_mapping
 OLE_SIGNATURE = bytes.fromhex("D0CF11E0A1B11AE1")
 TEXT_PROBE_BYTES = 64 * 1024
 TEXT_PROBE_LOOKAHEAD = 8
+PDF_TAIL_PROBE_BYTES = 64 * 1024
+PDF_XREF_PROBE_BYTES = 4 * 1024
 
 
 @dataclass(frozen=True)
@@ -216,6 +218,51 @@ def _text_file_detection(path: Path) -> FileDetection:
     )
 
 
+def _is_structural_pdf(path: Path, head: bytes) -> bool:
+    if (
+        len(head) < 8
+        or head[:5] != b"%PDF-"
+        or head[5:6] not in {b"1", b"2"}
+        or head[6:7] != b"."
+        or not head[7:8].isdigit()
+    ):
+        return False
+    try:
+        size = path.stat().st_size
+        if size < 16:
+            return False
+        with path.open("rb") as source:
+            source.seek(max(0, size - PDF_TAIL_PROBE_BYTES))
+            tail = source.read(PDF_TAIL_PROBE_BYTES)
+            eof = tail.rfind(b"%%EOF")
+            if eof < 0 or tail[eof + len(b"%%EOF") :].strip():
+                return False
+            marker = tail.rfind(b"startxref", 0, eof)
+            if marker < 0:
+                return False
+            tokens = tail[marker + len(b"startxref") : eof].split()
+            if not tokens or not tokens[0].isdigit():
+                return False
+            xref_offset = int(tokens[0])
+            if xref_offset <= 0 or xref_offset >= size:
+                return False
+            source.seek(xref_offset)
+            xref = source.read(PDF_XREF_PROBE_BYTES).lstrip()
+    except (OSError, ValueError):
+        return False
+    if xref.startswith(b"xref"):
+        return True
+    object_header = xref.split(maxsplit=3)
+    return (
+        len(object_header) >= 4
+        and object_header[0].isdigit()
+        and object_header[1].isdigit()
+        and object_header[2] == b"obj"
+        and b"/Type" in xref
+        and b"/XRef" in xref
+    )
+
+
 def detect_file_type(path: Path) -> FileDetection:
     path = Path(path)
     with path.open("rb") as source:
@@ -230,7 +277,7 @@ def detect_file_type(path: Path) -> FileDetection:
             return FileDetection("HWP")
         return FileDetection("UNKNOWN")
     if head.startswith(b"%PDF-"):
-        return FileDetection("PDF")
+        return FileDetection("PDF" if _is_structural_pdf(path, head) else "UNKNOWN")
     if head.startswith(b"PK"):
         packaged = _zip_format(path)
         if packaged:

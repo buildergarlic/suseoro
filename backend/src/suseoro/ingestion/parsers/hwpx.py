@@ -43,33 +43,64 @@ def _logical_nodes(root: Any) -> Iterator[tuple[str, str]]:
     paragraph_number = 0
     table_number = 0
 
+    def table_nodes(table: Any) -> Iterator[tuple[str, str]]:
+        nonlocal table_number
+        table_number += 1
+        current_table = table_number
+        for row_number, table_row in enumerate(
+            (
+                item
+                for item in table.iter()
+                if _local_name(item.tag).lower() in {"tr", "row"}
+            ),
+            start=1,
+        ):
+            cells = [
+                item
+                for item in table_row
+                if _local_name(item.tag).lower() in {"tc", "cell"}
+            ]
+            for cell_number, cell in enumerate(cells, start=1):
+                yield (
+                    f"table[{current_table}]/row[{row_number}]/cell[{cell_number}]",
+                    _text(cell),
+                )
+
+    def paragraph_content(element: Any) -> Iterator[tuple[str, Any]]:
+        for child in element:
+            name = _local_name(child.tag).lower()
+            if name == "t":
+                yield "text", child.text or ""
+            elif name in {"tbl", "table"}:
+                yield "table", child
+            else:
+                yield from paragraph_content(child)
+
+    def paragraph_nodes(paragraph: Any) -> Iterator[tuple[str, str]]:
+        nonlocal paragraph_number
+        text_parts: list[str] = []
+        saw_table = False
+        for kind, value in paragraph_content(paragraph):
+            if kind == "text":
+                text_parts.append(value)
+                continue
+            saw_table = True
+            if text_parts:
+                paragraph_number += 1
+                yield f"paragraph[{paragraph_number}]", "".join(text_parts)
+                text_parts.clear()
+            yield from table_nodes(value)
+        if text_parts or not saw_table:
+            paragraph_number += 1
+            yield f"paragraph[{paragraph_number}]", "".join(text_parts)
+
     def walk(container: Any) -> Iterator[tuple[str, str]]:
-        nonlocal paragraph_number, table_number
         for child in container:
             name = _local_name(child.tag).lower()
             if name == "p":
-                paragraph_number += 1
-                yield f"paragraph[{paragraph_number}]", _text(child)
+                yield from paragraph_nodes(child)
             elif name in {"tbl", "table"}:
-                table_number += 1
-                for row_number, table_row in enumerate(
-                    (
-                        item
-                        for item in child.iter()
-                        if _local_name(item.tag).lower() in {"tr", "row"}
-                    ),
-                    start=1,
-                ):
-                    cells = [
-                        item
-                        for item in table_row
-                        if _local_name(item.tag).lower() in {"tc", "cell"}
-                    ]
-                    for cell_number, cell in enumerate(cells, start=1):
-                        yield (
-                            f"table[{table_number}]/row[{row_number}]/cell[{cell_number}]",
-                            _text(cell),
-                        )
+                yield from table_nodes(child)
             else:
                 yield from walk(child)
 

@@ -79,6 +79,25 @@ def _hwpx_bytes(*, entity_payload: bool = False) -> bytes:
     )
 
 
+def _nested_table_hwpx_bytes() -> bytes:
+    section = b"""<hp:sec xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">
+      <hp:p><hp:run>
+        <hp:t>Before</hp:t>
+        <hp:tbl><hp:tr>
+          <hp:tc><hp:subList><hp:p><hp:run><hp:t>Nested cell one</hp:t></hp:run></hp:p></hp:subList></hp:tc>
+          <hp:tc><hp:subList><hp:p><hp:run><hp:t>Nested cell two</hp:t></hp:run></hp:p></hp:subList></hp:tc>
+        </hp:tr></hp:tbl>
+        <hp:t>After</hp:t>
+      </hp:run></hp:p>
+    </hp:sec>"""
+    return _zip(
+        [
+            ("mimetype", b"application/hwp+zip"),
+            ("Contents/section0.xml", section),
+        ]
+    )
+
+
 def test_docx_returns_paragraphs_and_cells_in_document_order_with_page_node_provenance(
     tmp_path: Path,
 ) -> None:
@@ -139,6 +158,32 @@ def test_hwpx_returns_sections_and_table_cells_in_package_order(tmp_path: Path) 
     assert [row.provenance.source_row for row in result.rows] == [1, 2, 3, 1]
     assert all(row.status == RowStatus.SUCCESS for row in result.rows)
     assert len(result.rows) == 4
+
+
+def test_hwpx_nested_table_splits_paragraph_text_around_cells_without_duplication(
+    tmp_path: Path,
+) -> None:
+    """Treating a paragraph containing a table as one concatenated leaf must fail."""
+    hwpx = _module("suseoro.ingestion.parsers.hwpx")
+    target = tmp_path / "nested-table.hwpx"
+    digest = _write(target, _nested_table_hwpx_bytes())
+
+    result = hwpx.parse_hwpx(target, role=DocumentRole.UNKNOWN, sha256=digest)
+
+    assert [row.fields["text"].value for row in result.rows] == [
+        "Before",
+        "Nested cell one",
+        "Nested cell two",
+        "After",
+    ]
+    assert [row.raw_values["kind"] for row in result.rows] == [
+        "paragraph",
+        "table_cell",
+        "table_cell",
+        "paragraph",
+    ]
+    assert [row.provenance.source_row for row in result.rows] == [1, 2, 3, 4]
+    assert all(row.provenance.source_file_sha256 == digest for row in result.rows)
 
 
 def test_document_parsers_turn_unsafe_xml_and_broken_archives_into_accounted_errors(
