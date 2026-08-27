@@ -92,6 +92,19 @@ def _zip_format(path: Path) -> str | None:
                 mimetype = archive.read("mimetype")[:128]
                 if mimetype == b"application/vnd.oasis.opendocument.spreadsheet":
                     return "ODS"
+                if mimetype in {
+                    b"application/hwp+zip",
+                    b"application/vnd.hancom.hwpx",
+                }:
+                    return "HWPX"
+            if "word/document.xml" in names and "[Content_Types].xml" in names:
+                return "DOCX"
+            if any(
+                name.lower().startswith("contents/section")
+                and name.lower().endswith(".xml")
+                for name in names
+            ):
+                return "HWPX"
             if "xl/workbook.bin" in names:
                 return "XLSB"
             if "xl/workbook.xml" in names:
@@ -208,12 +221,42 @@ def detect_file_type(path: Path) -> FileDetection:
     with path.open("rb") as source:
         head = source.read(TEXT_PROBE_BYTES)
     if head.startswith(OLE_SIGNATURE):
-        return _workbook_detection(path, "XLS", reject_on_error=True)
+        workbook = _workbook_detection(path, "XLS", reject_on_error=True)
+        if workbook.format != "UNKNOWN":
+            return workbook
+        from suseoro.ingestion.parsers.hwp import is_hwp_compound_file
+
+        if is_hwp_compound_file(path):
+            return FileDetection("HWP")
+        return FileDetection("UNKNOWN")
+    if head.startswith(b"%PDF-"):
+        return FileDetection("PDF")
     if head.startswith(b"PK"):
         packaged = _zip_format(path)
         if packaged:
+            if packaged in {"DOCX", "HWPX"}:
+                return FileDetection(packaged)
             return _workbook_detection(path, packaged)
         return FileDetection("UNKNOWN")
+    if len(head) >= 25 and head[:5].isdigit():
+        length = int(head[:5])
+        if 25 <= length <= 1024 * 1024:
+            if len(head) < length:
+                with path.open("rb") as source:
+                    record = source.read(length)
+            else:
+                record = head[:length]
+            if (
+                len(record) == length
+                and record[-1:] == b"\x1d"
+                and record[10:12].isdigit()
+                and record[12:17].isdigit()
+                and 24 < int(record[12:17]) < length
+                and record[int(record[12:17]) - 1 : int(record[12:17])] == b"\x1e"
+            ):
+                return FileDetection("MARC")
+        if len(head) >= 24 and head[20:24] == b"4500":
+            return FileDetection("UNKNOWN")
     if b"\x00" in head:
         return FileDetection("UNKNOWN")
     try:
