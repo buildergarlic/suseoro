@@ -153,3 +153,12 @@ FOR EACH ROW WHEN
     OR NOT ((NEW.created_at GLOB '????-??-??T??:??:??Z' OR NEW.created_at GLOB '????-??-??T??:??:??.[0-9]*Z') AND NEW.created_at NOT GLOB '*[^0-9T:.Z-]*' AND strftime('%Y-%m-%dT%H:%M:%S', NEW.created_at) = substr(NEW.created_at, 1, 19))
     OR NOT ((NEW.updated_at GLOB '????-??-??T??:??:??Z' OR NEW.updated_at GLOB '????-??-??T??:??:??.[0-9]*Z') AND NEW.updated_at NOT GLOB '*[^0-9T:.Z-]*' AND strftime('%Y-%m-%dT%H:%M:%S', NEW.updated_at) = substr(NEW.updated_at, 1, 19))
 BEGIN SELECT RAISE(ABORT, 'invalid durable_jobs identifier or UTC timestamp'); END;
+
+UPDATE schools SET id = id;
+UPDATE users SET id = id;
+UPDATE user_roles SET school_id = school_id;
+UPDATE sessions SET id = id;
+UPDATE acquisition_workspaces SET id = id;
+UPDATE idempotency_keys SET id = id;
+UPDATE audit_events SET id = id;
+UPDATE durable_jobs SET id = id;

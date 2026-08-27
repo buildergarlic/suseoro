@@ -223,6 +223,41 @@ def test_foundation_constraints_upgrade_preserves_valid_linked_data(
             )
 
 
+def test_forward_constraints_reject_invalid_legacy_data_without_data_loss(
+    data_dir: Path, tmp_path: Path
+) -> None:
+    """Invalid historical values must block the validation migration, not be discarded."""
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    source_migrations = Path(__file__).parents[1] / "src" / "suseoro" / "db" / "migrations"
+    shutil.copy2(source_migrations / "0001_foundation.sql", migrations_dir)
+
+    settings = Settings(data_dir=data_dir)
+    with connect(settings.database_path) as connection:
+        apply_migrations(connection, migrations_dir)
+        connection.execute(
+            """
+            INSERT INTO schools (id, name, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("not-a-uuid", "Legacy school", VALID_TIMESTAMP, VALID_TIMESTAMP),
+        )
+        shutil.copy2(
+            source_migrations / "0001a_foundation_constraints.sql", migrations_dir
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            apply_migrations(connection, migrations_dir)
+
+        assert connection.execute("SELECT name FROM schools").fetchone()[0] == "Legacy school"
+        assert [
+            row[0]
+            for row in connection.execute(
+                "SELECT migration_id FROM schema_migrations"
+            ).fetchall()
+        ] == ["0001_foundation"]
+
+
 def test_health_reports_safe_readiness_without_data_path(data_dir: Path) -> None:
     """Health must expose readiness but never leak deployment-specific storage details."""
     app = create_app(Settings(data_dir=data_dir))
