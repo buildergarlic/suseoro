@@ -225,15 +225,41 @@ def test_if_match_dependency_requires_and_parses_integer_etags() -> None:
 
     with TestClient(app) as client:
         missing = client.patch("/version-probe")
-        malformed = client.patch("/version-probe", headers={"If-Match": "W/\"3\""})
-        accepted = client.patch("/version-probe", headers={"If-Match": '"3"'})
+        malformed = [
+            client.patch("/version-probe", headers={"If-Match": value})
+            for value in (
+                '"3',
+                '3"',
+                'W/"3"',
+                "+3",
+                "-1",
+                '" 3"',
+                '"3 "',
+                "3, 4",
+                "3junk",
+                "03",
+                '"03"',
+            )
+        ]
+        accepted = [
+            client.patch("/version-probe", headers={"If-Match": value})
+            for value in ("0", '"0"', "3", '"3"')
+        ]
 
     assert missing.status_code == 428
     assert missing.json()["detail"]["code"] == "IF_MATCH_REQUIRED"
-    assert malformed.status_code == 400
-    assert malformed.json()["detail"]["code"] == "INVALID_IF_MATCH"
-    assert accepted.status_code == 200
-    assert accepted.json() == {"version": 3}
+    assert all(response.status_code == 400 for response in malformed)
+    assert all(
+        response.json()["detail"]["code"] == "INVALID_IF_MATCH"
+        for response in malformed
+    )
+    assert [response.status_code for response in accepted] == [200, 200, 200, 200]
+    assert [response.json() for response in accepted] == [
+        {"version": 0},
+        {"version": 0},
+        {"version": 3},
+        {"version": 3},
+    ]
 
 
 def test_stale_if_match_returns_structured_412_without_updating(data_dir: Path) -> None:
@@ -288,6 +314,46 @@ def test_versioned_update_does_not_reveal_or_change_another_school_row(
     assert caught.value.status_code == 404
     assert caught.value.detail == {"code": "ENTITY_NOT_FOUND"}
     assert dict(row) == {"name": "Original", "row_version": 3}
+
+
+def test_versioned_update_rejects_tenant_identity_change_before_sql(data_dir: Path) -> None:
+    """Allowing school_id in changes must not move or partially update a tenant row."""
+    settings = Settings(data_dir=data_dir)
+    _seed_database(settings)
+    with connect(settings.database_path) as connection:
+        with pytest.raises(ValueError, match="school_id"):
+            update_with_version(
+                connection,
+                table="acquisition_workspaces",
+                school_id=SCHOOL_ID,
+                entity_id=WORKSPACE_ID,
+                submitted_version=3,
+                changes={
+                    "school_id": OTHER_SCHOOL_ID,
+                    "name": "Moved across schools",
+                },
+            )
+        row = connection.execute(
+            """
+            SELECT school_id, name, row_version
+            FROM acquisition_workspaces WHERE id = ?
+            """,
+            (WORKSPACE_ID,),
+        ).fetchone()
+        moved_count = connection.execute(
+            """
+            SELECT COUNT(*) FROM acquisition_workspaces
+            WHERE id = ? AND school_id = ?
+            """,
+            (WORKSPACE_ID, OTHER_SCHOOL_ID),
+        ).fetchone()[0]
+
+    assert dict(row) == {
+        "school_id": SCHOOL_ID,
+        "name": "Original",
+        "row_version": 3,
+    }
+    assert moved_count == 0
 
 
 def test_successful_versioned_update_increments_row_version(data_dir: Path) -> None:

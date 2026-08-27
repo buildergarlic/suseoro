@@ -78,8 +78,11 @@ def update_with_version(
         raise ValueError("versioned update requires at least one change")
     table_name = _safe_identifier(table)
     columns = [_safe_identifier(column) for column in changes]
-    if "id" in columns or "row_version" in columns:
-        raise ValueError("id and row_version cannot be directly changed")
+    immutable_columns = {"id", "school_id", "row_version"}
+    rejected = immutable_columns.intersection(columns)
+    if rejected:
+        names = ", ".join(sorted(rejected))
+        raise ValueError(f"immutable columns cannot be directly changed: {names}")
     assignments = ", ".join(f'"{column}" = ?' for column in columns)
     parameters = [changes[column] for column in changes]
     result = connection.execute(

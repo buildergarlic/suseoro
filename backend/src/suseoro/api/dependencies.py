@@ -16,7 +16,9 @@ from suseoro.repositories.auth import SessionRecord, find_active_session
 from suseoro.security.csrf import validate_csrf_token
 from suseoro.security.sessions import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 
-_IF_MATCH_PATTERN = re.compile(r'^"?([1-9][0-9]*)"?$')
+_IF_MATCH_PATTERN = re.compile(
+    r'^(?:"(?P<quoted>0|[1-9][0-9]*)"|(?P<plain>0|[1-9][0-9]*))$'
+)
 
 
 @dataclass(frozen=True)
@@ -87,7 +89,7 @@ def require_if_match(
     match = _IF_MATCH_PATTERN.fullmatch(if_match.strip())
     if match is None:
         raise HTTPException(status_code=400, detail={"code": "INVALID_IF_MATCH"})
-    return int(match.group(1))
+    return int(match.group("quoted") or match.group("plain"))
 
 
 def require_idempotency_key(
