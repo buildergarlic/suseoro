@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import shutil
 from pathlib import Path
 
 import pytest
@@ -129,13 +130,14 @@ def test_foundation_migration_creates_required_tables_and_indexes(data_dir: Path
     ("column", "invalid_value"),
     [
         ("id", "not-a-uuid"),
+        ("id", None),
         ("created_at", "2026-08-28 12:34:56+00:00"),
         ("created_at", "2026-02-30T12:34:56Z"),
         ("updated_at", "not-a-timestamp"),
     ],
 )
 def test_foundation_migration_rejects_invalid_uuid_and_utc_timestamp_values(
-    data_dir: Path, column: str, invalid_value: str
+    data_dir: Path, column: str, invalid_value: str | None
 ) -> None:
     """Removing ledger format checks would permit invalid IDs or non-UTC timestamps."""
     values = {
@@ -156,6 +158,68 @@ def test_foundation_migration_rejects_invalid_uuid_and_utc_timestamp_values(
                 VALUES (:id, :name, :created_at, :updated_at)
                 """,
                 values,
+            )
+
+
+def test_foundation_constraints_upgrade_preserves_valid_linked_data(
+    data_dir: Path, tmp_path: Path
+) -> None:
+    """The forward validation migration must preserve valid 0001 ledger records."""
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    source_migrations = Path(__file__).parents[1] / "src" / "suseoro" / "db" / "migrations"
+    shutil.copy2(source_migrations / "0001_foundation.sql", migrations_dir)
+
+    settings = Settings(data_dir=data_dir)
+    with connect(settings.database_path) as connection:
+        apply_migrations(connection, migrations_dir)
+        connection.execute(
+            """
+            INSERT INTO schools (id, name, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (VALID_UUID, "Upgrade school", VALID_TIMESTAMP, VALID_TIMESTAMP),
+        )
+        connection.execute(
+            """
+            INSERT INTO users (
+                id, school_id, username, password_hash, display_name,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "550e8400-e29b-41d4-a716-446655440001",
+                VALID_UUID,
+                "operator",
+                "hash",
+                "Operator",
+                VALID_TIMESTAMP,
+                VALID_TIMESTAMP,
+            ),
+        )
+
+        shutil.copy2(
+            source_migrations / "0001a_foundation_constraints.sql", migrations_dir
+        )
+        apply_migrations(connection, migrations_dir)
+
+        school = connection.execute(
+            "SELECT name FROM schools WHERE id = ?", (VALID_UUID,)
+        ).fetchone()
+        user = connection.execute(
+            "SELECT username FROM users WHERE id = ?",
+            ("550e8400-e29b-41d4-a716-446655440001",),
+        ).fetchone()
+
+        assert school[0] == "Upgrade school"
+        assert user[0] == "operator"
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO schools (id, name, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                ("not-a-uuid", "Invalid", VALID_TIMESTAMP, VALID_TIMESTAMP),
             )
 
 
