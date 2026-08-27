@@ -235,6 +235,8 @@ def test_if_match_dependency_requires_and_parses_integer_etags() -> None:
                 "-1",
                 '" 3"',
                 '"3 "',
+                " 3 ",
+                ' "3" ',
                 "3, 4",
                 "3junk",
                 "03",
@@ -260,6 +262,27 @@ def test_if_match_dependency_requires_and_parses_integer_etags() -> None:
         {"version": 3},
         {"version": 3},
     ]
+
+
+def test_if_match_dependency_directly_rejects_whitespace_variants() -> None:
+    """Parser validation must not depend on HTTP framework whitespace handling."""
+    for value in (
+        " 3",
+        "3 ",
+        "\t3",
+        "3\t",
+        "3 0",
+        ' "3"',
+        '"3" ',
+        '" 3"',
+        '"3 "',
+        '"3 0"',
+    ):
+        with pytest.raises(HTTPException) as caught:
+            require_if_match(if_match=value)
+
+        assert caught.value.status_code == 400
+        assert caught.value.detail["code"] == "INVALID_IF_MATCH"
 
 
 def test_stale_if_match_returns_structured_412_without_updating(data_dir: Path) -> None:

@@ -86,7 +86,7 @@ def require_if_match(
     """Require a single strong integer entity tag and return its row version."""
     if if_match is None:
         raise HTTPException(status_code=428, detail={"code": "IF_MATCH_REQUIRED"})
-    match = _IF_MATCH_PATTERN.fullmatch(if_match.strip())
+    match = _IF_MATCH_PATTERN.fullmatch(if_match)
     if match is None:
         raise HTTPException(status_code=400, detail={"code": "INVALID_IF_MATCH"})
     return int(match.group("quoted") or match.group("plain"))
