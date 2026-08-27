@@ -32,11 +32,13 @@ class UserRecord:
 class SessionRecord(UserRecord):
     session_id: str
     csrf_token_digest: str
+    revoked_at: str | None
 
 
 @dataclass(frozen=True)
 class IssuedSession:
     user: UserRecord
+    session_id: str
     session_token: str
     csrf_token: str
     expires_at: str
@@ -84,6 +86,7 @@ def issue_session(
     expires_at = format_utc(now + timedelta(seconds=ttl_seconds))
     session_token = generate_token()
     csrf_token = generate_token()
+    session_id = str(uuid.uuid4())
     connection.execute(
         """
         INSERT INTO sessions (
@@ -92,7 +95,7 @@ def issue_session(
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            str(uuid.uuid4()),
+            session_id,
             user.school_id,
             user.id,
             digest_token(session_token),
@@ -101,28 +104,34 @@ def issue_session(
             format_utc(now),
         ),
     )
-    return IssuedSession(user, session_token, csrf_token, expires_at)
+    return IssuedSession(user, session_id, session_token, csrf_token, expires_at)
 
 
-def find_active_session(
-    connection: sqlite3.Connection, session_token: str
+def find_session(
+    connection: sqlite3.Connection,
+    session_token: str,
+    *,
+    include_revoked: bool = False,
 ) -> SessionRecord | None:
     row = connection.execute(
         """
         SELECT
             s.id AS session_id, s.school_id, s.user_id AS id,
-            s.csrf_token_digest, s.expires_at,
+            s.csrf_token_digest, s.expires_at, s.revoked_at,
             u.username, u.display_name
         FROM sessions AS s
         JOIN users AS u ON u.id = s.user_id AND u.school_id = s.school_id
         WHERE s.token_digest = ?
           AND s.csrf_token_digest IS NOT NULL
-          AND s.revoked_at IS NULL
           AND u.is_active = 1
         """,
         (digest_token(session_token),),
     ).fetchone()
-    if row is None or parse_utc(row["expires_at"]) <= utc_now():
+    if (
+        row is None
+        or parse_utc(row["expires_at"]) <= utc_now()
+        or (row["revoked_at"] is not None and not include_revoked)
+    ):
         return None
     return SessionRecord(
         id=row["id"],
@@ -132,11 +141,20 @@ def find_active_session(
         roles=_roles(connection, row["school_id"], row["id"]),
         session_id=row["session_id"],
         csrf_token_digest=row["csrf_token_digest"],
+        revoked_at=row["revoked_at"],
     )
 
 
-def revoke_session(connection: sqlite3.Connection, session_id: str) -> None:
+def find_active_session(
+    connection: sqlite3.Connection, session_token: str
+) -> SessionRecord | None:
+    return find_session(connection, session_token)
+
+
+def revoke_session(connection: sqlite3.Connection, session_id: str) -> str:
+    revoked_at = format_utc(utc_now())
     connection.execute(
         "UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
-        (format_utc(utc_now()), session_id),
+        (revoked_at, session_id),
     )
+    return revoked_at

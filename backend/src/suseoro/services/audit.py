@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from collections.abc import Mapping, Sequence
@@ -16,13 +17,15 @@ _SENSITIVE_MARKERS = (
     "secret",
     "authorization",
     "cookie",
-    "api_key",
+    "apikey",
+    "privatekey",
+    "passphrase",
     "credential",
 )
 
 
 def _is_sensitive(key: object) -> bool:
-    normalized = str(key).lower().replace("-", "_")
+    normalized = re.sub(r"[^a-z0-9]", "", str(key).casefold())
     return any(marker in normalized for marker in _SENSITIVE_MARKERS)
 
 
@@ -43,16 +46,23 @@ def _json(value: Any | None) -> str | None:
 def record_audit_event(
     connection: sqlite3.Connection,
     *,
-    actor_id: str | None,
-    school_id: str | None,
+    actor_id: str,
+    school_id: str,
     action: str,
     entity_type: str,
     entity_id: str | None,
     before: Any | None,
     after: Any | None,
-    request_id: str | None,
+    request_id: str,
 ) -> str:
     """Insert a scrubbed audit event without committing the caller's transaction."""
+    for field_name, value in (
+        ("actor_id", actor_id),
+        ("school_id", school_id),
+        ("request_id", request_id),
+    ):
+        if not value:
+            raise ValueError(f"{field_name} is required for an audit event")
     event_id = str(uuid.uuid4())
     connection.execute(
         """

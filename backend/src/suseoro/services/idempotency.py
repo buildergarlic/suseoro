@@ -43,6 +43,29 @@ def reserve_idempotency_key(
 ) -> StoredResponse | None:
     """Reserve a scoped key, replay its result, or reject conflicting reuse."""
     digest = request_hash(request_body)
+    try:
+        claim = connection.execute(
+            """
+            INSERT OR IGNORE INTO idempotency_keys (
+                id, school_id, actor_id, route, key, request_hash, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                school_id,
+                actor_id,
+                route,
+                key,
+                digest,
+                format_utc(utc_now()),
+            ),
+        )
+    except sqlite3.OperationalError as error:
+        if "locked" in str(error).casefold():
+            raise IdempotencyConflict("IDEMPOTENCY_REQUEST_IN_PROGRESS") from error
+        raise
+    if claim.rowcount == 1:
+        return None
     row = connection.execute(
         """
         SELECT request_hash, response_status, response_body
@@ -52,35 +75,7 @@ def reserve_idempotency_key(
         (school_id, actor_id, route, key),
     ).fetchone()
     if row is None:
-        try:
-            connection.execute(
-                """
-                INSERT INTO idempotency_keys (
-                    id, school_id, actor_id, route, key, request_hash, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(uuid.uuid4()),
-                    school_id,
-                    actor_id,
-                    route,
-                    key,
-                    digest,
-                    format_utc(utc_now()),
-                ),
-            )
-            return None
-        except sqlite3.IntegrityError:
-            row = connection.execute(
-                """
-                SELECT request_hash, response_status, response_body
-                FROM idempotency_keys
-                WHERE school_id = ? AND actor_id = ? AND route = ? AND key = ?
-                """,
-                (school_id, actor_id, route, key),
-            ).fetchone()
-            if row is None:
-                raise
+        raise IdempotencyConflict("IDEMPOTENCY_REQUEST_IN_PROGRESS")
     if row["request_hash"] != digest:
         raise IdempotencyConflict()
     if row["response_status"] is None:

@@ -13,7 +13,7 @@ from suseoro.api.routes.auth import router as auth_router
 from suseoro.config import Settings
 from suseoro.db.connection import connect
 from suseoro.db.migrations import apply_migrations
-from suseoro.repositories.auth import find_active_session
+from suseoro.repositories.auth import find_session
 from suseoro.security.csrf import validate_csrf_token
 from suseoro.security.sessions import (
     CSRF_COOKIE_NAME,
@@ -47,7 +47,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     status_code=401, content={"detail": {"code": "AUTHENTICATION_REQUIRED"}}
                 )
             with connect(application_settings.database_path) as connection:
-                record = find_active_session(connection, session_token)
+                record = find_session(
+                    connection,
+                    session_token,
+                    include_revoked=request.url.path == "/api/v2/auth/logout",
+                )
             if record is None:
                 return JSONResponse(
                     status_code=401, content={"detail": {"code": "INVALID_SESSION"}}

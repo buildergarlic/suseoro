@@ -28,11 +28,23 @@ class VersionConflict(HTTPException):
         )
 
 
+class EntityNotFound(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(status_code=404, detail={"code": "ENTITY_NOT_FOUND"})
+
+
 class EditLockConflict(HTTPException):
     def __init__(self, actor_id: str, expires_at: str) -> None:
         super().__init__(
             status_code=409,
             detail={"code": "EDIT_LOCKED", "actor_id": actor_id, "expires_at": expires_at},
+        )
+
+
+class EditLockAuthorizationError(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=403, detail={"code": "EDIT_LOCK_ROLE_REQUIRED"}
         )
 
 
@@ -56,6 +68,7 @@ def update_with_version(
     connection: sqlite3.Connection,
     *,
     table: str,
+    school_id: str,
     entity_id: str,
     submitted_version: int,
     changes: dict[str, Any],
@@ -71,18 +84,20 @@ def update_with_version(
     parameters = [changes[column] for column in changes]
     result = connection.execute(
         f'UPDATE "{table_name}" SET {assignments}, row_version = row_version + 1 '
-        "WHERE id = ? AND row_version = ?",
-        (*parameters, entity_id, submitted_version),
+        "WHERE id = ? AND school_id = ? AND row_version = ?",
+        (*parameters, entity_id, school_id, submitted_version),
     )
     if result.rowcount != 1:
         current = connection.execute(
-            f'SELECT row_version FROM "{table_name}" WHERE id = ?', (entity_id,)
+            f'SELECT row_version FROM "{table_name}" WHERE id = ? AND school_id = ?',
+            (entity_id, school_id),
         ).fetchone()
         if current is None:
-            raise KeyError(entity_id)
+            raise EntityNotFound()
         raise VersionConflict(current["row_version"], submitted_version)
     return connection.execute(
-        f'SELECT * FROM "{table_name}" WHERE id = ?', (entity_id,)
+        f'SELECT * FROM "{table_name}" WHERE id = ? AND school_id = ?',
+        (entity_id, school_id),
     ).fetchone()
 
 
@@ -102,13 +117,18 @@ def acquire_edit_lock(
         """
         INSERT INTO edit_locks (
             school_id, entity_type, entity_id, actor_id, acquired_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+        )
+        SELECT ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (
+            SELECT 1 FROM user_roles
+            WHERE school_id = ? AND user_id = ?
+        )
         ON CONFLICT (school_id, entity_type, entity_id) DO UPDATE SET
             actor_id = excluded.actor_id,
             acquired_at = excluded.acquired_at,
             expires_at = excluded.expires_at
         WHERE edit_locks.actor_id = excluded.actor_id
-           OR edit_locks.expires_at <= excluded.acquired_at
+           OR julianday(edit_locks.expires_at) <= julianday(excluded.acquired_at)
         """,
         (
             school_id,
@@ -117,9 +137,20 @@ def acquire_edit_lock(
             actor_id,
             format_utc(acquired_at),
             format_utc(expires_at),
+            school_id,
+            actor_id,
         ),
     )
     if result.rowcount != 1:
+        membership = connection.execute(
+            """
+            SELECT 1 FROM user_roles
+            WHERE school_id = ? AND user_id = ?
+            """,
+            (school_id, actor_id),
+        ).fetchone()
+        if membership is None:
+            raise EditLockAuthorizationError()
         existing = connection.execute(
             """
             SELECT actor_id, expires_at FROM edit_locks
