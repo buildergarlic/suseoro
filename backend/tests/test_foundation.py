@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,34 @@ from suseoro.api.app import create_app
 from suseoro.config import Settings
 from suseoro.db.connection import connect
 from suseoro.db.migrations import MigrationChecksumMismatch, apply_migrations
+
+
+FOUNDATION_TABLES = {
+    "schools",
+    "users",
+    "user_roles",
+    "sessions",
+    "acquisition_workspaces",
+    "idempotency_keys",
+    "audit_events",
+    "durable_jobs",
+}
+
+FOUNDATION_INDEXES = {
+    "idx_users_school_id",
+    "idx_user_roles_user_id",
+    "idx_sessions_user_id",
+    "idx_sessions_expires_at",
+    "idx_acquisition_workspaces_school_status",
+    "idx_idempotency_keys_created_at",
+    "idx_audit_events_school_occurred_at",
+    "idx_audit_events_entity",
+    "idx_durable_jobs_school_status",
+    "idx_durable_jobs_workspace_id",
+}
+
+VALID_UUID = "550e8400-e29b-41d4-a716-446655440000"
+VALID_TIMESTAMP = "2026-08-28T12:34:56Z"
 
 
 def test_settings_create_all_application_data_paths(data_dir: Path) -> None:
@@ -71,6 +100,63 @@ def test_migrations_are_idempotent_and_reject_changed_history(
         )
         with pytest.raises(MigrationChecksumMismatch, match="0001_example"):
             apply_migrations(connection, migrations_dir)
+
+
+def test_foundation_migration_creates_required_tables_and_indexes(data_dir: Path) -> None:
+    """Removing a ledger table or lookup index would break later workflow queries."""
+    settings = Settings(data_dir=data_dir)
+
+    with connect(settings.database_path) as connection:
+        apply_migrations(connection)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+
+    assert FOUNDATION_TABLES <= tables
+    assert FOUNDATION_INDEXES <= indexes
+
+
+@pytest.mark.parametrize(
+    ("column", "invalid_value"),
+    [
+        ("id", "not-a-uuid"),
+        ("created_at", "2026-08-28 12:34:56+00:00"),
+        ("created_at", "2026-02-30T12:34:56Z"),
+        ("updated_at", "not-a-timestamp"),
+    ],
+)
+def test_foundation_migration_rejects_invalid_uuid_and_utc_timestamp_values(
+    data_dir: Path, column: str, invalid_value: str
+) -> None:
+    """Removing ledger format checks would permit invalid IDs or non-UTC timestamps."""
+    values = {
+        "id": VALID_UUID,
+        "name": "Format validation school",
+        "created_at": VALID_TIMESTAMP,
+        "updated_at": VALID_TIMESTAMP,
+    }
+    values[column] = invalid_value
+    settings = Settings(data_dir=data_dir)
+
+    with connect(settings.database_path) as connection:
+        apply_migrations(connection)
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO schools (id, name, created_at, updated_at)
+                VALUES (:id, :name, :created_at, :updated_at)
+                """,
+                values,
+            )
 
 
 def test_health_reports_safe_readiness_without_data_path(data_dir: Path) -> None:

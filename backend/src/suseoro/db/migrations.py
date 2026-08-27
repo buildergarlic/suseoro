@@ -30,7 +30,14 @@ def _ensure_migration_ledger(connection: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS schema_migrations (
             migration_id TEXT PRIMARY KEY,
             checksum TEXT NOT NULL,
-            applied_at TEXT NOT NULL
+            applied_at TEXT NOT NULL CHECK (
+                (
+                    applied_at GLOB '????-??-??T??:??:??Z'
+                    OR applied_at GLOB '????-??-??T??:??:??.[0-9]*Z'
+                )
+                AND applied_at NOT GLOB '*[^0-9T:.Z-]*'
+                AND strftime('%Y-%m-%dT%H:%M:%S', applied_at) = substr(applied_at, 1, 19)
+            )
         )
         """
     )
