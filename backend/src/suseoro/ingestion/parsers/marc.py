@@ -52,6 +52,10 @@ def _decode(value: bytes) -> str:
 
 
 def _validate_data_field(tag: str, value: bytes) -> None:
+    if any((byte < 0x20 and byte != 0x1F) or byte == 0x7F for byte in value):
+        raise MarcFieldGrammarError(
+            f"data field {tag} contains an illegal structural control byte"
+        )
     if len(value) < 4:
         raise MarcFieldGrammarError(
             f"data field {tag} lacks indicators or a complete subfield"
@@ -75,6 +79,13 @@ def _validate_data_field(tag: str, value: bytes) -> None:
             raise MarcFieldGrammarError(
                 f"data field {tag} has an invalid subfield code"
             )
+
+
+def _validate_control_field(tag: str, value: bytes) -> None:
+    if any(byte < 0x20 or byte == 0x7F for byte in value):
+        raise MarcFieldGrammarError(
+            f"control field {tag} contains an illegal structural control byte"
+        )
 
 
 def _fields(record: bytes) -> dict[str, list[bytes]]:
@@ -128,6 +139,8 @@ def _fields(record: bytes) -> dict[str, list[bytes]]:
         field_value = record[absolute_start : absolute_end - 1]
         if tag >= "010":
             _validate_data_field(tag, field_value)
+        else:
+            _validate_control_field(tag, field_value)
         parsed.setdefault(tag, []).append(field_value)
     ordered = sorted(ranges)
     if any(previous_end > start for (_, previous_end), (start, _) in pairwise(ordered)):
@@ -144,7 +157,7 @@ def _fields(record: bytes) -> dict[str, list[bytes]]:
 
 
 def _control(fields: dict[str, list[bytes]], tag: str) -> list[str]:
-    values = [_decode(value).strip(" \x00") for value in fields.get(tag, [])]
+    values = [_decode(value).strip() for value in fields.get(tag, [])]
     return [value for value in values if value]
 
 
@@ -263,7 +276,7 @@ def _mapped_row(
         warnings=warnings,
         error_code="MARC_STABLE_ID_REQUIRED" if missing_stable_id else None,
         error_message=(
-            "Incremental MARC activation requires a stable 001 source item ID"
+            "MARC records require exactly one nonblank 001 source item ID"
             if missing_stable_id
             else None
         ),

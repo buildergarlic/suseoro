@@ -69,6 +69,37 @@ def _write_pdf(path: Path, page_texts: list[str]) -> str:
     return hashlib.sha256(contents).hexdigest()
 
 
+def _xref_stream_pdf_bytes() -> bytes:
+    objects = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+    }
+    output = bytearray(b"%PDF-1.5\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for object_id in range(1, 4):
+        offsets.append(len(output))
+        output.extend(f"{object_id} 0 obj\n".encode("ascii"))
+        output.extend(objects[object_id])
+        output.extend(b"\nendobj\n")
+    xref_offset = len(output)
+    offsets.append(xref_offset)
+    entries = bytearray(b"\x00\x00\x00\x00\x00\xff\xff")
+    for offset in offsets[1:]:
+        entries.extend(b"\x01" + offset.to_bytes(4, "big") + b"\x00\x00")
+    output.extend(b"4 0 obj\n")
+    output.extend(
+        f"<< /Type /XRef /Length {len(entries)} /W [1 4 2] /Size 5 /Root 1 0 R >>\nstream\n".encode(
+            "ascii"
+        )
+    )
+    output.extend(entries)
+    output.extend(b"\nendstream\nendobj\nstartxref\n")
+    output.extend(str(xref_offset).encode("ascii"))
+    output.extend(b"\n%%EOF\n")
+    return bytes(output)
+
+
 class CoordinatedOcrEngine:
     def __init__(self) -> None:
         self.calls: list[int] = []
@@ -247,3 +278,34 @@ def test_pdf_detection_rejects_magic_bytes_without_bounded_structure(
     spoof.write_bytes(b"%PDF-this is not a PDF")
 
     assert detect_file_type(spoof).format == "UNKNOWN"
+
+
+def test_pdf_detection_rejects_incomplete_xref_and_preserves_valid_table_and_stream(
+    tmp_path: Path,
+) -> None:
+    """An xref token without a table/trailer must not pass structural detection."""
+    pdf = _module("suseoro.ingestion.parsers.pdf")
+    junk = tmp_path / "xref-junk.pdf"
+    junk_contents = b"%PDF-1.7\nxref\nstartxref\n9\n%%EOF\n"
+    junk.write_bytes(junk_contents)
+    classic = tmp_path / "classic.pdf"
+    classic_contents = _pdf_bytes(["Classic xref"])
+    classic.write_bytes(classic_contents)
+    stream = tmp_path / "xref-stream.pdf"
+    stream_contents = _xref_stream_pdf_bytes()
+    stream.write_bytes(stream_contents)
+    stream_digest = hashlib.sha256(stream_contents).hexdigest()
+
+    stream_result = pdf.parse_pdf(
+        stream,
+        role=DocumentRole.UNKNOWN,
+        sha256=stream_digest,
+        ocr_engine=None,
+    )
+
+    assert detect_file_type(junk).format == "UNKNOWN"
+    assert detect_file_type(classic).format == "PDF"
+    assert detect_file_type(stream).format == "PDF"
+    assert len(stream_result.rows) == 1
+    assert stream_result.rows[0].error_code == "OCR_UNAVAILABLE"
+    assert stream_result.rows[0].provenance.source_file_sha256 == stream_digest

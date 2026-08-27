@@ -5,10 +5,13 @@ from __future__ import annotations
 import codecs
 import csv
 import io
+import os
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO
 
+from pypdf import PdfReader
 from python_calamine import CalamineError, CalamineWorkbook
 
 from suseoro.ingestion.contracts import DocumentRole
@@ -18,7 +21,8 @@ OLE_SIGNATURE = bytes.fromhex("D0CF11E0A1B11AE1")
 TEXT_PROBE_BYTES = 64 * 1024
 TEXT_PROBE_LOOKAHEAD = 8
 PDF_TAIL_PROBE_BYTES = 64 * 1024
-PDF_XREF_PROBE_BYTES = 4 * 1024
+PDF_PARSER_PROBE_BYTES = 1024 * 1024
+PDF_PARSER_PROBE_OPERATIONS = 100_000
 
 
 @dataclass(frozen=True)
@@ -32,6 +36,49 @@ class FileDetection:
     delimiter: str | None = None
     header_sheet: str | None = None
     column_mapping: dict[str, str | None] = field(default_factory=dict)
+
+
+class _PdfProbeLimitError(OSError):
+    pass
+
+
+class _BoundedPdfProbe:
+    def __init__(self, source: BinaryIO, size: int) -> None:
+        self._source = source
+        self._size = size
+        self._remaining = PDF_PARSER_PROBE_BYTES
+        self._operations = PDF_PARSER_PROBE_OPERATIONS
+
+    def _consume_operation(self) -> None:
+        self._operations -= 1
+        if self._operations < 0:
+            raise _PdfProbeLimitError("PDF probe operation budget exceeded")
+
+    def tell(self) -> int:
+        return self._source.tell()
+
+    def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        self._consume_operation()
+        position = self._source.seek(offset, whence)
+        if position < 0 or position > self._size:
+            raise _PdfProbeLimitError("PDF probe seek is outside the source")
+        return position
+
+    def read(self, size: int = -1) -> bytes:
+        self._consume_operation()
+        if size is None or size < 0:
+            size = self._size - self.tell()
+        if size > self._remaining:
+            raise _PdfProbeLimitError("PDF probe read budget exceeded")
+        contents = self._source.read(size)
+        self._remaining -= len(contents)
+        return contents
+
+    def seekable(self) -> bool:
+        return True
+
+    def readable(self) -> bool:
+        return True
 
 
 def detect_encoding(contents: bytes) -> tuple[str, str]:
@@ -246,21 +293,23 @@ def _is_structural_pdf(path: Path, head: bytes) -> bool:
             xref_offset = int(tokens[0])
             if xref_offset <= 0 or xref_offset >= size:
                 return False
-            source.seek(xref_offset)
-            xref = source.read(PDF_XREF_PROBE_BYTES).lstrip()
-    except (OSError, ValueError):
+            probe = _BoundedPdfProbe(source, size)
+            reader = PdfReader(probe, strict=True)
+            if reader.is_encrypted:
+                return False
+            root = reader.trailer.get("/Root")
+            if root is None:
+                return False
+            catalog = root.get_object()
+            pages = catalog.get("/Pages")
+            if catalog.get("/Type") != "/Catalog" or pages is None:
+                return False
+            if pages.get_object().get("/Type") != "/Pages":
+                return False
+            _ = len(reader.pages)
+    except Exception:  # noqa: BLE001 - untrusted parser probe must reject safely
         return False
-    if xref.startswith(b"xref"):
-        return True
-    object_header = xref.split(maxsplit=3)
-    return (
-        len(object_header) >= 4
-        and object_header[0].isdigit()
-        and object_header[1].isdigit()
-        and object_header[2] == b"obj"
-        and b"/Type" in xref
-        and b"/XRef" in xref
-    )
+    return True
 
 
 def detect_file_type(path: Path) -> FileDetection:

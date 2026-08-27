@@ -5,6 +5,8 @@ import importlib
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 from suseoro.ingestion.contracts import DocumentRole, RowStatus
 from suseoro.ingestion.detection import detect_file_type
 
@@ -208,6 +210,101 @@ def test_marc_requires_one_nonblank_001_even_without_incremental_mode(
     assert result.rows[0].status == RowStatus.ROW_ERROR
     assert result.rows[0].error_code == "MARC_STABLE_ID_REQUIRED"
     assert result.rows[0].provenance.source_file_sha256 == digest
+    assert result.activation_allowed is False
+
+
+@pytest.mark.parametrize(
+    ("identifier", "error_code"),
+    [
+        pytest.param("\t", "MARC_FIELD_GRAMMAR_INVALID", id="tab-control"),
+        pytest.param("\u00a0", "MARC_STABLE_ID_REQUIRED", id="no-break-space"),
+        pytest.param("\u2003", "MARC_STABLE_ID_REQUIRED", id="em-space"),
+    ],
+)
+def test_marc_rejects_whitespace_only_001_and_continues_at_trusted_boundary(
+    tmp_path: Path,
+    identifier: str,
+    error_code: str,
+) -> None:
+    """Non-ASCII whitespace and control-only identities must never activate."""
+    marc = _module("suseoro.ingestion.parsers.marc")
+    invalid = _catalog_record(identifier)
+    later = _catalog_record("AFTER-WHITESPACE")
+    target = tmp_path / "whitespace-identity.mrc"
+    digest = _write(target, invalid + later)
+
+    result = marc.parse_marc(
+        target,
+        role=DocumentRole.INVENTORY,
+        sha256=digest,
+        incremental=False,
+    )
+
+    assert len(result.rows) == 2
+    assert result.rows[0].status == RowStatus.ROW_ERROR
+    assert result.rows[0].error_code == error_code
+    assert result.rows[0].raw_values["byte_offset"] == 0
+    assert result.rows[0].provenance.source_file_sha256 == digest
+    assert result.rows[1].fields["source_item_id"].value == "AFTER-WHITESPACE"
+    assert result.activation_allowed is False
+
+
+@pytest.mark.parametrize(
+    ("tag", "value"),
+    [
+        pytest.param(
+            "245",
+            b"10\x1faBroken\x1eInjected",
+            id="embedded-field-terminator",
+        ),
+        pytest.param(
+            "008",
+            b"260828s2026\x1dko            000 0 kor  ",
+            id="embedded-record-terminator",
+        ),
+        pytest.param(
+            "005",
+            b"20260828\n112233.0",
+            id="embedded-control-byte",
+        ),
+    ],
+)
+def test_marc_rejects_structural_controls_inside_fields_and_continues_to_legal_text(
+    tmp_path: Path,
+    tag: str,
+    value: bytes,
+) -> None:
+    """Structural controls inside a declared field must not become mapped text."""
+    marc = _module("suseoro.ingestion.parsers.marc")
+    invalid = _record(
+        [
+            ("001", _control("ILLEGAL-CONTROL")),
+            (tag, value),
+        ]
+    )
+    later = _record(
+        [
+            ("001", _control("AFTER-CONTROL")),
+            ("245", _data("10", [("a", "정상 제목")])),
+        ]
+    )
+    target = tmp_path / "embedded-control.mrc"
+    digest = _write(target, invalid + later)
+
+    result = marc.parse_marc(
+        target,
+        role=DocumentRole.INVENTORY,
+        sha256=digest,
+        incremental=False,
+    )
+
+    assert len(result.rows) == 2
+    assert result.rows[0].status == RowStatus.ROW_ERROR
+    assert result.rows[0].error_code == "MARC_FIELD_GRAMMAR_INVALID"
+    assert result.rows[0].raw_values["byte_offset"] == 0
+    assert result.rows[0].provenance.source_file_sha256 == digest
+    assert result.rows[1].fields["source_item_id"].value == "AFTER-CONTROL"
+    assert result.rows[1].fields["title"].value == "정상 제목"
     assert result.activation_allowed is False
 
 
