@@ -1,0 +1,254 @@
+from __future__ import annotations
+
+import hashlib
+import io
+import sqlite3
+import struct
+import zipfile
+from pathlib import Path
+
+import pytest
+from openpyxl import Workbook
+
+from suseoro.config import Settings
+from suseoro.db.connection import connect
+from suseoro.db.migrations import apply_migrations
+from suseoro.ingestion.contracts import DocumentRole
+from suseoro.ingestion.detection import detect_file_type
+from suseoro.ingestion.file_store import (
+    FileTooLarge,
+    ImmutableFileStore,
+    UnsupportedFileType,
+)
+from suseoro.ingestion.safety import (
+    ArchiveSafetyError,
+    XmlSafetyError,
+    inspect_zip,
+    safe_xml_from_bytes,
+)
+
+
+def _zip_bytes(entries: dict[str, bytes]) -> bytes:
+    target = io.BytesIO()
+    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, contents in entries.items():
+            archive.writestr(name, contents)
+    return target.getvalue()
+
+
+def _set_encrypted_flag(archive: bytes) -> bytes:
+    """Set ZIP encryption flags without needing an encryption-writing dependency."""
+    value = bytearray(archive)
+    local = value.index(b"PK\x03\x04")
+    central = value.index(b"PK\x01\x02")
+    struct.pack_into(
+        "<H", value, local + 6, struct.unpack_from("<H", value, local + 6)[0] | 1
+    )
+    struct.pack_into(
+        "<H", value, central + 8, struct.unpack_from("<H", value, central + 8)[0] | 1
+    )
+    return bytes(value)
+
+
+def test_streaming_store_hashes_atomically_and_reuses_immutable_original(
+    data_dir: Path,
+) -> None:
+    """Buffering, replacing, or duplicating an identical original must fail this test."""
+    store = ImmutableFileStore(Settings(data_dir=data_dir).sources_dir, max_bytes=64)
+    chunks = [b"ISBN,", b"title\n", b"9781,", b"Book\n"]
+
+    first = store.store(chunks, filename="misleading.xlsx")
+    second = store.store(iter(chunks), filename="again.csv")
+
+    expected = hashlib.sha256(b"".join(chunks)).hexdigest()
+    assert first.sha256 == expected
+    assert first.size == len(b"".join(chunks))
+    assert first.path.read_bytes() == b"".join(chunks)
+    assert second.path == first.path
+    assert second.created is False
+    assert not list(store.root.rglob("*.tmp"))
+
+
+def test_streaming_store_rejects_limit_without_leaving_partial_file(
+    data_dir: Path,
+) -> None:
+    """Writing any bytes past the configured ceiling or retaining a partial must fail."""
+    store = ImmutableFileStore(Settings(data_dir=data_dir).sources_dir, max_bytes=8)
+
+    with pytest.raises(FileTooLarge):
+        store.store([b"1234", b"56789"], filename="large.csv")
+
+    assert not [path for path in store.root.rglob("*") if path.is_file()]
+
+
+def test_streaming_store_rejects_unknown_binary_signature(data_dir: Path) -> None:
+    """Publishing bytes outside the explicit allowlist must fail this test."""
+    store = ImmutableFileStore(Settings(data_dir=data_dir).sources_dir)
+
+    with pytest.raises(UnsupportedFileType):
+        store.store([b"\x00\x01\x02\x03not-tabular"], filename="payload.csv")
+
+    assert not [path for path in store.root.rglob("*") if path.is_file()]
+
+
+def test_detection_uses_signature_and_content_instead_of_extension(
+    tmp_path: Path,
+) -> None:
+    """Trusting a spoofed suffix rather than bytes must fail this test."""
+    csv_file = tmp_path / "books.xlsx"
+    csv_file.write_bytes("ISBN,제목\n978123,책\n".encode())
+    xlsx_file = tmp_path / "books.txt"
+    xlsx_file.write_bytes(
+        _zip_bytes(
+            {
+                "[Content_Types].xml": b"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+                "xl/workbook.xml": b"<workbook/>",
+            }
+        )
+    )
+    xlsb_file = tmp_path / "books.bin"
+    xlsb_file.write_bytes(
+        _zip_bytes(
+            {
+                "[Content_Types].xml": b"application/vnd.ms-excel.sheet.binary.macroEnabled.main",
+                "xl/workbook.bin": b"\x00\x01",
+            }
+        )
+    )
+    ods_file = tmp_path / "books.zip"
+    ods_file.write_bytes(
+        _zip_bytes({"mimetype": b"application/vnd.oasis.opendocument.spreadsheet"})
+    )
+    xls_file = tmp_path / "legacy.any"
+    xls_file.write_bytes(bytes.fromhex("D0CF11E0A1B11AE1") + b"\x00" * 32)
+
+    assert detect_file_type(csv_file).format == "CSV"
+    assert detect_file_type(xlsx_file).format == "XLSX"
+    assert detect_file_type(xlsb_file).format == "XLSB"
+    assert detect_file_type(ods_file).format == "ODS"
+    assert detect_file_type(xls_file).format == "XLS"
+
+
+def test_workbook_detection_probes_content_for_role_header_and_column_confidence(
+    tmp_path: Path,
+) -> None:
+    """Returning signature only for a workbook must fail this test."""
+    target = tmp_path / "quote.bin"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["2026년 공급 견적"])
+    sheet.append([])
+    sheet.append(["ISBN", "도서명", "수량", "단가"])
+    sheet.append(["00123", "책", 2, 1000])
+    workbook.save(target)
+
+    detected = detect_file_type(target)
+
+    assert detected.format == "XLSX"
+    assert detected.role == DocumentRole.VENDOR_QUOTE
+    assert detected.header_row == 3
+    assert detected.column_confidence == 1.0
+    assert detected.column_mapping == {
+        "ISBN": "isbn",
+        "도서명": "title",
+        "수량": "quantity",
+        "단가": "unit_price",
+    }
+
+
+@pytest.mark.parametrize(
+    "unsafe_name", ["../escape.xml", "/absolute.xml", "C:/drive.xml"]
+)
+def test_zip_path_traversal_is_rejected(tmp_path: Path, unsafe_name: str) -> None:
+    """Accepting an archive member outside its virtual root must fail this test."""
+    target = tmp_path / "unsafe.zip"
+    target.write_bytes(_zip_bytes({unsafe_name: b"x"}))
+
+    with pytest.raises(ArchiveSafetyError, match="path"):
+        inspect_zip(target)
+
+
+def test_encrypted_zip_flag_is_rejected(tmp_path: Path) -> None:
+    """Deferring encrypted content to a workbook reader must fail this test."""
+    target = tmp_path / "encrypted.xlsx"
+    target.write_bytes(_set_encrypted_flag(_zip_bytes({"xl/workbook.xml": b"<x/>"})))
+
+    with pytest.raises(ArchiveSafetyError, match="encrypted"):
+        inspect_zip(target)
+
+
+def test_store_rejects_unsafe_zip_even_when_package_type_is_unknown(
+    data_dir: Path,
+) -> None:
+    """Letting content detection bypass archive safety before publication must fail."""
+    store = ImmutableFileStore(Settings(data_dir=data_dir).sources_dir)
+    payload = _set_encrypted_flag(_zip_bytes({"unknown.bin": b"payload"}))
+
+    with pytest.raises(ArchiveSafetyError, match="encrypted"):
+        store.store([payload], filename="unknown.xlsx")
+
+    assert not [path for path in store.root.rglob("*") if path.is_file()]
+
+
+def test_zip_bomb_metadata_and_entry_limits_are_rejected(tmp_path: Path) -> None:
+    """Ignoring ratio, expanded-size, or entry-count ceilings must fail this test."""
+    ratio_bomb = tmp_path / "ratio.zip"
+    ratio_bomb.write_bytes(_zip_bytes({"huge.xml": b"0" * 100_000}))
+    many = tmp_path / "many.zip"
+    many.write_bytes(_zip_bytes({f"{number}.xml": b"x" for number in range(4)}))
+
+    with pytest.raises(ArchiveSafetyError, match="ratio"):
+        inspect_zip(ratio_bomb, max_compression_ratio=10)
+    with pytest.raises(ArchiveSafetyError, match="expanded"):
+        inspect_zip(ratio_bomb, max_expanded_bytes=10_000, max_compression_ratio=10_000)
+    with pytest.raises(ArchiveSafetyError, match="entries"):
+        inspect_zip(many, max_entries=3)
+
+
+def test_xml_parser_forbids_dtd_and_external_entities() -> None:
+    """Resolving or accepting a DTD/entity payload must fail this test."""
+    payload = (
+        b'<!DOCTYPE x [<!ENTITY probe SYSTEM "file:///etc/passwd">]><x>&probe;</x>'
+    )
+
+    with pytest.raises(XmlSafetyError):
+        safe_xml_from_bytes(payload)
+
+
+def test_ingestion_migration_has_cache_provenance_indexes_and_validates_ids(
+    data_dir: Path,
+) -> None:
+    """Missing tables/indexes or accepting noncanonical identifiers must fail."""
+    settings = Settings(data_dir=data_dir)
+    with connect(settings.database_path) as connection:
+        apply_migrations(connection)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            )
+        }
+        with pytest.raises(sqlite3.IntegrityError, match="identifier"):
+            connection.execute(
+                """
+                INSERT INTO source_files (
+                    id, sha256, size_bytes, storage_path, detected_format, created_at
+                ) VALUES ('not-a-uuid', ?, 1, 'x', 'CSV', ?)
+                """,
+                ("0" * 64, "2026-08-28T12:00:00Z"),
+            )
+
+    assert {
+        "source_files",
+        "source_documents",
+        "source_rows",
+        "parser_runs",
+        "mapping_templates",
+    } <= tables
+    assert {"idx_parser_runs_cache", "idx_source_rows_provenance"} <= indexes

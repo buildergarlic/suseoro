@@ -5,14 +5,19 @@ description = "Suseoro v2 acquisition workflow service"
 requires-python = ">=3.11"
 dependencies = [
     "argon2-cffi>=23.1,<26",
+    "defusedxml>=0.7,<1",
     "fastapi>=0.115,<0.120",
+    "openpyxl>=3.1,<4",
+    "python-calamine>=0.5,<0.7",
     "uvicorn>=0.30,<1.0",
 ]
 
 [dependency-groups]
 dev = [
     "httpx>=0.27,<1.0",
+    "odfpy>=1.4,<2",
     "pytest>=8.3,<9.0",
+    "xlwt>=1.3,<2",
 ]
 
 [build-system]
@@ -27,4 +32,4 @@ addopts = "-ra"
 packages = ["src/suseoro"]
 
 [tool.hatch.build]
-include = ["src/suseoro/db/migrations/*.sql"]
+include = ["src/suseoro/**/*.py", "src/suseoro/db/migrations/*.sql"]
