@@ -1,0 +1,29 @@
+[project]
+name = "suseoro-v2"
+version = "0.1.0"
+description = "Suseoro v2 acquisition workflow service"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<0.120",
+    "uvicorn>=0.30,<1.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27,<1.0",
+    "pytest>=8.3,<9.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/suseoro"]
+
+[tool.hatch.build]
+include = ["src/suseoro/db/migrations/*.sql"]
