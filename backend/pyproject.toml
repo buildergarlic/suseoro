@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Suseoro v2 acquisition workflow service"
 requires-python = ">=3.11"
 dependencies = [
+    "argon2-cffi>=23.1,<26",
     "fastapi>=0.115,<0.120",
     "uvicorn>=0.30,<1.0",
 ]

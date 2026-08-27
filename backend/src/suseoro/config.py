@@ -22,6 +22,8 @@ class Settings:
     data_dir: Path = field(default_factory=_default_data_dir)
     database_path: Path | None = None
     version: str = "0.1.0"
+    secure_cookies: bool = True
+    session_ttl_seconds: int = 8 * 60 * 60
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir).expanduser()
@@ -60,4 +62,9 @@ class Settings:
             data_dir=data_dir,
             database_path=Path(database_value) if database_value else None,
             version=os.environ.get("SUSEORO_VERSION", "0.1.0"),
+            secure_cookies=os.environ.get("SUSEORO_SECURE_COOKIES", "true").lower()
+            not in {"0", "false", "no"},
+            session_ttl_seconds=int(
+                os.environ.get("SUSEORO_SESSION_TTL_SECONDS", str(8 * 60 * 60))
+            ),
         )
