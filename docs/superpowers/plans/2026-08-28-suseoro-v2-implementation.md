@@ -116,7 +116,7 @@
 - Create: `backend/src/suseoro/ingestion/templates.py`
 - Create: `backend/src/suseoro/ingestion/parsers/tabular.py`
 - Create: `backend/src/suseoro/ingestion/parsers/text.py`
-- Create: `backend/src/suseoro/db/migrations/0002_ingestion.sql`
+- Create: `backend/src/suseoro/db/migrations/0003_ingestion.sql`
 - Create: `backend/tests/fixtures/ingestion/README.md`
 - Create: `backend/tests/test_ingestion_safety.py`
 - Create: `backend/tests/test_tabular_parsers.py`
@@ -133,7 +133,7 @@
 7. 병합셀, 여러 시트, 빈 행, 중복 header, 앞부분 설명 행을 처리한다. 각 데이터 행은 성공 또는 `ROW_ERROR` 중 하나로 반드시 반환한다.
 8. 열 연결은 ISBN, 제목, 저자, 출판사, 수량, 단가, 등록번호, 청구기호 등 동의어를 사용한다. 낮은 신뢰도는 최대 20행 미리보기와 필요한 질문을 반환한다.
 9. 양식 signature는 정규화 header와 문서 역할, 학교/업체 범위로 만들며 순서 변경과 비필수 열 추가를 견딘다. 필수 의미가 바뀌면 조용히 재사용하지 않는다.
-10. `0002_ingestion.sql`은 `source_files`, `source_documents`, `source_rows`, `parser_runs`, `mapping_templates`와 캐시·provenance 인덱스를 만든다.
+10. `0003_ingestion.sql`은 `source_files`, `source_documents`, `source_rows`, `parser_runs`, `mapping_templates`와 캐시·provenance 인덱스를 만든다.
 
 **TDD and verification:**
 
@@ -192,7 +192,7 @@
 - Create: `backend/src/suseoro/jobs/repository.py`
 - Create: `backend/src/suseoro/jobs/runner.py`
 - Create: `backend/src/suseoro/services/comparison.py`
-- Create: `backend/src/suseoro/db/migrations/0003_catalog_matching.sql`
+- Create: `backend/src/suseoro/db/migrations/0004_catalog_matching.sql`
 - Create: `backend/tests/test_normalization_matching.py`
 - Create: `backend/tests/test_catalog_sync.py`
 - Create: `backend/tests/test_comparison_accounting.py`
@@ -201,7 +201,7 @@
 **Required behavior:**
 
 1. ISBN-10/13 검증·변환, 제목/부제/저자/출판사/권차/판 정규화 키를 만들되 원문은 보존한다.
-2. `0003`은 immutable catalog versions, holdings, normalized works, recommendations, candidate decisions, FTS 검색 인덱스와 정확 ISBN/정규화 키 인덱스를 만든다.
+2. `0004`는 immutable catalog versions, holdings, normalized works, recommendations, candidate decisions, FTS 검색 인덱스와 정확 ISBN/정규화 키 인덱스를 만든다.
 3. 전체 스냅샷은 staging version을 검증하고 한 트랜잭션으로 활성화한다. 0건과 이전 대비 ±30%는 확인 없이는 차단한다. 학교별 활성 source type은 하나다.
 4. MARC 증분은 2일 overlap, Asia/Seoul 양끝 포함, 안정 ID upsert, 갱신 파일 우선, 두 파일 성공 뒤 watermark 전진, 90일 전체 요구 규칙을 구현한다. 재실행은 멱등이다.
 5. 정확 유효 ISBN 일치는 `EXCLUDED`. ISBN 없는 exact title+author와 유사 후보는 `NEEDS_REVIEW`. 나머지는 `CANDIDATE`다. 판·권차 충돌은 자동 제외하지 않는다.
@@ -232,7 +232,7 @@
 - Create: `backend/src/suseoro/exports/safe_cells.py`
 - Create: `backend/src/suseoro/exports/dls.py`
 - Create: `backend/src/suseoro/exports/orders.py`
-- Create: `backend/src/suseoro/db/migrations/0004_workflow.sql`
+- Create: `backend/src/suseoro/db/migrations/0005_workflow.sql`
 - Create: `backend/tests/test_candidate_workflow.py`
 - Create: `backend/tests/test_approval_rules.py`
 - Create: `backend/tests/test_quotes_orders.py`
