@@ -15,6 +15,8 @@ from suseoro.ingestion.contracts import DocumentRole
 from suseoro.ingestion.mapping import infer_mapping
 
 OLE_SIGNATURE = bytes.fromhex("D0CF11E0A1B11AE1")
+TEXT_PROBE_BYTES = 64 * 1024
+TEXT_PROBE_LOOKAHEAD = 8
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,31 @@ def detect_encoding(contents: bytes) -> tuple[str, str]:
             return encoding, contents.decode(encoding)
         except UnicodeDecodeError:
             continue
+    raise ValueError("text is not UTF-8, CP949, or EUC-KR")
+
+
+def _detect_encoding_chunks(chunks: list[bytes], *, final: bool) -> tuple[str, str]:
+    prefix = b"".join(chunks)[: len(codecs.BOM_UTF8)]
+    encodings = (
+        ("utf-8-sig",)
+        if prefix.startswith(codecs.BOM_UTF8)
+        else (
+            "utf-8",
+            "cp949",
+            "euc-kr",
+        )
+    )
+    for encoding in encodings:
+        decoder = codecs.getincrementaldecoder(encoding)(errors="strict")
+        decoded: list[str] = []
+        try:
+            for index, chunk in enumerate(chunks):
+                decoded.append(
+                    decoder.decode(chunk, final=final and index == len(chunks) - 1)
+                )
+        except UnicodeDecodeError:
+            continue
+        return encoding, "".join(decoded)
     raise ValueError("text is not UTF-8, CP949, or EUC-KR")
 
 
@@ -133,7 +160,9 @@ def _text_detection(contents: bytes) -> FileDetection:
     )
 
 
-def _workbook_detection(path: Path, format_name: str) -> FileDetection:
+def _workbook_detection(
+    path: Path, format_name: str, *, reject_on_error: bool = False
+) -> FileDetection:
     try:
         workbook = CalamineWorkbook.from_path(path)
         try:
@@ -155,15 +184,31 @@ def _workbook_detection(path: Path, format_name: str) -> FileDetection:
         finally:
             workbook.close()
     except (CalamineError, OSError, ValueError):
-        return FileDetection(format_name)
+        return FileDetection("UNKNOWN" if reject_on_error else format_name)
+
+
+def _text_file_detection(path: Path) -> FileDetection:
+    with path.open("rb") as source:
+        first = source.read(TEXT_PROBE_BYTES)
+        lookahead = source.read(TEXT_PROBE_LOOKAHEAD)
+        final = len(lookahead) < TEXT_PROBE_LOOKAHEAD
+    encoding, text = _detect_encoding_chunks([first, lookahead], final=final)
+    delimiter, format_name = detect_delimiter(text)
+    rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))[:25]
+    return _content_detection(
+        rows,
+        format_name=format_name,
+        encoding=encoding,
+        delimiter=delimiter,
+    )
 
 
 def detect_file_type(path: Path) -> FileDetection:
     path = Path(path)
     with path.open("rb") as source:
-        head = source.read(64_000)
+        head = source.read(TEXT_PROBE_BYTES)
     if head.startswith(OLE_SIGNATURE):
-        return _workbook_detection(path, "XLS")
+        return _workbook_detection(path, "XLS", reject_on_error=True)
     if head.startswith(b"PK"):
         packaged = _zip_format(path)
         if packaged:
@@ -172,6 +217,6 @@ def detect_file_type(path: Path) -> FileDetection:
     if b"\x00" in head:
         return FileDetection("UNKNOWN")
     try:
-        return _text_detection(head)
+        return _text_file_detection(path)
     except ValueError:
         return FileDetection("UNKNOWN")

@@ -7,7 +7,7 @@ import time
 import zipfile
 from collections.abc import Iterable
 from itertools import chain
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from xml.etree.ElementTree import ParseError
 
@@ -24,10 +24,13 @@ from suseoro.ingestion.contracts import (
     RowStatus,
 )
 from suseoro.ingestion.detection import detect_file_type
+from suseoro.ingestion.file_store import StoredFile
 from suseoro.ingestion.mapping import canonical_field_for_header, infer_mapping
 from suseoro.ingestion.safety import inspect_zip, safe_xml_from_bytes
 
 PARSER_VERSION = "tabular-v1"
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+_FORMULA_MARKERS = ("=", "+", "-", "@")
 
 
 class CalamineCompatibilityError(RuntimeError):
@@ -75,15 +78,50 @@ def _column_number(reference: str) -> int:
     return value
 
 
+def _relationship_id(element: Any) -> str | None:
+    return next(
+        (
+            value
+            for key, value in element.attrib.items()
+            if key.endswith("}id") or key == "id"
+        ),
+        None,
+    )
+
+
+def _worksheet_targets(archive: zipfile.ZipFile) -> list[str]:
+    workbook = safe_xml_from_bytes(archive.read("xl/workbook.xml"))
+    relationships = safe_xml_from_bytes(archive.read("xl/_rels/workbook.xml.rels"))
+    targets = {
+        relationship.attrib.get("Id"): relationship.attrib.get("Target")
+        for relationship in relationships
+        if relationship.attrib.get("Type", "").endswith("/worksheet")
+    }
+    ordered: list[str] = []
+    for sheet in workbook.iter():
+        if not (sheet.tag.endswith("}sheet") or sheet.tag == "sheet"):
+            continue
+        target = targets.get(_relationship_id(sheet))
+        if not target:
+            continue
+        if target.startswith("/"):
+            normalized = PurePosixPath(target.lstrip("/"))
+        else:
+            normalized = PurePosixPath("xl") / PurePosixPath(target)
+        if ".." in normalized.parts:
+            raise ValueError("unsafe worksheet relationship target")
+        ordered.append(normalized.as_posix())
+    return ordered
+
+
 def _xlsx_formula_cells(path: Path) -> dict[tuple[int, int, int], str]:
     found: dict[tuple[int, int, int], str] = {}
     try:
         with zipfile.ZipFile(path) as archive:
-            for name in archive.namelist():
-                match = re.fullmatch(r"xl/worksheets/sheet(\d+)\.xml", name)
-                if not match:
-                    continue
-                sheet_number = int(match.group(1))
+            names = set(archive.namelist())
+            for sheet_number, name in enumerate(_worksheet_targets(archive), start=1):
+                if name not in names:
+                    raise KeyError(name)
                 root = safe_xml_from_bytes(archive.read(name))
                 for cell in root.iter():
                     if not cell.tag.endswith("}c") and cell.tag != "c":
@@ -147,11 +185,20 @@ def _find_header(rows: list[list[Any]]) -> int | None:
 
 
 def _error_row(
-    *, sheet: str | None, source_row: int, code: str, message: str
+    *,
+    sheet: str | None,
+    source_row: int,
+    code: str,
+    message: str,
+    source_file_sha256: str,
 ) -> ParsedRow:
     return ParsedRow(
         status=RowStatus.ROW_ERROR,
-        provenance=Provenance(sheet=sheet, source_row=source_row),
+        provenance=Provenance(
+            sheet=sheet,
+            source_row=source_row,
+            source_file_sha256=source_file_sha256,
+        ),
         raw_values={},
         fields={},
         error_code=code,
@@ -169,6 +216,7 @@ def _parse_sheets(
     source_kind: str = "FILE",
     formula_cells: dict[tuple[int, int, int], str] | None = None,
     started_at: float | None = None,
+    source_file_sha256: str,
 ) -> ParseResult:
     rows_out: list[ParsedRow] = []
     header_rows: dict[str, int] = {}
@@ -192,6 +240,7 @@ def _parse_sheets(
                             source_row=index,
                             code="HEADER_NOT_FOUND",
                             message="Could not identify a semantic header row",
+                            source_file_sha256=source_file_sha256,
                         )
                     )
             continue
@@ -222,6 +271,24 @@ def _parse_sheets(
                 semantics.extend([None] * (len(headers) - len(semantics)))
             padded = row + [None] * max(0, len(headers) - len(row))
             raw_values = {header: padded[index] for index, header in enumerate(headers)}
+            explicit_formula_columns: set[int] = set()
+            column_warnings: dict[int, tuple[FieldWarning, ...]] = {}
+            row_warnings: list[FieldWarning] = []
+            for column, header in enumerate(headers, start=1):
+                formula_source = formulas.get((sheet_number, source_index, column))
+                if formula_source is not None:
+                    raw_values[header] = formula_source
+                    explicit_formula_columns.add(column)
+                raw_value = raw_values[header]
+                if isinstance(raw_value, str) and raw_value.startswith(
+                    _FORMULA_MARKERS
+                ):
+                    warning = FieldWarning(
+                        "FORMULA_LIKE_INPUT",
+                        f"Formula-like source text preserved without execution in column {header}",
+                    )
+                    column_warnings[column] = (warning,)
+                    row_warnings.append(warning)
             fields: dict[str, ParsedField] = {}
             source_columns: dict[str, int] = {}
             for column, (header, semantic) in enumerate(
@@ -229,20 +296,11 @@ def _parse_sheets(
             ):
                 if not semantic:
                     continue
-                raw_value = padded[column - 1]
-                warnings: tuple[FieldWarning, ...] = ()
+                raw_value = raw_values[header]
+                warnings = column_warnings.get(column, ())
                 value = raw_value
-                formula_source = formulas.get((sheet_number, source_index, column))
-                if formula_source is not None:
+                if column in explicit_formula_columns:
                     value = None
-                    raw_value = formula_source
-                    raw_values[header] = formula_source
-                    warnings = (
-                        FieldWarning(
-                            "FORMULA_NOT_EVALUATED",
-                            "Formula cells are never evaluated during ingestion",
-                        ),
-                    )
                 if (
                     semantic in {"isbn", "registration_number", "call_number"}
                     and value is not None
@@ -260,7 +318,27 @@ def _parse_sheets(
                 for field in sorted(required)
                 if fields.get(field) is None or fields[field].value in (None, "")
             ]
-            status = RowStatus.ROW_ERROR if missing else RowStatus.SUCCESS
+            decode_error = any(
+                isinstance(value, str) and "\ufffd" in value
+                for value in raw_values.values()
+            )
+            status = (
+                RowStatus.ROW_ERROR if missing or decode_error else RowStatus.SUCCESS
+            )
+            error_code = (
+                "DECODE_ERROR"
+                if decode_error
+                else "MISSING_REQUIRED_FIELD"
+                if missing
+                else None
+            )
+            error_message = (
+                "Source row contains invalid bytes for the detected encoding"
+                if decode_error
+                else ("Missing: " + ", ".join(missing))
+                if missing
+                else None
+            )
             rows_out.append(
                 ParsedRow(
                     status=status,
@@ -268,13 +346,13 @@ def _parse_sheets(
                         sheet=sheet_name,
                         source_row=source_index,
                         source_columns=source_columns,
+                        source_file_sha256=source_file_sha256,
                     ),
                     raw_values=raw_values,
                     fields=fields,
-                    error_code="MISSING_REQUIRED_FIELD" if missing else None,
-                    error_message=("Missing: " + ", ".join(missing))
-                    if missing
-                    else None,
+                    warnings=tuple(row_warnings),
+                    error_code=error_code,
+                    error_message=error_message,
                 )
             )
     elapsed = time.perf_counter() - started_at if started_at is not None else 0.000001
@@ -291,14 +369,40 @@ def _parse_sheets(
     )
 
 
-def parse_tabular(path: Path, *, role: DocumentRole) -> ParseResult:
+def _source_path_and_sha256(
+    source: Path | StoredFile, sha256: str | None
+) -> tuple[Path, str]:
+    if isinstance(source, StoredFile):
+        path = source.path
+        digest = source.sha256
+        if sha256 is not None and sha256 != digest:
+            raise ValueError("sha256 does not match StoredFile")
+    else:
+        path = Path(source)
+        digest = sha256 or ""
+    if _SHA256_PATTERN.fullmatch(digest) is None:
+        raise ValueError("sha256 must be 64 lowercase hexadecimal characters")
+    return path, digest
+
+
+def parse_tabular(
+    source: Path | StoredFile,
+    *,
+    role: DocumentRole,
+    sha256: str | None = None,
+) -> ParseResult:
     started = time.perf_counter()
-    path = Path(path)
+    path, source_file_sha256 = _source_path_and_sha256(source, sha256)
     detection = detect_file_type(path)
     if detection.format in {"CSV", "TSV", "TXT"}:
         from suseoro.ingestion.parsers.text import parse_delimited_file
 
-        result = parse_delimited_file(path, role=role)
+        result = parse_delimited_file(
+            path,
+            role=role,
+            source_file_sha256=source_file_sha256,
+            detection=detection,
+        )
         return ParseResult(
             **{**result.__dict__, "elapsed_seconds": time.perf_counter() - started}
         )
@@ -318,6 +422,7 @@ def parse_tabular(path: Path, *, role: DocumentRole) -> ParseResult:
                         source_row=0,
                         code="WORKBOOK_ERROR",
                         message=str(error),
+                        source_file_sha256=source_file_sha256,
                     )
                 ],
                 elapsed_seconds=time.perf_counter() - started,
@@ -340,6 +445,7 @@ def parse_tabular(path: Path, *, role: DocumentRole) -> ParseResult:
                         source_row=0,
                         code="WORKBOOK_ERROR",
                         message=str(calamine_error),
+                        source_file_sha256=source_file_sha256,
                     )
                 ],
                 elapsed_seconds=time.perf_counter() - started,
@@ -366,6 +472,7 @@ def parse_tabular(path: Path, *, role: DocumentRole) -> ParseResult:
                         source_row=0,
                         code="WORKBOOK_ERROR",
                         message=str(fallback_error),
+                        source_file_sha256=source_file_sha256,
                     )
                 ],
                 elapsed_seconds=time.perf_counter() - started,
@@ -377,4 +484,5 @@ def parse_tabular(path: Path, *, role: DocumentRole) -> ParseResult:
         parser_backend=backend,
         formula_cells=formula_cells,
         started_at=started,
+        source_file_sha256=source_file_sha256,
     )

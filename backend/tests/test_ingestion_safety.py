@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import xlwt
 from openpyxl import Workbook
 
 from suseoro.config import Settings
@@ -20,12 +21,17 @@ from suseoro.ingestion.file_store import (
     ImmutableFileStore,
     UnsupportedFileType,
 )
+from suseoro.ingestion.parsers.tabular import parse_tabular
 from suseoro.ingestion.safety import (
     ArchiveSafetyError,
     XmlSafetyError,
     inspect_zip,
     safe_xml_from_bytes,
 )
+from suseoro.ingestion.templates import ParserCache
+
+SOURCE_ID = "550e8400-e29b-41d4-a716-446655440350"
+NOW = "2026-08-28T12:34:56Z"
 
 
 def _zip_bytes(entries: dict[str, bytes]) -> bytes:
@@ -126,7 +132,49 @@ def test_detection_uses_signature_and_content_instead_of_extension(
     assert detect_file_type(xlsx_file).format == "XLSX"
     assert detect_file_type(xlsb_file).format == "XLSB"
     assert detect_file_type(ods_file).format == "ODS"
-    assert detect_file_type(xls_file).format == "XLS"
+    assert detect_file_type(xls_file).format == "UNKNOWN"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        bytes.fromhex("D0CF11E0A1B11AE1") + b"\x00" * 504,
+        bytes.fromhex("D0CF11E0A1B11AE1") + b"WordDocument" + b"\x00" * 492,
+        bytes.fromhex("D0CF11E0A1B11AE1") + b"PowerPoint Document" + b"\x00" * 484,
+    ],
+)
+def test_ole_signature_without_a_structural_xls_workbook_is_rejected(
+    data_dir: Path, payload: bytes
+) -> None:
+    """Treating arbitrary CFB/DOC/PPT-like bytes as XLS must fail this test."""
+    target = data_dir / "spoofed.xls"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(payload)
+
+    assert detect_file_type(target).format == "UNKNOWN"
+    store = ImmutableFileStore(Settings(data_dir=data_dir).sources_dir)
+    with pytest.raises(UnsupportedFileType):
+        store.store([payload], filename="spoofed.xls")
+
+
+def test_real_xls_is_structurally_recognized_and_allowed(data_dir: Path) -> None:
+    """Rejecting a real CFB workbook while tightening OLE checks must fail."""
+    target = data_dir / "real.xls"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Books")
+    sheet.write(0, 0, "ISBN")
+    sheet.write(0, 1, "제목")
+    sheet.write(1, 0, "00123")
+    sheet.write(1, 1, "책")
+    workbook.save(str(target))
+    payload = target.read_bytes()
+
+    assert detect_file_type(target).format == "XLS"
+    stored = ImmutableFileStore(Settings(data_dir=data_dir).sources_dir).store(
+        [payload], filename="renamed.doc"
+    )
+    assert stored.detected_format == "XLS"
 
 
 def test_workbook_detection_probes_content_for_role_header_and_column_confidence(
@@ -251,4 +299,121 @@ def test_ingestion_migration_has_cache_provenance_indexes_and_validates_ids(
         "parser_runs",
         "mapping_templates",
     } <= tables
-    assert {"idx_parser_runs_cache", "idx_source_rows_provenance"} <= indexes
+    assert {
+        "idx_parser_runs_cache",
+        "idx_source_rows_provenance",
+        "idx_source_documents_unique_parse",
+        "idx_source_rows_unique_provenance",
+    } <= indexes
+
+
+def test_forward_ingestion_integrity_migration_enforces_source_and_provenance(
+    data_dir: Path,
+) -> None:
+    """Orphan parser runs or duplicate logical provenance must fail in SQLite."""
+    settings = Settings(data_dir=data_dir)
+    with connect(settings.database_path) as connection:
+        apply_migrations(connection)
+        with pytest.raises(sqlite3.IntegrityError, match="source file"):
+            connection.execute(
+                """
+                INSERT INTO parser_runs (
+                    id, source_file_sha256, parser_version, role, status, created_at
+                ) VALUES (?, ?, 'v1', 'UNKNOWN', 'PENDING', ?)
+                """,
+                ("550e8400-e29b-41d4-a716-446655440351", "a" * 64, NOW),
+            )
+
+        connection.execute(
+            """
+            INSERT INTO source_files (
+                id, sha256, size_bytes, storage_path, detected_format, created_at
+            ) VALUES (?, ?, 1, 'stored', 'CSV', ?)
+            """,
+            (SOURCE_ID, "a" * 64, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO parser_runs (
+                id, source_file_sha256, parser_version, role, status, created_at
+            ) VALUES (?, ?, 'v1', 'UNKNOWN', 'PENDING', ?)
+            """,
+            ("550e8400-e29b-41d4-a716-446655440355", "a" * 64, NOW),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="parser runs"):
+            connection.execute("DELETE FROM source_files WHERE id = ?", (SOURCE_ID,))
+        with pytest.raises(sqlite3.IntegrityError, match="parser runs"):
+            connection.execute(
+                "UPDATE source_files SET sha256 = ? WHERE id = ?",
+                ("b" * 64, SOURCE_ID),
+            )
+        document_id = "550e8400-e29b-41d4-a716-446655440352"
+        connection.execute(
+            """
+            INSERT INTO source_documents (
+                id, source_file_id, role, parser_version, status,
+                detected_format, created_at
+            ) VALUES (?, ?, 'UNKNOWN', 'v1', 'SUCCESS', 'CSV', ?)
+            """,
+            (document_id, SOURCE_ID, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO source_rows (
+                id, source_document_id, sheet_name, source_row, status,
+                raw_json, fields_json, created_at
+            ) VALUES (?, ?, 'Sheet1', 2, 'SUCCESS', '{}', '{}', ?)
+            """,
+            ("550e8400-e29b-41d4-a716-446655440353", document_id, NOW),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
+            connection.execute(
+                """
+                INSERT INTO source_rows (
+                    id, source_document_id, sheet_name, source_row, status,
+                    raw_json, fields_json, created_at
+                ) VALUES (?, ?, 'Sheet1', 2, 'ROW_ERROR', '{}', '{}', ?)
+                """,
+                ("550e8400-e29b-41d4-a716-446655440354", document_id, NOW),
+            )
+
+
+def test_rejected_second_upload_cannot_damage_committed_first_source(
+    data_dir: Path,
+) -> None:
+    """Rolling back or deleting prior source/cache state on later rejection must fail."""
+    settings = Settings(data_dir=data_dir)
+    store = ImmutableFileStore(settings.sources_dir)
+    first = store.store(["ISBN,제목\n00123,첫 책\n".encode()], filename="first.csv")
+    with connect(settings.database_path) as connection:
+        apply_migrations(connection)
+        connection.execute(
+            """
+            INSERT INTO source_files (
+                id, sha256, size_bytes, storage_path, original_filename,
+                detected_format, created_at
+            ) VALUES (?, ?, ?, ?, 'first.csv', 'CSV', ?)
+            """,
+            (SOURCE_ID, first.sha256, first.size, str(first.path), NOW),
+        )
+        parsed = parse_tabular(first, role=DocumentRole.PURCHASE_REQUEST)
+        ParserCache(connection).get_or_parse(
+            sha256=first.sha256,
+            parser_version="tabular-v1",
+            role=DocumentRole.PURCHASE_REQUEST,
+            parse=lambda: {"rows": len(parsed.rows)},
+        )
+        connection.commit()
+
+        with pytest.raises(UnsupportedFileType):
+            store.store([b"\x00bogus-second"], filename="second.csv")
+
+        cached = connection.execute(
+            "SELECT status, result_json FROM parser_runs WHERE source_file_sha256 = ?",
+            (first.sha256,),
+        ).fetchone()
+
+    assert first.path.read_bytes() == "ISBN,제목\n00123,첫 책\n".encode()
+    assert parsed.rows[0].fields["isbn"].value == "00123"
+    assert parsed.rows[0].provenance.source_file_sha256 == first.sha256
+    assert cached["status"] == "SUCCESS"

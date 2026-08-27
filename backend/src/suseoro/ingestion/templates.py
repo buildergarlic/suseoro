@@ -23,19 +23,31 @@ def template_signature(
     required_fields: set[str],
     school_id: str | None = None,
     vendor_scope: str | None = None,
+    mapping: dict[str, str | None] | None = None,
 ) -> str:
     """Fingerprint stable required semantics, independent of order/optional additions."""
-    semantic_headers = {
-        canonical_field_for_header(header) or f"unknown:{normalize_header(header)}"
-        for header in headers
-    }
+    semantic_identities: list[str] = []
+    present_fields: set[str] = set()
+    for header in headers:
+        semantic = mapping.get(header) if mapping is not None else None
+        inferred = canonical_field_for_header(header)
+        semantic = semantic or inferred
+        if semantic not in required_fields:
+            continue
+        present_fields.add(semantic)
+        semantic_identities.append(
+            semantic
+            if inferred == semantic
+            else f"{semantic}:custom:{normalize_header(header)}"
+        )
     required_presence = [
-        f"{field}:{'present' if field in semantic_headers else 'missing'}"
+        f"{field}:{'present' if field in present_fields else 'missing'}"
         for field in sorted(required_fields)
     ]
     payload = {
         "role": role.value,
         "required": required_presence,
+        "semantic_headers": sorted(semantic_identities),
         "school": school_id or "*",
         "vendor": vendor_scope or "*",
     }
@@ -77,6 +89,7 @@ class MappingTemplateStore:
             required_fields=required_fields,
             school_id=school_id,
             vendor_scope=scope,
+            mapping=mapping,
         )
         existing = self.connection.execute(
             """
@@ -103,7 +116,14 @@ class MappingTemplateStore:
                 scope,
                 role.value,
                 signature,
-                json.dumps(sorted(normalize_header(header) for header in headers)),
+                json.dumps(
+                    {
+                        normalize_header(header): mapping.get(header)
+                        for header in headers
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
                 json.dumps(mapping, ensure_ascii=False, sort_keys=True),
                 json.dumps(sorted(required_fields)),
                 template_version,
@@ -123,29 +143,50 @@ class MappingTemplateStore:
         required_fields: set[str],
     ) -> MappingTemplate | None:
         scope = vendor_scope or "*"
-        signature = template_signature(
-            headers,
-            role,
-            required_fields=required_fields,
-            school_id=school_id,
-            vendor_scope=scope,
-        )
-        row = self.connection.execute(
+        rows = self.connection.execute(
             """
             SELECT * FROM mapping_templates
-            WHERE school_id = ? AND vendor_scope = ? AND role = ? AND signature = ?
+            WHERE school_id = ? AND vendor_scope = ? AND role = ?
             """,
-            (school_id, scope, role.value, signature),
-        ).fetchone()
-        if row is None:
+            (school_id, scope, role.value),
+        ).fetchall()
+        compatible: list[tuple[sqlite3.Row, dict[str, str | None]]] = []
+        for row in rows:
+            if set(json.loads(row["required_fields_json"])) != required_fields:
+                continue
+            stored_mapping = json.loads(row["mapping_json"])
+            stored_semantics = {
+                semantic for semantic in stored_mapping.values() if semantic is not None
+            }
+            stored_by_identity = {
+                normalize_header(header): semantic
+                for header, semantic in stored_mapping.items()
+            }
+            applied_mapping: dict[str, str | None] = {}
+            for header in headers:
+                semantic = canonical_field_for_header(header)
+                if semantic in stored_semantics:
+                    applied_mapping[header] = semantic
+                else:
+                    applied_mapping[header] = stored_by_identity.get(
+                        normalize_header(header)
+                    )
+            if required_fields <= {
+                semantic
+                for semantic in applied_mapping.values()
+                if semantic is not None
+            }:
+                compatible.append((row, applied_mapping))
+        if len(compatible) != 1:
             return None
+        row, applied_mapping = compatible[0]
         return MappingTemplate(
             id=row["id"],
             school_id=row["school_id"],
             vendor_scope=row["vendor_scope"],
             role=DocumentRole(row["role"]),
             signature=row["signature"],
-            mapping=json.loads(row["mapping_json"]),
+            mapping=applied_mapping,
             required_fields=set(json.loads(row["required_fields_json"])),
             template_version=row["template_version"],
         )
@@ -162,47 +203,121 @@ class ParserCache:
         parser_version: str,
         role: DocumentRole,
         parse: Callable[[], Any],
+        retry_failed: bool = True,
     ) -> CachedParseResult:
         if not re.fullmatch(r"[0-9a-f]{64}", sha256):
             raise ValueError("sha256 must be 64 lowercase hexadecimal characters")
         if not parser_version.strip():
             raise ValueError("parser_version is required")
+        source = self.connection.execute(
+            "SELECT id FROM source_files WHERE sha256 = ?", (sha256,)
+        ).fetchone()
+        if source is None:
+            raise ValueError("source file must exist before parser cache reservation")
         row = self.connection.execute(
             """
-            SELECT result_json FROM parser_runs
+            SELECT status, result_json, error_json FROM parser_runs
             WHERE source_file_sha256 = ? AND parser_version = ? AND role = ?
-              AND status = 'SUCCESS'
             """,
             (sha256, parser_version, role.value),
         ).fetchone()
         if row is not None:
-            return CachedParseResult(json.loads(row["result_json"]), True)
+            if row["status"] == "SUCCESS":
+                return CachedParseResult(json.loads(row["result_json"]), True)
+            if row["status"] == "PENDING":
+                raise ParserCacheInProgress("parser result is currently being produced")
+            if not retry_failed:
+                raise ParserCacheFailed(row["error_json"] or "parser run failed")
 
-        result = parse()
-        encoded = json.dumps(
-            result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        )
         run_id = str(uuid.uuid4())
         now = format_utc(utc_now())
-        self.connection.execute(
+        try:
+            if row is not None and row["status"] == "FAILED":
+                claim = self.connection.execute(
+                    """
+                    UPDATE parser_runs
+                    SET status = 'PENDING', result_json = NULL, error_json = NULL,
+                        completed_at = NULL
+                    WHERE source_file_sha256 = ? AND parser_version = ? AND role = ?
+                      AND status = 'FAILED'
+                    """,
+                    (sha256, parser_version, role.value),
+                )
+            else:
+                claim = self.connection.execute(
+                    """
+                    INSERT OR IGNORE INTO parser_runs (
+                        id, source_file_sha256, parser_version, role, status, created_at
+                    ) VALUES (?, ?, ?, ?, 'PENDING', ?)
+                    """,
+                    (run_id, sha256, parser_version, role.value, now),
+                )
+        except sqlite3.OperationalError as error:
+            if "locked" in str(error).casefold():
+                raise ParserCacheInProgress(
+                    "parser result is currently being produced"
+                ) from error
+            raise
+        if claim.rowcount != 1:
+            current = self.connection.execute(
+                """
+                SELECT status, result_json, error_json FROM parser_runs
+                WHERE source_file_sha256 = ? AND parser_version = ? AND role = ?
+                """,
+                (sha256, parser_version, role.value),
+            ).fetchone()
+            if current is not None and current["status"] == "SUCCESS":
+                return CachedParseResult(json.loads(current["result_json"]), True)
+            if current is not None and current["status"] == "FAILED":
+                raise ParserCacheFailed(current["error_json"] or "parser run failed")
+            raise ParserCacheInProgress("parser result is currently being produced")
+
+        try:
+            result = parse()
+            encoded = json.dumps(
+                result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+        except Exception as error:
+            completed = format_utc(utc_now())
+            self.connection.execute(
+                """
+                UPDATE parser_runs
+                SET status = 'FAILED', error_json = ?, completed_at = ?
+                WHERE source_file_sha256 = ? AND parser_version = ? AND role = ?
+                  AND status = 'PENDING'
+                """,
+                (
+                    json.dumps(
+                        {"type": type(error).__name__, "message": str(error)},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    completed,
+                    sha256,
+                    parser_version,
+                    role.value,
+                ),
+            )
+            raise
+        completed = format_utc(utc_now())
+        updated = self.connection.execute(
             """
-            INSERT OR IGNORE INTO parser_runs (
-                id, source_file_sha256, parser_version, role, status,
-                result_json, created_at, completed_at
-            ) VALUES (?, ?, ?, ?, 'SUCCESS', ?, ?, ?)
-            """,
-            (run_id, sha256, parser_version, role.value, encoded, now, now),
-        )
-        stored = self.connection.execute(
-            """
-            SELECT id, result_json FROM parser_runs
+            UPDATE parser_runs
+            SET status = 'SUCCESS', result_json = ?, error_json = NULL,
+                completed_at = ?
             WHERE source_file_sha256 = ? AND parser_version = ? AND role = ?
-              AND status = 'SUCCESS'
+              AND status = 'PENDING'
             """,
-            (sha256, parser_version, role.value),
-        ).fetchone()
-        if stored is None:
-            raise RuntimeError("parser cache write failed")
-        if stored["id"] != run_id:
-            return CachedParseResult(json.loads(stored["result_json"]), True)
+            (encoded, completed, sha256, parser_version, role.value),
+        )
+        if updated.rowcount != 1:
+            raise RuntimeError("parser cache reservation was lost")
         return CachedParseResult(result, False)
+
+
+class ParserCacheInProgress(RuntimeError):
+    pass
+
+
+class ParserCacheFailed(RuntimeError):
+    pass
