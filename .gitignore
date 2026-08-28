@@ -22,6 +22,8 @@ outputs/
 data/
 sources/
 exports/
+!backend/src/suseoro/exports/
+!backend/src/suseoro/exports/*.py
 backups/
 
 # Local secrets

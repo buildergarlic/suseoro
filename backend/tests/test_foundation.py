@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import sqlite3
 import shutil
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -11,7 +11,6 @@ from suseoro.api.app import create_app
 from suseoro.config import Settings
 from suseoro.db.connection import connect
 from suseoro.db.migrations import MigrationChecksumMismatch, apply_migrations
-
 
 FOUNDATION_TABLES = {
     "schools",
@@ -80,7 +79,9 @@ def test_migrations_are_idempotent_and_reject_changed_history(
     migrations_dir = tmp_path / "migrations"
     migrations_dir.mkdir()
     migration = migrations_dir / "0001_example.sql"
-    migration.write_text("CREATE TABLE examples (id TEXT PRIMARY KEY);", encoding="utf-8")
+    migration.write_text(
+        "CREATE TABLE examples (id TEXT PRIMARY KEY);", encoding="utf-8"
+    )
 
     settings = Settings(data_dir=data_dir)
     with connect(settings.database_path) as connection:
@@ -103,7 +104,9 @@ def test_migrations_are_idempotent_and_reject_changed_history(
             apply_migrations(connection, migrations_dir)
 
 
-def test_foundation_migration_creates_required_tables_and_indexes(data_dir: Path) -> None:
+def test_foundation_migration_creates_required_tables_and_indexes(
+    data_dir: Path,
+) -> None:
     """Removing a ledger table or lookup index would break later workflow queries."""
     settings = Settings(data_dir=data_dir)
 
@@ -167,7 +170,9 @@ def test_foundation_constraints_upgrade_preserves_valid_linked_data(
     """The forward validation migration must preserve valid 0001 ledger records."""
     migrations_dir = tmp_path / "migrations"
     migrations_dir.mkdir()
-    source_migrations = Path(__file__).parents[1] / "src" / "suseoro" / "db" / "migrations"
+    source_migrations = (
+        Path(__file__).parents[1] / "src" / "suseoro" / "db" / "migrations"
+    )
     shutil.copy2(source_migrations / "0001_foundation.sql", migrations_dir)
 
     settings = Settings(data_dir=data_dir)
@@ -229,7 +234,9 @@ def test_forward_constraints_reject_invalid_legacy_data_without_data_loss(
     """Invalid historical values must block the validation migration, not be discarded."""
     migrations_dir = tmp_path / "migrations"
     migrations_dir.mkdir()
-    source_migrations = Path(__file__).parents[1] / "src" / "suseoro" / "db" / "migrations"
+    source_migrations = (
+        Path(__file__).parents[1] / "src" / "suseoro" / "db" / "migrations"
+    )
     shutil.copy2(source_migrations / "0001_foundation.sql", migrations_dir)
 
     settings = Settings(data_dir=data_dir)
@@ -249,7 +256,10 @@ def test_forward_constraints_reject_invalid_legacy_data_without_data_loss(
         with pytest.raises(sqlite3.IntegrityError):
             apply_migrations(connection, migrations_dir)
 
-        assert connection.execute("SELECT name FROM schools").fetchone()[0] == "Legacy school"
+        assert (
+            connection.execute("SELECT name FROM schools").fetchone()[0]
+            == "Legacy school"
+        )
         assert [
             row[0]
             for row in connection.execute(

@@ -54,7 +54,7 @@ class Settings:
         return self.data_dir / "backups"
 
     @classmethod
-    def from_environment(cls) -> "Settings":
+    def from_environment(cls) -> Settings:
         """Build settings from the supported SUSEORO_ environment variables."""
         data_dir = Path(os.environ.get("SUSEORO_DATA_DIR", _default_data_dir()))
         database_value = os.environ.get("SUSEORO_DATABASE_PATH")
