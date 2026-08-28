@@ -9,8 +9,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
+from fastapi.routing import APIRoute
 
-from suseoro.api.dependencies import authenticated_user_from_session
+from suseoro.api.dependencies import (
+    authenticated_user_from_session,
+    current_user,
+    database_connection,
+    require_idempotency_key,
+    require_if_match,
+    require_request_id,
+)
 from suseoro.api.errors import error_response, install_error_handlers, request_id_for
 from suseoro.api.routes.approvals import router as approvals_router
 from suseoro.api.routes.audit import router as audit_router
@@ -35,6 +43,54 @@ from suseoro.security.sessions import (
     CSRF_HEADER_NAME,
     SESSION_COOKIE_NAME,
 )
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+_CSRF_EXEMPT_PATHS = frozenset({"/api/v2/auth/login"})
+_DEPENDENCY_HEADERS = {
+    require_idempotency_key: "Idempotency-Key",
+    require_if_match: "If-Match",
+    require_request_id: "X-Request-ID",
+}
+
+
+def _requires_csrf(method: str, path: str) -> bool:
+    """Return the shared runtime/schema CSRF decision for one request."""
+    return method.upper() not in _SAFE_METHODS and path not in _CSRF_EXEMPT_PATHS
+
+
+def _dependency_calls(route: APIRoute) -> set[object]:
+    calls: set[object] = set()
+    pending = [route.dependant]
+    while pending:
+        dependant = pending.pop()
+        if dependant.call is not None:
+            calls.add(dependant.call)
+        pending.extend(dependant.dependencies)
+    return calls
+
+
+def _require_openapi_header(
+    parameters: list[dict[str, object]],
+    name: str,
+    description: str | None = None,
+) -> None:
+    created = False
+    parameter = next(
+        (
+            item
+            for item in parameters
+            if item.get("in") == "header" and item.get("name") == name
+        ),
+        None,
+    )
+    if parameter is None:
+        parameter = {"name": name, "in": "header"}
+        parameters.append(parameter)
+        created = True
+    parameter["required"] = True
+    parameter["schema"] = {"type": "string"}
+    if description is not None and created:
+        parameter["description"] = description
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -112,15 +168,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         install_model(ApiErrorResponse)
         for response_model in set(OPERATION_RESPONSE_MODELS.values()):
             install_model(response_model)
+        routes_by_operation_id = {
+            route.operation_id: route
+            for route in app.routes
+            if isinstance(route, APIRoute) and route.operation_id is not None
+        }
         methods = {"get", "post", "put", "patch", "delete"}
         for path, path_item in schema["paths"].items():
             for method, operation in path_item.items():
                 if method not in methods:
                     continue
                 operation_id = operation["operationId"]
-                if operation_id in {"getHealth", "login"}:
-                    operation["security"] = []
-                elif method in {"post", "put", "patch", "delete"}:
+                route = routes_by_operation_id[operation_id]
+                dependency_calls = _dependency_calls(route)
+                csrf_required = _requires_csrf(method, path)
+                session_required = csrf_required or current_user in dependency_calls
+                role_required = any(
+                    getattr(call, "suseoro_required_role", None) is not None
+                    for call in dependency_calls
+                )
+                if csrf_required:
                     operation["security"] = [
                         {
                             "SessionCookie": [],
@@ -128,8 +195,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "CsrfHeader": [],
                         }
                     ]
-                else:
+                elif session_required:
                     operation["security"] = [{"SessionCookie": []}]
+                else:
+                    operation["security"] = []
                 if operation_id == "streamEvents":
                     for item in operation.get("parameters", []):
                         if item.get("name") == "Last-Event-ID":
@@ -148,102 +217,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         json_content["schema"] = {
                             "$ref": (f"#/components/schemas/{response_model.__name__}")
                         }
-                for status in (
-                    "400",
-                    "401",
-                    "403",
-                    "404",
-                    "409",
-                    "412",
-                    "422",
-                    "428",
-                    "500",
-                    "503",
+                common_errors: set[str] = set()
+                if any(
+                    dependency in dependency_calls for dependency in _DEPENDENCY_HEADERS
                 ):
-                    operation["responses"][status] = {
-                        "description": "구조화된 오류",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/ApiErrorResponse"
-                                }
-                            }
-                        },
-                    }
-                if (
-                    method in {"post", "put", "patch", "delete"}
-                    and operation_id != "login"
-                ):
-                    parameters = operation.setdefault("parameters", [])
-                    for item in parameters:
-                        if (
-                            item.get("in") == "header"
-                            and item.get("name") == "If-Match"
-                        ):
-                            item["required"] = True
-                            item["schema"] = {"type": "string"}
-                    existing = {
-                        (item.get("in"), item.get("name")): item for item in parameters
-                    }
-                    for header, description in (
-                        ("X-CSRF-Token", "CSRF 방지 토큰"),
-                        ("X-Request-ID", "요청 UUID"),
-                        ("Idempotency-Key", "중복 요청 방지 키"),
-                    ):
-                        item = existing.get(("header", header))
-                        if item is None:
-                            parameters.append(
-                                {
-                                    "name": header,
-                                    "in": "header",
-                                    "required": True,
-                                    "description": description,
-                                    "schema": {"type": "string"},
-                                }
-                            )
-                        else:
-                            item["required"] = True
-                            item["schema"] = {"type": "string"}
-                if (
-                    path.startswith("/api/v2/admin/v1-migration")
-                    or path == "/api/v2/admin/restores"
-                ):
-                    parameters = operation.setdefault("parameters", [])
-                    confirmation = next(
-                        (
-                            item
-                            for item in parameters
-                            if item.get("in") == "header"
-                            and item.get("name") == "X-Local-Admin-Confirmation"
-                        ),
-                        None,
+                    common_errors.add("400")
+                if session_required:
+                    common_errors.add("401")
+                if csrf_required or role_required:
+                    common_errors.add("403")
+                if require_idempotency_key in dependency_calls:
+                    common_errors.add("409")
+                if require_if_match in dependency_calls:
+                    common_errors.update({"412", "428"})
+                if csrf_required or database_connection in dependency_calls:
+                    common_errors.add("503")
+                for status in common_errors:
+                    operation["responses"].setdefault(
+                        status, {"description": "구조화된 오류"}
                     )
-                    if confirmation is None:
-                        parameters.append(
-                            {
-                                "name": "X-Local-Admin-Confirmation",
-                                "in": "header",
-                                "required": True,
-                                "schema": {"type": "string"},
-                            }
-                        )
-                    else:
-                        confirmation["required"] = True
-                        confirmation["schema"] = {"type": "string"}
-                for item in operation.get("parameters", []):
-                    if (
-                        item.get("in") == "header"
-                        and item.get("required") is True
-                        and item.get("name")
-                        in {
-                            "If-Match",
-                            "Idempotency-Key",
-                            "X-CSRF-Token",
-                            "X-Request-ID",
-                            "X-Local-Admin-Confirmation",
+                operation["responses"].setdefault(
+                    "default", {"description": "구조화된 오류"}
+                )
+                for status, error in operation["responses"].items():
+                    if status.startswith("2"):
+                        continue
+                    error["content"] = {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ApiErrorResponse"}
                         }
-                    ):
-                        item["schema"] = {"type": "string"}
+                    }
+                parameters = operation.get("parameters", [])
+                if csrf_required:
+                    _require_openapi_header(
+                        parameters, "X-CSRF-Token", "CSRF 방지 토큰"
+                    )
+                for dependency, header in _DEPENDENCY_HEADERS.items():
+                    if dependency in dependency_calls:
+                        _require_openapi_header(parameters, header)
+                if any(
+                    item.get("in") == "header"
+                    and item.get("name") == "X-Local-Admin-Confirmation"
+                    for item in parameters
+                ):
+                    _require_openapi_header(parameters, "X-Local-Admin-Confirmation")
+                if parameters:
+                    operation["parameters"] = parameters
         app.openapi_schema = schema
         return schema
 
@@ -253,10 +272,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def csrf_boundary(request: Request, call_next):
         request_id_for(request)
         try:
-            if (
-                request.method not in {"GET", "HEAD", "OPTIONS", "TRACE"}
-                and request.url.path != "/api/v2/auth/login"
-            ):
+            if _requires_csrf(request.method, request.url.path):
                 session_token = request.cookies.get(SESSION_COOKIE_NAME)
                 if not session_token:
                     return error_response(

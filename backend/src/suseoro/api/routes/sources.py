@@ -34,6 +34,7 @@ from suseoro.api.dependencies import (
 )
 from suseoro.api.errors import domain_not_found
 from suseoro.api.routes.events import publish_event
+from suseoro.api.schemas import ApiErrorResponse, UploadResponse
 from suseoro.catalog.contracts import (
     CatalogRecord,
     DeltaFile,
@@ -241,6 +242,12 @@ def _source(row) -> dict[str, Any]:
 
 @router.post(
     "/workspaces/{workspace_id}/sources",
+    status_code=202,
+    response_model=UploadResponse,
+    responses={
+        207: {"model": UploadResponse, "description": "일부 파일만 접수됨"},
+        413: {"model": ApiErrorResponse, "description": "업로드 용량 제한 초과"},
+    },
     summary="원본 자료 올리기",
     operation_id="uploadSources",
 )

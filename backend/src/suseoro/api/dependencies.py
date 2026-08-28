@@ -137,6 +137,7 @@ def require_role(
     ) -> AuthenticatedUser:
         return enforce_role(user, required_role)
 
+    dependency.suseoro_required_role = required_role
     return dependency
 
 

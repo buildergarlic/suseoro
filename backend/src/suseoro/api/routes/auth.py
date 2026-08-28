@@ -16,6 +16,7 @@ from suseoro.api.dependencies import (
     require_idempotency_key,
     require_request_id,
 )
+from suseoro.api.schemas import ApiErrorResponse
 from suseoro.config import Settings
 from suseoro.repositories.auth import authenticate_user, issue_session, revoke_session
 from suseoro.security.secrets import MachineSecretStore
@@ -90,6 +91,9 @@ def _set_session_cookies(
 @router.post(
     "/login",
     response_model=UserResponse,
+    responses={
+        401: {"model": ApiErrorResponse, "description": "로그인 정보가 올바르지 않음"}
+    },
     summary="로그인하기",
     operation_id="login",
 )

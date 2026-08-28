@@ -319,6 +319,126 @@ exit 0
 build 산출물은 검증 후 명시 경로에서 제거했다. OpenAPI 두 번 생성의 SHA256이 동일해
 generator stability도 확인했다.
 
+## 독립 검토 수정 라운드 4 (2026-08-29, 기준 `bfedb73`)
+
+### focused RED/GREEN 증거
+
+남은 OpenAPI exactness finding을 runtime과 generated schema를 동시에 검증하는
+대적적 회귀 테스트로 제품 코드보다 먼저 고정했다. 로그인의 실제
+`Idempotency-Key`/`X-Request-ID` 요구, read-only v1 inspect의 mutation header 비요구,
+upload의 202/207/413 runtime 분기와 typed response를 각각 실제 요청으로 확인했다.
+
+최초 RED는 다음과 같았다.
+
+```text
+uv run pytest \
+  tests/test_api_contract.py::test_login_runtime_headers_match_its_public_openapi_contract \
+  tests/test_api_contract.py::test_read_only_v1_inspection_runtime_headers_match_its_openapi_contract \
+  tests/test_api_contract.py::test_upload_runtime_statuses_match_typed_openapi_responses \
+  -q --tb=short
+3 failed in 7.23s
+```
+
+- login의 두 header가 schema에서 optional/nullable였다.
+- `inspectV1Migration`이 runtime에서 요구하지 않는 `Idempotency-Key`/
+  `X-Request-ID`를 schema는 required로 내보냈다.
+- upload probe의 첫 실행은 동일 SHA fixture가 기존 source와 충돌해 runtime 409를
+  낸 test-fixture 문제였다. 서로 다른 유효 파일로 교정한 뒤 다시 실행해
+  runtime은 202/207/413을 모두 반환하지만 schema success가 `200` 하나뿐인
+  의도한 RED를 확인했다 (`1 failed in 3.83s`).
+
+전체 operation audit에서 기존 generator가 `If-Match`가 없는 37개 operation에도
+412/428을 일괄 추가하는 동일 root cause를 발견했다. dependency surface와
+error status가 정확히 맞아야 하는 all-operation invariant를 먼저 추가했고
+`login` response의 불가능한 412로 실패하는 RED를 확인했다 (`1 failed in 4.62s`).
+또 route-specific/unexpected error를 위한 typed `default` response assertion을 먼저 추가했을 때
+`KeyError: 'default'`로 실패하는 별도 RED도 확인했다 (`1 failed in 3.06s`).
+
+최소 구현 후 대적적 runtime/schema, security, nested schema, artifact parity 세트는
+`8 passed in 6.97s`, `test_api_contract.py`는 `41 passed in 25.96s`였다. 최종 fresh
+GREEN은 다음과 같다.
+
+```text
+uv run pytest tests/test_api_contract.py tests/test_sse_jobs.py tests/test_v1_migration.py tests/test_backup_restore.py -q --tb=short
+....................................................................     [100%]
+68 passed in 38.28s
+
+uv run pytest -q --tb=short
+........................................................................ [ 19%]
+........................................................................ [ 38%]
+........................................................................ [ 57%]
+........................................................................ [ 77%]
+........................................................................ [ 96%]
+..............                                                           [100%]
+374 passed in 81.36s (0:01:21)
+```
+
+### 수정 결정과 제품 동작
+
+- generator는 54개 operation을 `operation_id` 별 APIRoute와 연결하고 FastAPI dependency
+  graph를 순회한다. `require_idempotency_key`, `require_request_id`, `require_if_match`가
+  실제 dependency인 operation에만 해당 header를 required/non-nullable string으로 내보낸다.
+- CSRF 예외 판정은 middleware와 OpenAPI가 하나의 predicate를 공유한다. 따라서
+  login은 public/no-CSRF이면서 멱등성 키와 request ID를 요구하고, v1 inspect는
+  session + CSRF + local confirmation만 요구한다.
+- 공통 400/401/403/409/412/428/503은 실제 dependency, session/CSRF middleware,
+  role marker에서 유도한다. 422는 FastAPI가 실제 validation surface에 생성한 경우만
+  typed envelope로 바꾸고, route-specific 404/500 등 미명시 error는 typed `default`로
+  표현해 불가능한 status를 operation마다 열거하지 않는다.
+- upload route 계약은 202 full accepted, 207 partial, 413 aggregate/batch rejection을
+  명시하며 202/207은 `UploadResponse`, 413은 `ApiErrorResponse`로 생성된다.
+- 다른 custom success status도 전수 검사했다. logout 204, workspace/staging/backup
+  create 201, comparison/parse/retry 202가 runtime route 선언과 정확히 같다.
+
+주요 변경 파일은 `api/{app,dependencies}.py`,
+`api/routes/{auth,sources}.py`, generated `backend/openapi.json`,
+`tests/test_api_contract.py`이다. schema migration은 추가하거나 수정하지 않았다.
+
+### migration/checksum 및 최종 gate 증거
+
+```text
+git diff --exit-code bfedb73 -- backend/src/suseoro/db/migrations
+exit 0
+
+0006_api_operations.sql
+CE06C0866F14A1E2932CC21CE18C80F239B97E927AC14FB6C9E32E7CB1797EBF
+
+0006a_api_hardening.sql
+4E18920AA31AA5129CC23E123681062CDDE79E9329EB7B90307C27C80A021F86
+
+uv run --with ruff ruff format --check src tests
+102 files already formatted
+
+uv run --with ruff ruff check src tests
+All checks passed!
+
+uv run python -m compileall -q src tests
+exit 0
+
+uv lock --check
+Resolved 36 packages in 3ms
+
+uv build --out-dir .task7-round4-build
+Successfully built .task7-round4-build\suseoro_v2-0.1.0.tar.gz
+Successfully built .task7-round4-build\suseoro_v2-0.1.0-py3-none-any.whl
+
+uv run python -m suseoro.api.export_openapi  # twice
+first=4DC3F6ADA23693DD3C9AB84E18364887105640E9027185F0DC6962E77F37BD3F
+second=4DC3F6ADA23693DD3C9AB84E18364887105640E9027185F0DC6962E77F37BD3F
+
+npx --yes openapi-typescript openapi.json -o .task7-round4-ts/schema.d.ts
+openapi-typescript 7.13.0
+npx --yes --package typescript tsc --noEmit --skipLibCheck \
+  .task7-round4-ts/schema.d.ts .task7-round4-ts/contract-check.ts
+exit 0
+```
+
+TypeScript type-level assertion은 login의 required string header 두 개, inspect의 CSRF/local
+confirmation-only header, upload의 200 비존재·202/207/413 key와 각 typed body를 직접
+검증했다. dangerous execution, embedded secret, merge-marker scan은 모두 no matches였고
+`git diff --check`도 exit 0이었다. 독립 최종 review는 Critical/Important/Minor 없이
+`Ready: Yes`로 판정했다.
+
 ## 독립 검토 수정 라운드 3 (2026-08-29, 기준 `b49ad13`)
 
 ### focused RED/GREEN 증거

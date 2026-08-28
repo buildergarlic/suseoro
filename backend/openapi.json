@@ -4262,16 +4262,6 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
             "content": {
               "application/json": {
@@ -4292,36 +4282,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "422": {
             "content": {
               "application/json": {
@@ -4330,29 +4290,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4469,27 +4419,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4507,29 +4437,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4642,27 +4562,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4680,29 +4580,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4840,27 +4730,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4878,29 +4748,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4960,24 +4820,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "description": "요청 UUID",
-            "in": "header",
-            "name": "X-Request-ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "중복 요청 방지 키",
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
           }
         ],
         "requestBody": {
@@ -5001,16 +4843,6 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
             "content": {
               "application/json": {
@@ -5031,36 +4863,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "422": {
             "content": {
               "application/json": {
@@ -5069,29 +4871,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5220,27 +5012,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5258,29 +5030,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5345,57 +5107,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5413,29 +5125,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5571,16 +5273,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -5609,7 +5301,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -5621,7 +5313,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5631,7 +5323,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5769,16 +5461,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -5807,7 +5489,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -5819,7 +5501,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5829,7 +5511,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5967,16 +5649,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -6005,7 +5677,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -6017,7 +5689,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6027,7 +5699,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6165,16 +5837,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -6203,7 +5865,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -6215,7 +5877,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6225,7 +5887,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6341,57 +6003,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6409,29 +6021,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6460,33 +6062,17 @@
           {
             "in": "header",
             "name": "Idempotency-Key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "X-Request-ID",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           }
         ],
@@ -6529,39 +6115,9 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "로그인 정보가 올바르지 않음"
           },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6579,29 +6135,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6714,27 +6260,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6752,29 +6278,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6830,57 +6346,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6898,29 +6364,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7056,16 +6512,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -7094,7 +6540,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -7106,7 +6552,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7116,7 +6562,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7246,27 +6692,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7284,29 +6710,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7427,27 +6843,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7465,29 +6861,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7617,27 +7003,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7655,29 +7021,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7756,57 +7112,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7824,29 +7130,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7882,97 +7178,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8028,57 +7234,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8096,29 +7252,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8236,27 +7382,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8274,29 +7400,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8416,27 +7532,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8454,29 +7550,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8541,57 +7627,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8609,29 +7645,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8767,16 +7793,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -8805,7 +7821,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -8817,7 +7833,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8827,7 +7843,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8965,16 +7981,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -9003,7 +8009,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -9015,7 +8021,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9025,7 +8031,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9163,16 +8169,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -9201,7 +8197,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -9213,7 +8209,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9223,7 +8219,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9353,27 +8349,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9391,29 +8367,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9478,57 +8444,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9546,29 +8462,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9696,27 +8602,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9734,29 +8620,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9894,16 +8770,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -9932,7 +8798,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -9944,7 +8810,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9954,7 +8820,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10074,27 +8940,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10112,29 +8958,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10239,57 +9075,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10307,29 +9093,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10411,57 +9187,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10479,29 +9205,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10599,57 +9315,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10667,29 +9333,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10806,27 +9462,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10844,29 +9480,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10931,57 +9557,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10999,29 +9575,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11112,57 +9678,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11180,29 +9696,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11338,16 +9844,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -11376,7 +9872,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -11388,7 +9884,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11398,7 +9894,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11524,57 +10020,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11592,29 +10038,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11742,27 +10178,7 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11780,29 +10196,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11940,16 +10346,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -11978,7 +10374,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -11990,7 +10386,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12000,7 +10396,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12093,57 +10489,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12161,29 +10507,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12317,16 +10653,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -12355,7 +10681,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -12367,7 +10693,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12377,7 +10703,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12515,16 +10841,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -12553,7 +10869,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -12565,7 +10881,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12575,7 +10891,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12668,57 +10984,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12736,29 +11002,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12892,16 +11148,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -12930,7 +11176,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -12942,7 +11188,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -12952,7 +11198,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13090,16 +11336,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -13128,7 +11364,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -13140,7 +11376,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13150,7 +11386,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13292,57 +11528,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13360,29 +11546,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13518,16 +11694,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -13556,7 +11722,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -13568,7 +11734,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13578,7 +11744,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13687,57 +11853,7 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "412": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13755,29 +11871,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13863,7 +11969,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "202": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13872,6 +11978,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "207": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            },
+            "description": "일부 파일만 접수됨"
           },
           "400": {
             "content": {
@@ -13903,16 +12019,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -13923,7 +12029,7 @@
             },
             "description": "구조화된 오류"
           },
-          "412": {
+          "413": {
             "content": {
               "application/json": {
                 "schema": {
@@ -13931,7 +12037,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "업로드 용량 제한 초과"
           },
           "422": {
             "content": {
@@ -13941,29 +12047,19 @@
                 }
               }
             },
-            "description": "구조화된 오류"
-          },
-          "428": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
@@ -14101,16 +12197,6 @@
             },
             "description": "구조화된 오류"
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "구조화된 오류"
-          },
           "409": {
             "content": {
               "application/json": {
@@ -14139,7 +12225,7 @@
                 }
               }
             },
-            "description": "구조화된 오류"
+            "description": "Validation Error"
           },
           "428": {
             "content": {
@@ -14151,7 +12237,7 @@
             },
             "description": "구조화된 오류"
           },
-          "500": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -14161,7 +12247,7 @@
             },
             "description": "구조화된 오류"
           },
-          "503": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {

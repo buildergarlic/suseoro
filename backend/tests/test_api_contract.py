@@ -377,6 +377,100 @@ def test_openapi_exposes_complete_stable_korean_v2_contract(data_dir: Path) -> N
     )
 
 
+def test_login_runtime_headers_match_its_public_openapi_contract(
+    data_dir: Path,
+) -> None:
+    settings = Settings(data_dir=data_dir, secure_cookies=False)
+    _seed(settings)
+    client = TestClient(create_app(settings), base_url="https://testserver")
+    payload = {
+        "school_id": SCHOOL_ID,
+        "username": "operator",
+        "password": "Safe contract 42!",
+    }
+
+    with client:
+        missing_idempotency = client.post(
+            "/api/v2/auth/login",
+            headers={"X-Request-ID": REQUEST_ID},
+            json=payload,
+        )
+        missing_request_id = client.post(
+            "/api/v2/auth/login",
+            headers={"Idempotency-Key": "login-missing-request-id"},
+            json=payload,
+        )
+        accepted = client.post(
+            "/api/v2/auth/login",
+            headers={
+                "Idempotency-Key": "login-complete-headers",
+                "X-Request-ID": REQUEST_ID,
+            },
+            json=payload,
+        )
+        schema = client.get("/openapi.json").json()
+
+    assert missing_idempotency.status_code == 400
+    assert missing_idempotency.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
+    assert missing_request_id.status_code == 400
+    assert missing_request_id.json()["detail"]["code"] == "REQUEST_ID_REQUIRED"
+    assert accepted.status_code == 200
+    operation = schema["paths"]["/api/v2/auth/login"]["post"]
+    parameters = {
+        (parameter["in"], parameter["name"]): parameter
+        for parameter in operation.get("parameters", [])
+    }
+    assert operation["security"] == []
+    assert ("header", "X-CSRF-Token") not in parameters
+    assert ("cookie", "suseoro_session") not in parameters
+    for header in ("Idempotency-Key", "X-Request-ID"):
+        assert parameters[("header", header)]["required"] is True
+        assert parameters[("header", header)]["schema"] == {"type": "string"}
+
+
+def test_read_only_v1_inspection_runtime_headers_match_its_openapi_contract(
+    data_dir: Path,
+) -> None:
+    allowed_root = data_dir / "allowed-v1"
+    source_root = allowed_root / "legacy-source"
+    source_root.mkdir(parents=True)
+    client, _, csrf = _client(
+        data_dir / "api",
+        settings_kwargs={"v1_import_roots": (allowed_root,)},
+    )
+    confirmation = client.app.state.local_admin_confirmation_token
+
+    with client:
+        inspected = client.post(
+            "/api/v2/admin/v1-migration/inspect",
+            headers={
+                "X-CSRF-Token": csrf,
+                "X-Local-Admin-Confirmation": confirmation,
+            },
+            json={"source_path": str(source_root)},
+        )
+        schema = client.get("/openapi.json").json()
+
+    assert inspected.status_code == 200
+    operation = schema["paths"]["/api/v2/admin/v1-migration/inspect"]["post"]
+    required_headers = {
+        parameter["name"]: parameter
+        for parameter in operation.get("parameters", [])
+        if parameter["in"] == "header" and parameter.get("required")
+    }
+    assert operation["security"] == [
+        {"SessionCookie": [], "CsrfCookie": [], "CsrfHeader": []}
+    ]
+    assert set(required_headers) == {
+        "X-CSRF-Token",
+        "X-Local-Admin-Confirmation",
+    }
+    assert all(
+        parameter["schema"] == {"type": "string"}
+        for parameter in required_headers.values()
+    )
+
+
 def test_workspace_mutations_require_operator_csrf_and_replay_idempotently(
     data_dir: Path,
 ) -> None:
@@ -586,6 +680,93 @@ def test_multipart_upload_streams_each_file_and_keeps_partial_success(
     assert job["status"] == "QUEUED"
     assert body["items"][0]["source_id"] in job["payload_json"]
     assert sources == 1
+
+
+def test_upload_runtime_statuses_match_typed_openapi_responses(data_dir: Path) -> None:
+    client, _, csrf = _client(
+        data_dir,
+        settings_kwargs={
+            "upload_max_file_bytes": 500,
+            "upload_max_batch_bytes": 700,
+        },
+    )
+    valid = b"title,author\nA,B\n"
+    partial_valid = b"title,author\nC,D\n"
+    aggregate_part = b"title,author\n" + (b"A,B\n" * 95)
+    assert len(aggregate_part) < 500
+    assert len(aggregate_part) * 2 > 700
+
+    with client:
+        accepted = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "schema-upload-accepted"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("accepted.csv", valid, "text/csv"))],
+        )
+        partial = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "schema-upload-partial"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                ("files", ("partial.csv", partial_valid, "text/csv")),
+                (
+                    "files",
+                    ("rejected.exe", b"MZ-invalid", "application/octet-stream"),
+                ),
+            ],
+        )
+        rejected = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "schema-upload-aggregate-rejection"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                ("files", ("aggregate-1.csv", aggregate_part, "text/csv")),
+                ("files", ("aggregate-2.csv", aggregate_part, "text/csv")),
+            ],
+        )
+        schema = client.get("/openapi.json").json()
+
+    assert accepted.status_code == 202
+    assert partial.status_code == 207
+    assert rejected.status_code == 413
+    UploadResponse.model_validate(accepted.json())
+    UploadResponse.model_validate(partial.json())
+    ApiErrorResponse.model_validate(rejected.json())
+    assert rejected.json()["detail"]["code"] == "UPLOAD_BATCH_LIMIT_EXCEEDED"
+
+    operations = {
+        operation["operationId"]: operation
+        for path_item in schema["paths"].values()
+        for method, operation in path_item.items()
+        if method in {"get", "post", "put", "patch", "delete"}
+    }
+    expected_custom_successes = {
+        "logout": {"204"},
+        "createWorkspace": {"201"},
+        "createComparisonJob": {"202"},
+        "uploadSources": {"202", "207"},
+        "parseSource": {"202"},
+        "stageCatalogSnapshot": {"201"},
+        "retryJob": {"202"},
+        "createBackup": {"201"},
+    }
+    for operation_id, expected in expected_custom_successes.items():
+        documented = {
+            status
+            for status in operations[operation_id]["responses"]
+            if status.startswith("2")
+        }
+        assert documented == expected, operation_id
+
+    upload_responses = operations["uploadSources"]["responses"]
+    assert "200" not in upload_responses
+    for status in ("202", "207"):
+        assert upload_responses[status]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/UploadResponse"
+        }
+    assert upload_responses["413"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ApiErrorResponse"
+    }
 
 
 def test_uploaded_csv_durable_job_parses_and_persists_rows(data_dir: Path) -> None:
@@ -1349,12 +1530,13 @@ def test_openapi_has_typed_json_responses_errors_and_required_mutation_headers(
                 continue
             success_schema = success["content"]["application/json"]["schema"]
             assert success_schema.get("$ref"), operation["operationId"]
-            assert (
-                operation["responses"]["422"]["content"]["application/json"]["schema"][
-                    "$ref"
-                ]
-                == "#/components/schemas/ApiErrorResponse"
-            )
+            if "422" in operation["responses"]:
+                assert (
+                    operation["responses"]["422"]["content"]["application/json"][
+                        "schema"
+                    ]["$ref"]
+                    == "#/components/schemas/ApiErrorResponse"
+                )
             if (
                 method in {"post", "put", "patch", "delete"}
                 and operation["operationId"] != "login"
@@ -1364,11 +1546,7 @@ def test_openapi_has_typed_json_responses_errors_and_required_mutation_headers(
                     for parameter in operation.get("parameters", [])
                     if parameter["in"] == "header" and parameter.get("required")
                 }
-                assert {
-                    "X-CSRF-Token",
-                    "X-Request-ID",
-                    "Idempotency-Key",
-                } <= required_headers
+                assert "X-CSRF-Token" in required_headers
 
     components = schema["components"]["schemas"]
 
@@ -1538,6 +1716,95 @@ def test_openapi_security_and_every_reachable_nested_json_schema_are_concrete(
     error_field = components["ApiErrorField"]
     assert set(error_field["required"]) == {"field"}
     assert {"message", "value"} <= set(error_field["properties"])
+
+
+def test_openapi_common_error_statuses_follow_runtime_dependency_surfaces(
+    data_dir: Path,
+) -> None:
+    client, _, _ = _client(data_dir)
+    with client:
+        schema = client.get("/openapi.json").json()
+
+    operations = {
+        operation["operationId"]: (method, operation)
+        for path_item in schema["paths"].values()
+        for method, operation in path_item.items()
+        if method in {"get", "post", "put", "patch", "delete"}
+    }
+    if_match_operations = {
+        "transitionWorkspace",
+        "createComparisonJob",
+        "updateSourceMapping",
+        "updateCandidate",
+        "requestApproval",
+        "cancelApproval",
+        "approveApproval",
+        "requestApprovalChanges",
+        "commentApproval",
+        "createQuote",
+        "matchQuoteRow",
+        "createOrder",
+        "markOrderSent",
+        "createDelivery",
+        "startScanSession",
+        "setReceivingDisposition",
+        "completeReceiving",
+    }
+    idempotent_operations = {
+        "login",
+        "logout",
+        "createWorkspace",
+        "transitionWorkspace",
+        "createComparisonJob",
+        "uploadSources",
+        "updateSourceMapping",
+        "parseSource",
+        "stageCatalogSnapshot",
+        "activateCatalogVersion",
+        "applyCatalogDelta",
+        "retryJob",
+        "cancelJob",
+        "updateCandidate",
+        "bulkDecideCandidates",
+        "lockCandidate",
+        "requestApproval",
+        "cancelApproval",
+        "approveApproval",
+        "requestApprovalChanges",
+        "commentApproval",
+        "createQuote",
+        "matchQuoteRow",
+        "createOrder",
+        "markOrderSent",
+        "createDelivery",
+        "startScanSession",
+        "recordScan",
+        "setReceivingDisposition",
+        "completeReceiving",
+        "runV1Migration",
+        "activateV1CatalogCandidate",
+        "createBackup",
+        "restoreBackup",
+    }
+    unsafe_methods = {"post", "put", "patch", "delete"}
+
+    for operation_id, (method, operation) in operations.items():
+        responses = operation["responses"]
+        assert responses["default"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/ApiErrorResponse"
+        }
+        assert ("400" in responses) is (operation_id in idempotent_operations)
+        assert ("412" in responses) is (operation_id in if_match_operations)
+        assert ("428" in responses) is (operation_id in if_match_operations)
+        assert ("409" in responses) is (operation_id in idempotent_operations)
+        assert ("401" in responses) is (operation_id != "getHealth")
+        assert ("403" in responses) is (
+            (method in unsafe_methods and operation_id != "login")
+            or operation_id == "listBackups"
+        )
+        assert ("422" in responses) is (operation_id != "getHealth")
+        assert ("503" in responses) is (operation_id != "getHealth")
+    assert set(operations["getHealth"][1]["responses"]) == {"200", "default"}
 
 
 def test_job_runtime_and_domain_role_errors_keep_structured_status_codes(
