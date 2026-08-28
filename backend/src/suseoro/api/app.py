@@ -7,6 +7,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 
 from suseoro.api.dependencies import authenticated_user_from_session
 from suseoro.api.errors import error_response, install_error_handlers, request_id_for
@@ -53,6 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.database_ready = False
     app.state.worker_state = "not_started"
     app.state.local_admin_confirmation_token = secrets.token_urlsafe(32)
+    app.state.restore_replays = {}
     install_error_handlers(app)
     for router in (
         auth_router,
@@ -67,9 +70,150 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         app.include_router(router)
 
+    def hardened_openapi():
+        if app.openapi_schema is not None:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            routes=app.routes,
+        )
+        components = schema.setdefault("components", {}).setdefault("schemas", {})
+        components["ApiErrorDetail"] = {
+            "type": "object",
+            "required": ["code", "message", "request_id", "fields"],
+            "properties": {
+                "code": {"type": "string"},
+                "message": {"type": "string"},
+                "request_id": {"type": "string", "format": "uuid"},
+                "fields": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+        components["ApiErrorResponse"] = {
+            "type": "object",
+            "required": ["detail"],
+            "properties": {"detail": {"$ref": "#/components/schemas/ApiErrorDetail"}},
+        }
+        methods = {"get", "post", "put", "patch", "delete"}
+        for path, path_item in schema["paths"].items():
+            for method, operation in path_item.items():
+                if method not in methods:
+                    continue
+                operation_id = operation["operationId"]
+                if operation_id == "streamEvents":
+                    for item in operation.get("parameters", []):
+                        if item.get("name") == "Last-Event-ID":
+                            item["schema"] = {"type": "integer", "minimum": 0}
+                for status, response in list(operation["responses"].items()):
+                    content = response.get("content", {})
+                    json_content = content.get("application/json")
+                    if status.startswith("2") and json_content is not None:
+                        name = operation_id[0].upper() + operation_id[1:] + "Response"
+                        original = json_content.get("schema") or {
+                            "type": "object",
+                            "additionalProperties": True,
+                        }
+                        if original.get("$ref"):
+                            name = original["$ref"].rsplit("/", 1)[-1]
+                        else:
+                            components.setdefault(name, original)
+                        json_content["schema"] = {
+                            "$ref": f"#/components/schemas/{name}"
+                        }
+                for status in (
+                    "400",
+                    "401",
+                    "403",
+                    "404",
+                    "409",
+                    "412",
+                    "422",
+                    "428",
+                    "500",
+                ):
+                    operation["responses"][status] = {
+                        "description": "구조화된 오류",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiErrorResponse"
+                                }
+                            }
+                        },
+                    }
+                if (
+                    method in {"post", "put", "patch", "delete"}
+                    and operation_id != "login"
+                ):
+                    parameters = operation.setdefault("parameters", [])
+                    for item in parameters:
+                        if (
+                            item.get("in") == "header"
+                            and item.get("name") == "If-Match"
+                        ):
+                            item["required"] = True
+                    existing = {
+                        (item.get("in"), item.get("name")): item for item in parameters
+                    }
+                    for header, description in (
+                        ("X-CSRF-Token", "CSRF 방지 토큰"),
+                        ("X-Request-ID", "요청 UUID"),
+                        ("Idempotency-Key", "중복 요청 방지 키"),
+                    ):
+                        item = existing.get(("header", header))
+                        if item is None:
+                            parameters.append(
+                                {
+                                    "name": header,
+                                    "in": "header",
+                                    "required": True,
+                                    "description": description,
+                                    "schema": {"type": "string"},
+                                }
+                            )
+                        else:
+                            item["required"] = True
+                if (
+                    path.startswith("/api/v2/admin/v1-migration")
+                    or path == "/api/v2/admin/restores"
+                ):
+                    parameters = operation.setdefault("parameters", [])
+                    confirmation = next(
+                        (
+                            item
+                            for item in parameters
+                            if item.get("in") == "header"
+                            and item.get("name") == "X-Local-Admin-Confirmation"
+                        ),
+                        None,
+                    )
+                    if confirmation is None:
+                        parameters.append(
+                            {
+                                "name": "X-Local-Admin-Confirmation",
+                                "in": "header",
+                                "required": True,
+                                "schema": {"type": "string"},
+                            }
+                        )
+                    else:
+                        confirmation["required"] = True
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = hardened_openapi
+
     @app.middleware("http")
     async def csrf_boundary(request: Request, call_next):
         request_id_for(request)
+        if request.url.path == "/api/v2/admin/restores":
+            replay_key = (
+                request.cookies.get(SESSION_COOKIE_NAME),
+                request.headers.get("Idempotency-Key"),
+            )
+            replay = app.state.restore_replays.get(replay_key)
+            if replay is not None:
+                return JSONResponse(status_code=200, content=replay)
         if (
             request.method not in {"GET", "HEAD", "OPTIONS", "TRACE"}
             and request.url.path != "/api/v2/auth/login"

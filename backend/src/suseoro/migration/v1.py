@@ -5,11 +5,18 @@ from __future__ import annotations
 import hashlib
 import re
 import shutil
+import sqlite3
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from zipfile import BadZipFile
 
 from openpyxl import load_workbook
+from python_calamine import CalamineError, CalamineWorkbook
+
+from suseoro.db.connection import connect
+from suseoro.security.sessions import format_utc, utc_now
+from suseoro.services.audit import record_audit_event, record_system_audit_event
 
 _WORKBOOK_SUFFIXES = {".xlsx", ".xls", ".xlsb", ".ods"}
 
@@ -84,21 +91,31 @@ def _digest(path: Path) -> str:
 
 
 def _workbook_rows(path: Path) -> int:
-    if path.suffix.casefold() != ".xlsx":
-        if path.stat().st_size == 0:
-            raise ValueError("empty workbook")
-        return 0
-    workbook = load_workbook(path, read_only=True, data_only=True)
     try:
-        worksheet = workbook.active
+        workbook = CalamineWorkbook.from_path(path)
         populated = sum(
             1
-            for row in worksheet.iter_rows(values_only=True)
-            if any(value is not None for value in row)
+            for name in workbook.sheet_names
+            for row in workbook.get_sheet_by_name(name).to_python()
+            if any(value not in (None, "") for value in row)
         )
-        return max(0, populated - 1)
-    finally:
-        workbook.close()
+    except (CalamineError, OSError, ValueError):
+        if path.suffix.casefold() != ".xlsx":
+            raise ValueError("unreadable workbook")
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        try:
+            populated = sum(
+                1
+                for worksheet in workbook.worksheets
+                for row in worksheet.iter_rows(values_only=True)
+                if any(value not in (None, "") for value in row)
+            )
+        finally:
+            workbook.close()
+    rows = max(0, populated - 1)
+    if rows == 0:
+        raise ValueError("workbook contains no data rows")
+    return rows
 
 
 def _is_legacy(path: Path, school: Path) -> bool:
@@ -140,10 +157,13 @@ def inspect_v1(source_root: Path) -> V1MigrationReport:
         for path in dls_files:
             try:
                 valid_dls.append((path, _workbook_rows(path)))
-            except (OSError, ValueError, KeyError, BadZipFile):
+            except (OSError, ValueError, KeyError, BadZipFile, CalamineError):
                 report.read_error_count += 1
         valid_dls.sort(
-            key=lambda item: (re.findall(r"\d+", item[0].stem), item[0].name),
+            key=lambda item: tuple(
+                int(part) if part.isdigit() else part.casefold()
+                for part in re.split(r"(\d+)", item[0].stem)
+            ),
             reverse=True,
         )
         selected = valid_dls[0] if valid_dls else None
@@ -187,7 +207,123 @@ def _copy(source: Path, destination: Path, report: V1MigrationReport) -> None:
     report.copied_count += 1
 
 
-def migrate_v1(source_root: Path, destination_root: Path) -> V1MigrationReport:
+def _register_visible_import(
+    database_path: Path | None,
+    report: V1MigrationReport,
+    destination: Path,
+    *,
+    actor_id: str | None,
+    actor_school_id: str | None,
+    request_id: str,
+    existing_connection: sqlite3.Connection | None = None,
+) -> None:
+    now = format_utc(utc_now())
+    connection = existing_connection or connect(database_path)
+    owns_connection = existing_connection is None
+    try:
+        imported_school_ids: list[str] = []
+        for school in report.schools:
+            existing = connection.execute(
+                "SELECT id FROM schools WHERE name = ? ORDER BY created_at, id LIMIT 1",
+                (school.name,),
+            ).fetchone()
+            school_id = existing["id"] if existing else str(uuid.uuid4())
+            if existing is None:
+                connection.execute(
+                    """
+                    INSERT INTO schools (id, name, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (school_id, school.name, now, now),
+                )
+            imported_school_ids.append(school_id)
+            target = destination / "schools" / school.name
+            for legacy in school.legacy_workspaces:
+                copied = (
+                    target
+                    / "legacy-workspaces"
+                    / legacy.relative_to(school.source_path)
+                )
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO legacy_v1_workspaces (
+                        id, school_id, display_name, source_copy_path,
+                        sha256, imported_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        school_id,
+                        legacy.parent.name + " / " + legacy.name,
+                        str(copied),
+                        _digest(legacy),
+                        now,
+                    ),
+                )
+            if school.catalog_candidate is not None:
+                copied = target / "catalog-candidates" / school.catalog_candidate.name
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO v1_catalog_candidates (
+                        id, school_id, source_copy_path, sha256,
+                        row_count, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        school_id,
+                        str(copied),
+                        _digest(school.catalog_candidate),
+                        school.catalog_candidate_row_count,
+                        now,
+                    ),
+                )
+        audit_school = actor_school_id or (
+            imported_school_ids[0] if imported_school_ids else None
+        )
+        if audit_school is not None:
+            before = {"school_count": 0, "copied_count": 0}
+            after = report.to_dict()
+            if actor_id:
+                record_audit_event(
+                    connection,
+                    actor_id=actor_id,
+                    school_id=audit_school,
+                    action="V1_MIGRATION_COMPLETED",
+                    entity_type="v1_migration",
+                    entity_id=None,
+                    before=before,
+                    after=after,
+                    request_id=request_id,
+                )
+            else:
+                record_system_audit_event(
+                    connection,
+                    school_id=audit_school,
+                    action="V1_MIGRATION_COMPLETED",
+                    entity_type="v1_migration",
+                    entity_id=None,
+                    before=before,
+                    after=after,
+                    request_id=request_id,
+                )
+        if owns_connection:
+            connection.commit()
+    finally:
+        if owns_connection:
+            connection.close()
+
+
+def migrate_v1(
+    source_root: Path,
+    destination_root: Path,
+    *,
+    database_path: Path | None = None,
+    connection: sqlite3.Connection | None = None,
+    actor_id: str | None = None,
+    actor_school_id: str | None = None,
+    request_id: str = "v1-migration",
+) -> V1MigrationReport:
     report = inspect_v1(source_root)
     destination = Path(destination_root).resolve()
     try:
@@ -209,4 +345,14 @@ def migrate_v1(source_root: Path, destination_root: Path) -> V1MigrationReport:
         for legacy in school.legacy_workspaces:
             relative = legacy.relative_to(school.source_path)
             _copy(legacy, target / "legacy-workspaces" / relative, report)
+    if database_path is not None or connection is not None:
+        _register_visible_import(
+            database_path,
+            report,
+            destination,
+            actor_id=actor_id,
+            actor_school_id=actor_school_id,
+            request_id=request_id,
+            existing_connection=connection,
+        )
     return report

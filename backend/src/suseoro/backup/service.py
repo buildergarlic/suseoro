@@ -9,12 +9,16 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import threading
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
+
+from suseoro.db.connection import connect, quiesce_database
+from suseoro.db.migrations import apply_migrations
 
 
 class RestoreVerificationError(RuntimeError):
@@ -136,6 +140,9 @@ def select_retained_backups(
 
 
 class BackupService:
+    _restore_lock: ClassVar[threading.RLock] = threading.RLock()
+    _restore_results: ClassVar[dict[tuple[str, str], RestoreResult]] = {}
+
     def __init__(self, database_path: Path, backups_dir: Path) -> None:
         self.database_path = Path(database_path).resolve()
         self.backups_dir = Path(backups_dir).resolve()
@@ -144,6 +151,17 @@ class BackupService:
     def create(
         self, *, kind: str = "daily", now: datetime | None = None
     ) -> BackupManifest:
+        allowed = {
+            "daily",
+            "weekly",
+            "monthly",
+            "manual",
+            "pre_upgrade",
+            "pre_restore",
+            "upgrade",
+        }
+        if kind not in allowed:
+            raise ValueError("invalid backup kind")
         created = (now or datetime.now(UTC)).astimezone(UTC)
         backup_id = str(uuid.uuid4())
         stamp = created.strftime("%Y%m%dT%H%M%SZ")
@@ -185,6 +203,8 @@ class BackupService:
             manifest_path.with_suffix(manifest_path.suffix + ".sha256").write_text(
                 hashlib.sha256(encoded).hexdigest(), encoding="ascii"
             )
+            if kind != "pre_restore":
+                self._enforce_retention()
             return manifest
         finally:
             temporary.unlink(missing_ok=True)
@@ -236,6 +256,53 @@ class BackupService:
             manifests, key=lambda item: (item.created_at, item.id), reverse=True
         )
 
+    def _enforce_retention(self) -> None:
+        all_manifests = self.list()
+        manifests = [
+            item
+            for item in all_manifests
+            if item.kind in {"daily", "weekly", "monthly"}
+        ]
+        retained = {
+            item["id"]
+            for item in select_retained_backups(
+                [manifest.to_dict() for manifest in manifests]
+            )
+        }
+        for manifest in manifests:
+            if manifest.id in retained:
+                continue
+            manifest.database_path.unlink(missing_ok=True)
+            manifest.manifest_path.unlink(missing_ok=True)
+            manifest.manifest_path.with_suffix(
+                manifest.manifest_path.suffix + ".sha256"
+            ).unlink(missing_ok=True)
+
+    @staticmethod
+    def _bundled_schema() -> tuple[dict[str, str], ...]:
+        migrations = Path(__file__).parents[1] / "db" / "migrations"
+        return tuple(
+            {
+                "version": path.stem,
+                "checksum": hashlib.sha256(
+                    path.read_text(encoding="utf-8").encode("utf-8")
+                ).hexdigest(),
+            }
+            for path in sorted(migrations.glob("*.sql"))
+        )
+
+    @classmethod
+    def _validate_migration_history(cls, schema: tuple[dict[str, str], ...]) -> None:
+        bundled = cls._bundled_schema()
+        if (
+            not schema
+            or len(schema) > len(bundled)
+            or tuple(bundled[: len(schema)]) != schema
+        ):
+            raise RestoreVerificationError(
+                "backup migration history is future, incomplete, or altered"
+            )
+
     def restore(
         self,
         manifest_path: Path,
@@ -244,6 +311,7 @@ class BackupService:
         expected_confirmation_token: str | None,
         local_request: bool,
         now: datetime | None = None,
+        operation_key: str | None = None,
     ) -> RestoreResult:
         if (
             not local_request
@@ -252,30 +320,49 @@ class BackupService:
             or not hmac.compare_digest(confirmation_token, expected_confirmation_token)
         ):
             raise LocalAdminConfirmationRequired("local admin confirmation is required")
-        manifest = self._load_manifest(manifest_path)
-        if not manifest.verified:
-            raise RestoreVerificationError("backup is not marked verified")
-        if not hmac.compare_digest(_sha256(manifest.database_path), manifest.sha256):
-            raise RestoreVerificationError("backup checksum mismatch")
-        if manifest.database_path.stat().st_size != manifest.size_bytes:
-            raise RestoreVerificationError("backup size mismatch")
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=".restore-", suffix=".sqlite3", dir=self.database_path.parent
-        )
-        os.close(descriptor)
-        temporary = Path(temporary_name)
-        try:
-            shutil.copyfile(manifest.database_path, temporary)
-            _verify_database(temporary, manifest.schema_migrations)
-            pre_restore = self.create(kind="pre_restore", now=now)
-            checkpoint = sqlite3.connect(str(self.database_path))
+        replay_key = (str(self.database_path), operation_key or str(uuid.uuid4()))
+        with self._restore_lock:
+            replay = self._restore_results.get(replay_key)
+            if replay is not None:
+                return replay
+            manifest = self._load_manifest(manifest_path)
+            if not manifest.verified:
+                raise RestoreVerificationError("backup is not marked verified")
+            if not hmac.compare_digest(
+                _sha256(manifest.database_path), manifest.sha256
+            ):
+                raise RestoreVerificationError("backup checksum mismatch")
+            if manifest.database_path.stat().st_size != manifest.size_bytes:
+                raise RestoreVerificationError("backup size mismatch")
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=".restore-", suffix=".sqlite3", dir=self.database_path.parent
+            )
+            os.close(descriptor)
+            temporary = Path(temporary_name)
             try:
-                checkpoint.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                shutil.copyfile(manifest.database_path, temporary)
+                actual_schema = _verify_database(temporary, manifest.schema_migrations)
+                self._validate_migration_history(actual_schema)
+                upgrade = connect(temporary)
+                try:
+                    apply_migrations(upgrade)
+                    upgrade.commit()
+                finally:
+                    upgrade.close()
+                _verify_database(temporary, self._bundled_schema())
+                with quiesce_database(self.database_path):
+                    pre_restore = self.create(kind="pre_restore", now=now)
+                    checkpoint = sqlite3.connect(str(self.database_path))
+                    try:
+                        checkpoint.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    finally:
+                        checkpoint.close()
+                    os.replace(temporary, self.database_path)
+                    for suffix in ("-wal", "-shm"):
+                        Path(f"{self.database_path}{suffix}").unlink(missing_ok=True)
+                result = RestoreResult(manifest, pre_restore)
+                if operation_key is not None:
+                    self._restore_results[replay_key] = result
+                return result
             finally:
-                checkpoint.close()
-            os.replace(temporary, self.database_path)
-            for suffix in ("-wal", "-shm"):
-                Path(f"{self.database_path}{suffix}").unlink(missing_ok=True)
-            return RestoreResult(manifest, pre_restore)
-        finally:
-            temporary.unlink(missing_ok=True)
+                temporary.unlink(missing_ok=True)

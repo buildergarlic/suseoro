@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -25,7 +26,7 @@ router = APIRouter(prefix="/api/v2", tags=["deliveries"])
 
 class DeliveryCreate(BaseModel):
     order_revision_id: str
-    rows: list[dict[str, Any]]
+    rows: list[dict[str, Any]] = Field(min_length=1, max_length=5000)
     reason: str = Field(min_length=1, max_length=500)
 
 
@@ -100,6 +101,62 @@ def list_deliveries(
     result["differences"] = [dict(row) for row in differences[:100]]
     result["differences_truncated"] = len(differences) > 100
     return result
+
+
+@router.get(
+    "/workspaces/{workspace_id}/receiving/differences",
+    summary="납품 차이 목록을 조건별로 보기",
+    operation_id="listReceivingDifferences",
+)
+def list_receiving_differences(
+    workspace_id: str,
+    user: AuthenticatedUser = Depends(current_user),
+    connection: sqlite3.Connection = Depends(database_connection),
+    kind: str | None = Query(default=None),
+    disposition: str | None = Query(default=None),
+    active: bool | None = Query(default=True),
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+):
+    decoded = decode_cursor(cursor, 2)
+    clauses = ["school_id = ?", "workspace_id = ?"]
+    parameters: list[object] = [user.school_id, workspace_id]
+    if kind is not None:
+        clauses.append("kind = ?")
+        parameters.append(kind)
+    if disposition is not None:
+        clauses.append("disposition = ?")
+        parameters.append(disposition)
+    if active is not None:
+        clauses.append("active = ?")
+        parameters.append(int(active))
+    if decoded:
+        clauses.append("(created_at < ? OR (created_at = ? AND id < ?))")
+        parameters.extend((decoded[0], decoded[0], decoded[1]))
+    rows = connection.execute(
+        f"""
+        SELECT id, kind, reference_key, disposition, active, row_version,
+               details_json, created_at, updated_at
+        FROM receiving_differences
+        WHERE {" AND ".join(clauses)}
+        ORDER BY created_at DESC, id DESC LIMIT ?
+        """,
+        (*parameters, limit + 1),
+    ).fetchall()
+    items = [
+        {
+            **dict(row),
+            "details": json.loads(row["details_json"]),
+        }
+        for row in rows
+    ]
+    for item in items:
+        item.pop("details_json", None)
+    return page(
+        items,
+        limit=limit,
+        cursor_values=lambda item: (item["created_at"], item["id"]),
+    )
 
 
 @router.post(

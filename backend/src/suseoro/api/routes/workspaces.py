@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
@@ -20,6 +21,7 @@ from suseoro.api.dependencies import (
 )
 from suseoro.api.errors import domain_not_found
 from suseoro.api.routes.events import publish_event
+from suseoro.jobs.repository import JobRepository
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.audit import record_audit_event
 from suseoro.services.idempotency import (
@@ -38,6 +40,10 @@ class WorkspaceCreate(BaseModel):
 class WorkspaceTransition(BaseModel):
     target: str
     reason: str = Field(min_length=1, max_length=500)
+
+
+class ComparisonCreate(BaseModel):
+    source_document_ids: Annotated[list[str], Field(min_length=1, max_length=100)]
 
 
 def _serialized(row) -> dict[str, object]:
@@ -213,4 +219,152 @@ def transition(
     )
     connection.commit()
     response.headers["ETag"] = f'"{result["row_version"]}"'
+    return result
+
+
+@router.post(
+    "/workspaces/{workspace_id}/comparison-jobs",
+    status_code=202,
+    summary="장서와 추천 자료 비교 시작하기",
+    operation_id="createComparisonJob",
+)
+def create_comparison_job(
+    workspace_id: str,
+    payload: ComparisonCreate,
+    response: Response,
+    user: AuthenticatedUser = Depends(require_role("OPERATOR")),
+    connection: sqlite3.Connection = Depends(database_connection),
+    submitted_version: int = Depends(require_if_match),
+    idempotency_key: str = Depends(require_idempotency_key),
+    request_id: str = Depends(require_request_id),
+):
+    route = f"POST /api/v2/workspaces/{workspace_id}/comparison-jobs"
+    request_body = {
+        **payload.model_dump(),
+        "row_version": submitted_version,
+    }
+    replay = reserve_idempotency_key(
+        connection,
+        school_id=user.school_id,
+        actor_id=user.id,
+        route=route,
+        key=idempotency_key,
+        request_body=request_body,
+    )
+    if replay:
+        connection.rollback()
+        response.headers["ETag"] = f'"{replay.body["row_version"]}"'
+        return replay.body
+    workspace = connection.execute(
+        "SELECT * FROM acquisition_workspaces WHERE id = ? AND school_id = ?",
+        (workspace_id, user.school_id),
+    ).fetchone()
+    if workspace is None:
+        raise domain_not_found("WORKSPACE_NOT_FOUND")
+    if workspace["status"] != "DRAFT":
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=409, detail={"code": "WORKSPACE_NOT_DRAFT"})
+    if workspace["row_version"] != submitted_version:
+        from suseoro.services.concurrency import VersionConflict
+
+        raise VersionConflict(workspace["row_version"], submitted_version)
+    active_catalog = connection.execute(
+        "SELECT id FROM catalog_versions WHERE school_id = ? AND status = 'ACTIVE'",
+        (user.school_id,),
+    ).fetchone()
+    if active_catalog is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=409, detail={"code": "ACTIVE_CATALOG_REQUIRED"})
+    document_ids = tuple(dict.fromkeys(payload.source_document_ids))
+    placeholders = ",".join("?" for _ in document_ids)
+    documents = connection.execute(
+        f"""
+        SELECT document.id, document.status,
+               COALESCE(config.role, document.role) AS role
+        FROM source_documents document
+        JOIN workspace_sources link ON link.source_document_id = document.id
+        LEFT JOIN source_configurations config
+          ON config.source_document_id = document.id
+        WHERE link.workspace_id = ? AND link.school_id = ?
+          AND document.id IN ({placeholders})
+        """,
+        (workspace_id, user.school_id, *document_ids),
+    ).fetchall()
+    if (
+        {row["id"] for row in documents} != set(document_ids)
+        or any(row["role"] != "PURCHASE_REQUEST" for row in documents)
+        or any(row["status"] not in {"SUCCESS", "ROW_ERROR"} for row in documents)
+    ):
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=422, detail={"code": "COMPARISON_SOURCES_NOT_READY"}
+        )
+    updated_at = format_utc(utc_now())
+    updated = connection.execute(
+        """
+        UPDATE acquisition_workspaces
+        SET status = 'ANALYZING', row_version = row_version + 1, updated_at = ?
+        WHERE id = ? AND school_id = ? AND status = 'DRAFT' AND row_version = ?
+        """,
+        (updated_at, workspace_id, user.school_id, submitted_version),
+    )
+    if updated.rowcount != 1:
+        from suseoro.services.concurrency import VersionConflict
+
+        raise VersionConflict(workspace["row_version"], submitted_version)
+    total = connection.execute(
+        f"SELECT COUNT(*) FROM source_rows WHERE source_document_id IN ({placeholders})",
+        document_ids,
+    ).fetchone()[0]
+    job = JobRepository(connection).create(
+        school_id=user.school_id,
+        workspace_id=workspace_id,
+        job_type="COMPARE",
+        payload={"source_document_ids": list(document_ids)},
+        progress_total=total,
+    )
+    result = {
+        "job_id": job.id,
+        "status": job.status,
+        "workspace_status": "ANALYZING",
+        "row_version": submitted_version + 1,
+    }
+    record_audit_event(
+        connection,
+        actor_id=user.id,
+        school_id=user.school_id,
+        action="COMPARISON_JOB_CREATED",
+        entity_type="durable_job",
+        entity_id=job.id,
+        before={"workspace_status": "DRAFT", "row_version": submitted_version},
+        after=result,
+        request_id=request_id,
+    )
+    complete_idempotent_request(
+        connection,
+        school_id=user.school_id,
+        actor_id=user.id,
+        route=route,
+        key=idempotency_key,
+        status=202,
+        body=result,
+    )
+    publish_event(
+        connection,
+        school_id=user.school_id,
+        workspace_id=workspace_id,
+        event_type="job.progress",
+        data={
+            "job_id": job.id,
+            "status": job.status,
+            "stage": job.stage,
+            "current": 0,
+            "total": total,
+        },
+    )
+    connection.commit()
+    response.headers["ETag"] = f'"{submitted_version + 1}"'
     return result

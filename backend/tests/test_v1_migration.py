@@ -5,6 +5,9 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
+from suseoro.config import Settings
+from suseoro.db.connection import connect
+from suseoro.db.migrations import apply_migrations
 from suseoro.migration.v1 import inspect_v1, migrate_v1
 
 
@@ -118,3 +121,68 @@ def test_migration_rejects_destination_inside_source_tree(tmp_path: Path) -> Non
         assert "원본 폴더 밖" in str(error)
     else:
         raise AssertionError("a destination inside v1 must be rejected")
+
+
+def test_latest_healthy_dls_uses_natural_order_and_rejects_zero_or_arbitrary_bytes(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "v1-workspace"
+    school = source / "자연정렬학교"
+    _xlsx(school / "DLS_9.xlsx", [["ISBN", "자료명"], ["9", "아홉"]])
+    _xlsx(school / "DLS_10.xlsx", [["ISBN", "자료명"], ["10", "열"]])
+    _xlsx(school / "DLS_12.xlsx", [["ISBN", "자료명"]])
+    (school / "DLS_11.xls").write_bytes(b"not-a-workbook")
+
+    report = inspect_v1(source)
+    selected = report.schools[0].catalog_candidate
+
+    assert selected is not None and selected.name == "DLS_10.xlsx"
+    assert report.schools[0].catalog_candidate_row_count == 1
+    assert report.read_error_count == 2
+
+
+def test_migration_registers_visible_schools_read_only_history_and_pending_catalog(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "v1-workspace"
+    destination = tmp_path / "v2-import"
+    _v1_tree(source)
+    settings = Settings(data_dir=tmp_path / "data")
+    with connect(settings.database_path) as connection:
+        apply_migrations(connection)
+        connection.commit()
+
+    report = migrate_v1(
+        source,
+        destination,
+        database_path=settings.database_path,
+        request_id="550e8400-e29b-41d4-a716-446655440200",
+    )
+
+    with connect(settings.database_path) as connection:
+        schools = connection.execute(
+            "SELECT name FROM schools ORDER BY name"
+        ).fetchall()
+        history = connection.execute(
+            "SELECT display_name, is_read_only FROM legacy_v1_workspaces"
+        ).fetchall()
+        candidates = connection.execute(
+            "SELECT status, row_count FROM v1_catalog_candidates"
+        ).fetchall()
+        active = connection.execute(
+            "SELECT COUNT(*) FROM catalog_versions WHERE status = 'ACTIVE'"
+        ).fetchone()[0]
+        events = connection.execute(
+            "SELECT action, request_id FROM audit_events WHERE action = 'V1_MIGRATION_COMPLETED'"
+        ).fetchall()
+
+    assert {row["name"] for row in schools} == {"DLS없는학교", "한빛학교"}
+    assert history and all(row["is_read_only"] == 1 for row in history)
+    assert [(row["status"], row["row_count"]) for row in candidates] == [
+        ("PENDING_CONFIRMATION", 1)
+    ]
+    assert active == 0
+    assert report.catalog_cache_count == 1
+    assert [(row["action"], row["request_id"]) for row in events] == [
+        ("V1_MIGRATION_COMPLETED", "550e8400-e29b-41d4-a716-446655440200")
+    ]

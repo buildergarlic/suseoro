@@ -501,7 +501,7 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
         fixture.connection.execute(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
         ).fetchone()[0]
-        == "0006_api_operations"
+        == "0006a_api_hardening"
     )
 
 

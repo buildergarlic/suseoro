@@ -4,13 +4,16 @@ import json
 import uuid
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from suseoro.api.app import create_app
+from suseoro.backup.service import BackupService
 from suseoro.config import Settings
 from suseoro.db.connection import connect
 from suseoro.db.migrations import apply_migrations
 from suseoro.jobs.handlers import build_job_runner
+from suseoro.jobs.repository import JobRepository
 from suseoro.repositories.auth import UserRecord, issue_session
 from suseoro.security.passwords import hash_password
 
@@ -88,9 +91,17 @@ def _seed(settings: Settings) -> None:
 
 
 def _client(
-    data_dir: Path, *, reviewer: bool = False
+    data_dir: Path,
+    *,
+    reviewer: bool = False,
+    raise_server_exceptions: bool = True,
+    settings_kwargs: dict[str, object] | None = None,
 ) -> tuple[TestClient, Settings, str]:
-    settings = Settings(data_dir=data_dir, secure_cookies=False)
+    settings = Settings(
+        data_dir=data_dir,
+        secure_cookies=False,
+        **(settings_kwargs or {}),
+    )
     _seed(settings)
     user = UserRecord(
         id=REVIEWER_ID if reviewer else OPERATOR_ID,
@@ -102,7 +113,11 @@ def _client(
     with connect(settings.database_path) as connection:
         issued = issue_session(connection, user, 3_600)
         connection.commit()
-    client = TestClient(create_app(settings), base_url="https://testserver")
+    client = TestClient(
+        create_app(settings),
+        base_url="https://testserver",
+        raise_server_exceptions=raise_server_exceptions,
+    )
     client.cookies.set("suseoro_session", issued.session_token)
     client.cookies.set("suseoro_csrf", issued.csrf_token)
     return client, settings, issued.csrf_token
@@ -564,3 +579,634 @@ def test_generated_openapi_artifact_matches_the_tested_application(
 
     assert artifact.is_file()
     assert json.loads(artifact.read_text(encoding="utf-8")) == live
+
+
+def test_catalog_activation_and_comparison_complete_the_acquisition_path(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    with client:
+        created = client.post(
+            "/api/v2/workspaces",
+            headers=_headers(csrf, "composition-workspace"),
+            json={"name": "실제 비교 작업"},
+        )
+        workspace_id = created.json()["id"]
+        catalog_upload = client.post(
+            f"/api/v2/workspaces/{workspace_id}/sources",
+            headers=_headers(csrf, "catalog-upload"),
+            data={"role": "CATALOG_FULL"},
+            files=[
+                (
+                    "files",
+                    (
+                        "holdings.csv",
+                        "등록번호,제목,ISBN\nR-1,이미 있음,9780306406157\n",
+                        "text/csv",
+                    ),
+                )
+            ],
+        )
+    catalog_source_id = catalog_upload.json()["items"][0]["source_id"]
+    with connect(settings.database_path) as connection:
+        assert build_job_runner(connection).run_once().status == "SUCCEEDED"
+
+    with client:
+        staged = client.post(
+            f"/api/v2/sources/{catalog_source_id}/catalog/staging",
+            headers=_headers(csrf, "catalog-stage"),
+            json={"source_type": "DLS_EXCEL"},
+        )
+        assert staged.status_code == 201
+        activated = client.post(
+            f"/api/v2/catalog/versions/{staged.json()['id']}/activate",
+            headers=_headers(csrf, "catalog-activate"),
+            json={"confirm_anomaly": False},
+        )
+        assert activated.status_code == 200
+        recommendation_upload = client.post(
+            f"/api/v2/workspaces/{workspace_id}/sources",
+            headers=_headers(csrf, "recommendation-upload"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                (
+                    "files",
+                    (
+                        "recommendations.csv",
+                        "제목,저자,ISBN\n이미 있음,저자,9780306406157\n새 책,새 저자,\n",
+                        "text/csv",
+                    ),
+                )
+            ],
+        )
+    recommendation_id = recommendation_upload.json()["items"][0]["source_id"]
+    with connect(settings.database_path) as connection:
+        assert build_job_runner(connection).run_once().status == "SUCCEEDED"
+
+    with client:
+        comparison = client.post(
+            f"/api/v2/workspaces/{workspace_id}/comparison-jobs",
+            headers=_headers(csrf, "comparison-start", version=1),
+            json={"source_document_ids": [recommendation_id]},
+        )
+        before_run = client.get(f"/api/v2/workspaces/{workspace_id}")
+    assert comparison.status_code == 202
+    assert before_run.json()["status"] == "ANALYZING"
+    with connect(settings.database_path) as connection:
+        completed = build_job_runner(connection).run_once()
+        assert completed is not None and completed.status == "SUCCEEDED"
+    with client:
+        after_run = client.get(f"/api/v2/workspaces/{workspace_id}")
+        candidates = client.get(
+            f"/api/v2/workspaces/{workspace_id}/candidates?limit=10"
+        )
+    assert after_run.json()["status"] == "CANDIDATE_REVIEW"
+    assert {item["outcome"] for item in candidates.json()["items"]} == {
+        "CANDIDATE",
+        "EXCLUDED",
+    }
+
+
+def test_delta_source_upload_requires_and_persists_exact_inclusive_window(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    files = [("files", ("delta.csv", "등록번호,제목\nR-1,책\n", "text/csv"))]
+    with client:
+        missing = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "delta-missing-window"),
+            data={"role": "CATALOG_DELTA_REGISTRATION"},
+            files=files,
+        )
+        valid = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "delta-valid-window"),
+            data={
+                "role": "CATALOG_DELTA_REGISTRATION",
+                "requested_start_local_date": "2026-08-18",
+                "requested_through_local_date": "2026-08-28",
+            },
+            files=files,
+        )
+
+    assert missing.status_code == 422
+    assert missing.json()["detail"]["code"] == "DELTA_WINDOW_REQUIRED"
+    assert valid.status_code == 202
+    source_id = valid.json()["items"][0]["source_id"]
+    with connect(settings.database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT requested_start_local_date, requested_through_local_date
+            FROM source_documents WHERE id = ?
+            """,
+            (source_id,),
+        ).fetchone()
+    assert tuple(row) == ("2026-08-18", "2026-08-28")
+
+
+def test_saved_mapping_template_and_parser_cache_are_used_by_durable_retries(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    with client:
+        uploaded = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "custom-map-upload"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                (
+                    "files",
+                    ("custom.csv", "책이름,쓴사람\n첫 책,첫 저자\n", "text/csv"),
+                )
+            ],
+        )
+        source_id = uploaded.json()["items"][0]["source_id"]
+        mapped = client.patch(
+            f"/api/v2/sources/{source_id}/mapping",
+            headers=_headers(csrf, "custom-map-save", version=1),
+            json={
+                "role": "PURCHASE_REQUEST",
+                "mapping": {"책이름": "title", "쓴사람": "author"},
+                "remember_template": True,
+                "vendor_scope": "vendor-a",
+            },
+        )
+        reparsed = client.post(
+            f"/api/v2/sources/{source_id}/parse",
+            headers=_headers(csrf, "custom-map-retry"),
+        )
+    assert mapped.status_code == 200
+    assert reparsed.status_code == 202
+    with connect(settings.database_path) as connection:
+        runner = build_job_runner(connection)
+        assert runner.run_once().status == "SUCCEEDED"
+        assert runner.run_once().status == "SUCCEEDED"
+        first_fields = json.loads(
+            connection.execute(
+                "SELECT fields_json FROM source_rows WHERE source_document_id = ?",
+                (source_id,),
+            ).fetchone()["fields_json"]
+        )
+        parser_runs = connection.execute(
+            "SELECT COUNT(*) FROM parser_runs WHERE role = 'PURCHASE_REQUEST'"
+        ).fetchone()[0]
+        templates = connection.execute(
+            "SELECT COUNT(*) FROM mapping_templates WHERE school_id = ?",
+            (SCHOOL_ID,),
+        ).fetchone()[0]
+    assert first_fields["title"]["value"] == "첫 책"
+    assert parser_runs == 1
+    assert templates == 1
+
+    with client:
+        remembered = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "remembered-map-upload"),
+            data={"role": "PURCHASE_REQUEST", "vendor_scope": "vendor-a"},
+            files=[
+                (
+                    "files",
+                    (
+                        "custom-2.csv",
+                        "책이름,쓴사람\n둘째 책,둘째 저자\n셋째 책,셋째 저자\n",
+                        "text/csv",
+                    ),
+                )
+            ],
+        )
+    remembered_id = remembered.json()["items"][0]["source_id"]
+    with connect(settings.database_path) as connection:
+        assert build_job_runner(connection).run_once().status == "SUCCEEDED"
+        titles = [
+            json.loads(row["fields_json"])["title"]["value"]
+            for row in connection.execute(
+                """
+                SELECT fields_json FROM source_rows
+                WHERE source_document_id = ? ORDER BY source_row
+                """,
+                (remembered_id,),
+            ).fetchall()
+        ]
+    assert titles == ["둘째 책", "셋째 책"]
+
+
+def test_ingestion_job_exposes_truthful_partial_per_file_results(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    with client:
+        uploaded = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "partial-job-items"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                ("files", ("good.csv", "제목,저자\n정상,저자\n", "text/csv")),
+                ("files", ("bad.csv", "foo,bar\n값,값\n", "text/csv")),
+            ],
+        )
+    job_id = uploaded.json()["job_id"]
+    with connect(settings.database_path) as connection:
+        completed = build_job_runner(connection).run_once()
+    assert completed is not None and completed.status == "PARTIAL"
+    with client:
+        job = client.get(f"/api/v2/jobs/{job_id}")
+    assert [item["status"] for item in job.json()["items"]] == [
+        "FAILED",
+        "SUCCESS",
+    ]
+    assert all(
+        item["processed_rows"] == item["total_rows"] for item in job.json()["items"]
+    )
+
+
+def test_source_and_audit_cursor_lists_use_configured_role_and_qualified_keys(
+    data_dir: Path,
+) -> None:
+    client, _, csrf = _client(data_dir)
+    with client:
+        uploaded = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "list-source-role"),
+            data={"role": "UNKNOWN"},
+            files=[("files", ("list.csv", "제목\n책\n", "text/csv"))],
+        )
+        source_id = uploaded.json()["items"][0]["source_id"]
+        client.patch(
+            f"/api/v2/sources/{source_id}/mapping",
+            headers=_headers(csrf, "list-source-map", version=1),
+            json={"role": "PURCHASE_REQUEST", "mapping": {"제목": "title"}},
+        )
+        sources = client.get(f"/api/v2/workspaces/{WORKSPACE_ID}/sources")
+        first = client.get("/api/v2/audit?limit=1")
+        second = client.get(
+            "/api/v2/audit",
+            params={"limit": 1, "cursor": first.json()["next_cursor"]},
+        )
+
+    assert sources.status_code == 200
+    assert sources.json()["items"][0]["role"] == "PURCHASE_REQUEST"
+    assert first.status_code == second.status_code == 200
+    assert first.json()["items"][0]["id"] != second.json()["items"][0]["id"]
+
+
+def test_openapi_has_typed_json_responses_errors_and_required_mutation_headers(
+    data_dir: Path,
+) -> None:
+    client, _, _ = _client(data_dir)
+    with client:
+        schema = client.get("/openapi.json").json()
+
+    for path, path_item in schema["paths"].items():
+        for method, operation in path_item.items():
+            if method not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            success = next(
+                response
+                for status, response in operation["responses"].items()
+                if status.startswith("2")
+            )
+            if path.endswith("/download") or operation["operationId"] == "streamEvents":
+                continue
+            if "content" not in success:
+                continue
+            success_schema = success["content"]["application/json"]["schema"]
+            assert success_schema.get("$ref"), operation["operationId"]
+            assert (
+                operation["responses"]["422"]["content"]["application/json"]["schema"][
+                    "$ref"
+                ]
+                == "#/components/schemas/ApiErrorResponse"
+            )
+            if (
+                method in {"post", "put", "patch", "delete"}
+                and operation["operationId"] != "login"
+            ):
+                required_headers = {
+                    parameter["name"]
+                    for parameter in operation.get("parameters", [])
+                    if parameter["in"] == "header" and parameter.get("required")
+                }
+                assert {
+                    "X-CSRF-Token",
+                    "X-Request-ID",
+                    "Idempotency-Key",
+                } <= required_headers
+
+
+def test_job_runtime_and_domain_role_errors_keep_structured_status_codes(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir, raise_server_exceptions=False)
+    with connect(settings.database_path) as connection:
+        queued = JobRepository(connection).create(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            job_type="INGEST",
+            payload={"source_document_ids": ["missing"]},
+        )
+        connection.commit()
+    with client:
+        retry = client.post(
+            f"/api/v2/jobs/{queued.id}/retry",
+            headers=_headers(csrf, "invalid-retry"),
+        )
+    assert retry.status_code == 409
+    assert retry.json()["detail"]["code"] == "JOB_RETRY_NOT_ALLOWED"
+    assert retry.json()["detail"]["request_id"] == REQUEST_ID
+
+    reviewer, reviewer_settings, reviewer_csrf = _client(
+        data_dir / "reviewer", reviewer=True
+    )
+    draft_id = str(uuid.uuid4())
+    with connect(reviewer_settings.database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO acquisition_workspaces (
+                id, school_id, name, status, created_at, updated_at
+            ) VALUES (?, ?, '검토자 차단', 'DRAFT', ?, ?)
+            """,
+            (draft_id, SCHOOL_ID, NOW, NOW),
+        )
+        connection.commit()
+    with reviewer:
+        denied = reviewer.patch(
+            f"/api/v2/workspaces/{draft_id}/status",
+            headers=_headers(reviewer_csrf, "reviewer-transition", version=1),
+            json={"target": "ANALYZING", "reason": "권한 없음"},
+        )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["code"] == "OPERATOR_ROLE_REQUIRED"
+
+
+def test_upload_and_bulk_payload_limits_reject_before_durable_mutation(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    too_many_files = [
+        (
+            "files",
+            (
+                f"books-{index}.csv",
+                f"제목,저자\n책 {index},저자\n".encode(),
+                "text/csv",
+            ),
+        )
+        for index in range(21)
+    ]
+    with client:
+        upload = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "too-many-files"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=too_many_files,
+        )
+        bulk = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/candidates/bulk-decision",
+            headers=_headers(csrf, "too-many-candidates"),
+            json={"items": [{} for _ in range(1001)]},
+        )
+
+    assert upload.status_code == 413
+    assert upload.json()["detail"]["code"] == "UPLOAD_BATCH_LIMIT_EXCEEDED"
+    assert bulk.status_code == 422
+    with connect(settings.database_path) as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM source_files").fetchone()[0] == 0
+        )
+
+    from pydantic import ValidationError
+
+    from suseoro.api.routes.deliveries import DeliveryCreate
+    from suseoro.api.routes.procurement import QuoteCreate
+
+    with pytest.raises(ValidationError):
+        QuoteCreate.model_validate(
+            {
+                "approval_revision_id": "a",
+                "vendor_name": "업체",
+                "rows": [{} for _ in range(5001)],
+                "reason": "제한",
+            }
+        )
+    with pytest.raises(ValidationError):
+        DeliveryCreate.model_validate(
+            {
+                "order_revision_id": "o",
+                "rows": [{} for _ in range(5001)],
+                "reason": "제한",
+            }
+        )
+
+
+def test_candidate_lock_is_audited_once_with_actor_and_before_after(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    _, candidate_ids = _source_and_candidates(settings)
+    with client:
+        first = client.post(
+            f"/api/v2/candidates/{candidate_ids[0]}/lock",
+            headers=_headers(csrf, "candidate-lock-audit"),
+            json={"workspace_id": WORKSPACE_ID},
+        )
+        second = client.post(
+            f"/api/v2/candidates/{candidate_ids[0]}/lock",
+            headers=_headers(csrf, "candidate-lock-audit"),
+            json={"workspace_id": WORKSPACE_ID},
+        )
+    assert first.json() == second.json()
+    with connect(settings.database_path) as connection:
+        events = connection.execute(
+            """
+            SELECT actor_id, before_json, after_json, request_id
+            FROM audit_events WHERE action = 'CANDIDATE_LOCK_ACQUIRED'
+            """
+        ).fetchall()
+    assert len(events) == 1
+    assert events[0]["actor_id"] == OPERATOR_ID
+    assert events[0]["before_json"] is not None
+    assert events[0]["after_json"] is not None
+    assert events[0]["request_id"] == REQUEST_ID
+
+
+def test_v1_admin_routes_require_local_confirmation_and_configured_path_roots(
+    data_dir: Path,
+) -> None:
+    from openpyxl import Workbook
+
+    allowed = data_dir / "configured-imports"
+    source = allowed / "v1-source" / "학교"
+    source.mkdir(parents=True)
+    workbook = Workbook()
+    workbook.active.append(["ISBN", "자료명"])
+    workbook.active.append(["9780306406157", "이전 장서"])
+    workbook.save(source / "DLS_1.xlsx")
+    destination = data_dir / "configured-destination"
+    outside = data_dir / "outside"
+    outside.mkdir()
+    client, settings, csrf = _client(
+        data_dir / "api",
+        settings_kwargs={
+            "v1_import_roots": (allowed,),
+            "v1_destination_root": destination,
+        },
+    )
+    confirmation = client.app.state.local_admin_confirmation_token
+    headers = _headers(csrf, "v1-admin-boundary")
+    confirmed = {**headers, "X-Local-Admin-Confirmation": confirmation}
+
+    with client:
+        missing_confirmation = client.post(
+            "/api/v2/admin/v1-migration/inspect",
+            headers=headers,
+            json={"source_path": str(source.parent)},
+        )
+        outside_source = client.post(
+            "/api/v2/admin/v1-migration/inspect",
+            headers=confirmed,
+            json={"source_path": str(outside)},
+        )
+        escaped_destination = client.post(
+            "/api/v2/admin/v1-migration/run",
+            headers=confirmed,
+            json={
+                "source_path": str(source.parent),
+                "destination_path": str(data_dir / "escaped-destination"),
+            },
+        )
+        migrated = client.post(
+            "/api/v2/admin/v1-migration/run",
+            headers={**confirmed, "Idempotency-Key": "v1-contained-run"},
+            json={
+                "source_path": str(source.parent),
+                "destination_path": str(destination),
+            },
+        )
+        with connect(settings.database_path) as connection:
+            candidate_id = connection.execute(
+                "SELECT id FROM v1_catalog_candidates"
+            ).fetchone()["id"]
+        activated = client.post(
+            f"/api/v2/admin/v1-migration/catalog-candidates/{candidate_id}/activate",
+            headers={**confirmed, "Idempotency-Key": "v1-candidate-activation"},
+            json={"confirmed_row_count": 1},
+        )
+
+    assert missing_confirmation.status_code == 403
+    assert (
+        missing_confirmation.json()["detail"]["code"]
+        == "LOCAL_ADMIN_CONFIRMATION_REQUIRED"
+    )
+    assert outside_source.status_code == escaped_destination.status_code == 400
+    assert outside_source.json()["detail"]["code"] == "PATH_OUTSIDE_CONFIGURED_ROOT"
+    assert (
+        escaped_destination.json()["detail"]["code"] == "PATH_OUTSIDE_CONFIGURED_ROOT"
+    )
+    assert migrated.status_code == 200
+    assert activated.status_code == 200
+    with connect(settings.database_path) as connection:
+        audit = connection.execute(
+            "SELECT action, actor_id, request_id FROM audit_events WHERE action = 'V1_MIGRATION_COMPLETED'"
+        ).fetchall()
+        v1_candidate = connection.execute(
+            "SELECT status, catalog_version_id FROM v1_catalog_candidates"
+        ).fetchone()
+        active_catalogs = connection.execute(
+            "SELECT COUNT(*) FROM catalog_versions WHERE status = 'ACTIVE'"
+        ).fetchone()[0]
+    assert [(row["action"], row["actor_id"], row["request_id"]) for row in audit] == [
+        ("V1_MIGRATION_COMPLETED", OPERATOR_ID, REQUEST_ID)
+    ]
+    assert v1_candidate["status"] == "ACTIVATED"
+    assert v1_candidate["catalog_version_id"]
+    assert active_catalogs == 1
+
+
+def test_receiving_differences_have_independent_filtered_stable_cursor_pages(
+    data_dir: Path,
+) -> None:
+    client, settings, _ = _client(data_dir)
+    with connect(settings.database_path) as connection:
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("DROP TRIGGER receiving_difference_scope_insert")
+        for index in range(3):
+            connection.execute(
+                """
+                INSERT INTO receiving_differences (
+                    id, school_id, workspace_id, order_revision_id, kind,
+                    reference_key, details_json, disposition, active,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, 'historical-order', 'MISSING', ?, '{}',
+                          'VENDOR_CHECK', 1, ?, ?)
+                """,
+                (
+                    f"550e8400-e29b-41d4-a716-4466554403{index:02d}",
+                    SCHOOL_ID,
+                    WORKSPACE_ID,
+                    f"row-{index}",
+                    f"2026-08-2{index}T00:00:00.000000Z",
+                    f"2026-08-2{index}T00:00:00.000000Z",
+                ),
+            )
+        connection.commit()
+    params = {
+        "kind": "MISSING",
+        "disposition": "VENDOR_CHECK",
+        "active": True,
+        "limit": 1,
+    }
+    with client:
+        first = client.get(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/receiving/differences",
+            params=params,
+        )
+        second = client.get(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/receiving/differences",
+            params={**params, "cursor": first.json()["next_cursor"]},
+        )
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["items"][0]["reference_key"] == "row-2"
+    assert second.json()["items"][0]["reference_key"] == "row-1"
+    assert first.json()["items"][0]["kind"] == "MISSING"
+    assert first.json()["next_cursor"] != second.json()["next_cursor"]
+
+
+def test_backup_creation_is_audited_and_listing_uses_a_stable_cursor(
+    data_dir: Path,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    client, settings, csrf = _client(data_dir)
+    service = BackupService(settings.database_path, settings.backups_dir)
+    start = datetime(2026, 8, 20, tzinfo=UTC)
+    for offset in range(3):
+        service.create(kind="daily", now=start + timedelta(days=offset))
+    with client:
+        first = client.get("/api/v2/admin/backups", params={"limit": 1})
+        second = client.get(
+            "/api/v2/admin/backups",
+            params={"limit": 1, "cursor": first.json()["next_cursor"]},
+        )
+        created = client.post(
+            "/api/v2/admin/backups",
+            headers=_headers(csrf, "audited-backup"),
+            json={"kind": "manual"},
+        )
+
+    assert first.status_code == second.status_code == created.status_code - 1 == 200
+    assert first.json()["items"][0]["id"] != second.json()["items"][0]["id"]
+    with connect(settings.database_path) as connection:
+        audit = connection.execute(
+            """
+            SELECT actor_id, before_json, after_json, request_id
+            FROM audit_events WHERE action = 'DATABASE_BACKUP_CREATED'
+            """
+        ).fetchall()
+    assert len(audit) == 1
+    assert audit[0]["actor_id"] == OPERATOR_ID
+    assert audit[0]["before_json"] is not None
+    assert audit[0]["after_json"] is not None
+    assert audit[0]["request_id"] == REQUEST_ID

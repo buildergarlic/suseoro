@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import uuid
 from typing import Any
 
@@ -127,11 +128,67 @@ def install_error_handlers(app: FastAPI) -> None:
         request: Request, error: WorkflowDomainError
     ) -> JSONResponse:
         message = str(error)
+        status_code = 403 if error.code.endswith("_ROLE_REQUIRED") else 400
+        if error.code.endswith("_NOT_FOUND"):
+            status_code = 404
+        return error_response(
+            request,
+            status_code=status_code,
+            code=error.code,
+            message=None if message == error.code else message,
+        )
+
+    @app.exception_handler(RuntimeError)
+    async def runtime_error(request: Request, error: RuntimeError) -> JSONResponse:
+        message = str(error).casefold()
+        if "retried" in message:
+            code, status = "JOB_RETRY_NOT_ALLOWED", 409
+        elif "cancel" in message:
+            code, status = "JOB_CANCEL_NOT_ALLOWED", 409
+        elif "claim" in message:
+            code, status = "JOB_CLAIM_CONFLICT", 409
+        else:
+            code, status = "OPERATION_FAILED", 500
+        return error_response(
+            request, status_code=status, code=code, message=str(error)
+        )
+
+    @app.exception_handler(sqlite3.IntegrityError)
+    async def integrity_error(
+        request: Request, error: sqlite3.IntegrityError
+    ) -> JSONResponse:
+        if "audit" in str(error).casefold():
+            return error_response(
+                request,
+                status_code=500,
+                code="OPERATION_FAILED",
+                message=str(error),
+            )
+        return error_response(
+            request,
+            status_code=409,
+            code="INTEGRITY_CONFLICT",
+            message=str(error),
+        )
+
+    @app.exception_handler(OSError)
+    async def filesystem_error(request: Request, error: OSError) -> JSONResponse:
+        return error_response(
+            request,
+            status_code=500,
+            code="FILESYSTEM_OPERATION_FAILED",
+            message=str(error),
+        )
+
+    @app.exception_handler(ValueError)
+    async def operation_validation_error(
+        request: Request, error: ValueError
+    ) -> JSONResponse:
         return error_response(
             request,
             status_code=400,
-            code=error.code,
-            message=None if message == error.code else message,
+            code="OPERATION_VALIDATION_FAILED",
+            message=str(error),
         )
 
 

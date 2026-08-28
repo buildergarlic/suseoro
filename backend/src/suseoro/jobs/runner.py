@@ -108,6 +108,25 @@ class DurableJobRunner:
             )
             self.repository.connection.commit()
             return failed
+        terminal = self.repository.item_terminal_status(job.id)
+        if terminal == "FAILED":
+            failed = self.repository.mark_failed(
+                job.id,
+                claim_token=job.claim_token,
+                error={
+                    "type": "AllItemsFailed",
+                    "message": "모든 파일 처리에 실패했습니다.",
+                },
+                now=self.clock(),
+            )
+            self.repository.connection.commit()
+            return failed
+        if terminal == "PARTIAL":
+            partial = self.repository.mark_partial(
+                job.id, claim_token=job.claim_token, now=self.clock()
+            )
+            self.repository.connection.commit()
+            return partial
         succeeded = self.repository.mark_succeeded(
             job.id, claim_token=job.claim_token, now=self.clock()
         )

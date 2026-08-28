@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -40,6 +41,46 @@ _FTS_SCHEMA_ACTIONS = {
     sqlite3.SQLITE_ALTER_TABLE,
     sqlite3.SQLITE_REINDEX,
 }
+_database_condition = threading.Condition()
+_database_connections: dict[str, set[ProtectedConnection]] = {}
+_restoring_databases: set[str] = set()
+
+
+def _unregister_database_connection(connection: ProtectedConnection) -> None:
+    key = getattr(connection, "_database_path_key", None)
+    if key is None:
+        return
+    with _database_condition:
+        connections = _database_connections.get(key)
+        if connections is not None:
+            connections.discard(connection)
+            if not connections:
+                _database_connections.pop(key, None)
+        _database_condition.notify_all()
+
+
+@contextmanager
+def quiesce_database(database_path: Path):
+    """Fence new work and close process-owned handles for an atomic restore swap."""
+    key = str(Path(database_path).resolve())
+    with _database_condition:
+        while key in _restoring_databases:
+            _database_condition.wait()
+        _restoring_databases.add(key)
+        connections = tuple(_database_connections.get(key, ()))
+    try:
+        for connection in connections:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                # A statement already executing is allowed to finish/fail at its
+                # own checkpoint; all new connects remain fenced.
+                pass
+        yield
+    finally:
+        with _database_condition:
+            _restoring_databases.discard(key)
+            _database_condition.notify_all()
 
 
 def _clear_fts_connection_state(connection: sqlite3.Connection) -> None:
@@ -150,6 +191,7 @@ class ProtectedConnection(sqlite3.Connection):
         finally:
             if closed:
                 self._closed = True
+                _unregister_database_connection(self)
             _clear_fts_connection_state(self)
 
     def commit(self):
@@ -290,12 +332,21 @@ def rebuild_fts_index(connection: sqlite3.Connection) -> None:
 
 def connect(database_path: Path) -> sqlite3.Connection:
     """Open a SQLite connection configured for the local shared ledger."""
+    database_path = Path(database_path).resolve()
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(database_path, factory=ProtectedConnection)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("PRAGMA foreign_keys=ON")
-    connection.execute("PRAGMA busy_timeout=5000")
-    connection.execute("PRAGMA synchronous=NORMAL")
-    install_fts_protection(connection)
+    key = str(database_path)
+    with _database_condition:
+        while key in _restoring_databases:
+            _database_condition.wait()
+        connection = sqlite3.connect(
+            database_path, factory=ProtectedConnection, check_same_thread=False
+        )
+        connection._database_path_key = key
+        _database_connections.setdefault(key, set()).add(connection)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA busy_timeout=5000")
+        connection.execute("PRAGMA synchronous=NORMAL")
+        install_fts_protection(connection)
     return connection

@@ -8,14 +8,15 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Cookie, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
 
 from suseoro.api.dependencies import AuthenticatedUser, current_user
 from suseoro.db.connection import connect
-from suseoro.security.sessions import format_utc, utc_now
+from suseoro.repositories.auth import find_active_session
+from suseoro.security.sessions import SESSION_COOKIE_NAME, format_utc, utc_now
 
 router = APIRouter(prefix="/api/v2/events", tags=["events"])
 
@@ -77,8 +78,10 @@ def replay_events(
 ) -> list[ApiEvent]:
     try:
         after = int(last_event_id or 0)
-    except ValueError:
-        after = 0
+    except (TypeError, ValueError) as error:
+        raise ValueError("Last-Event-ID must be a non-negative integer") from error
+    if after < 0:
+        raise ValueError("Last-Event-ID must be a non-negative integer")
     with connect(database_path) as connection:
         if workspace_id is None:
             rows = connection.execute(
@@ -117,6 +120,7 @@ class EventFeed:
         last_event_id: str | None,
         heartbeat_seconds: float = 15,
         wait: Callable[[float], None] = time.sleep,
+        session_token: str | None = None,
     ) -> None:
         self.database_path = database_path
         self.school_id = school_id
@@ -126,6 +130,7 @@ class EventFeed:
         self.wait = wait
         self.pending: list[ApiEvent] = []
         self.closed = False
+        self.session_token = session_token
 
     def __iter__(self):
         return self
@@ -133,6 +138,12 @@ class EventFeed:
     def __next__(self) -> str:
         if self.closed:
             raise StopIteration
+        if self.session_token is not None:
+            with connect(self.database_path) as connection:
+                active = find_active_session(connection, self.session_token)
+            if active is None or active.school_id != self.school_id:
+                self.close()
+                raise StopIteration
         if not self.pending:
             self.pending = replay_events(
                 self.database_path,
@@ -157,13 +168,15 @@ def stream_events(
     request: Request,
     user: AuthenticatedUser = Depends(current_user),
     workspace_id: str | None = Query(default=None),
-    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    last_event_id: Annotated[int | None, Header(alias="Last-Event-ID", ge=0)] = None,
+    session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
 ) -> StreamingResponse:
     feed = EventFeed(
         request.app.state.settings.database_path,
         school_id=user.school_id,
         workspace_id=workspace_id,
-        last_event_id=last_event_id,
+        last_event_id=str(last_event_id) if last_event_id is not None else None,
+        session_token=session_token,
     )
     return StreamingResponse(
         feed,

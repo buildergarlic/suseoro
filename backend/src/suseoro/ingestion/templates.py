@@ -204,6 +204,8 @@ class ParserCache:
         role: DocumentRole,
         parse: Callable[[], Any],
         retry_failed: bool = True,
+        claim_token: str | None = None,
+        claim_generation: int = 1,
     ) -> CachedParseResult:
         if not re.fullmatch(r"[0-9a-f]{64}", sha256):
             raise ValueError("sha256 must be 64 lowercase hexadecimal characters")
@@ -214,9 +216,14 @@ class ParserCache:
         ).fetchone()
         if source is None:
             raise ValueError("source file must exist before parser cache reservation")
+        token = claim_token or str(uuid.uuid4())
+        if claim_generation < 1:
+            raise ValueError("claim_generation must be positive")
+        claimed_pending = False
         row = self.connection.execute(
             """
-            SELECT status, result_json, error_json FROM parser_runs
+            SELECT status, result_json, error_json, claim_token, claim_generation
+            FROM parser_runs
             WHERE source_file_sha256 = ? AND parser_version = ? AND role = ?
             """,
             (sha256, parser_version, role.value),
@@ -225,32 +232,63 @@ class ParserCache:
             if row["status"] == "SUCCESS":
                 return CachedParseResult(json.loads(row["result_json"]), True)
             if row["status"] == "PENDING":
-                raise ParserCacheInProgress("parser result is currently being produced")
-            if not retry_failed:
+                takeover = self.connection.execute(
+                    """
+                    UPDATE parser_runs SET claim_token = ?, claim_generation = ?
+                    WHERE source_file_sha256 = ? AND parser_version = ? AND role = ?
+                      AND status = 'PENDING' AND claim_generation < ?
+                    """,
+                    (
+                        token,
+                        claim_generation,
+                        sha256,
+                        parser_version,
+                        role.value,
+                        claim_generation,
+                    ),
+                )
+                if takeover.rowcount != 1:
+                    raise ParserCacheInProgress(
+                        "parser result is currently being produced"
+                    )
+                claimed_pending = True
+            if row["status"] == "FAILED" and not retry_failed:
                 raise ParserCacheFailed(row["error_json"] or "parser run failed")
 
         run_id = str(uuid.uuid4())
         now = format_utc(utc_now())
         try:
-            if row is not None and row["status"] == "FAILED":
+            if claimed_pending:
+                claim = None
+            elif row is not None and row["status"] == "FAILED":
                 claim = self.connection.execute(
                     """
                     UPDATE parser_runs
                     SET status = 'PENDING', result_json = NULL, error_json = NULL,
-                        completed_at = NULL
+                        completed_at = NULL, claim_token = ?,
+                        claim_generation = ?
                     WHERE source_file_sha256 = ? AND parser_version = ? AND role = ?
                       AND status = 'FAILED'
                     """,
-                    (sha256, parser_version, role.value),
+                    (token, claim_generation, sha256, parser_version, role.value),
                 )
             else:
                 claim = self.connection.execute(
                     """
                     INSERT OR IGNORE INTO parser_runs (
-                        id, source_file_sha256, parser_version, role, status, created_at
-                    ) VALUES (?, ?, ?, ?, 'PENDING', ?)
+                        id, source_file_sha256, parser_version, role, status,
+                        claim_token, claim_generation, created_at
+                    ) VALUES (?, ?, ?, ?, 'PENDING', ?, ?, ?)
                     """,
-                    (run_id, sha256, parser_version, role.value, now),
+                    (
+                        run_id,
+                        sha256,
+                        parser_version,
+                        role.value,
+                        token,
+                        claim_generation,
+                        now,
+                    ),
                 )
         except sqlite3.OperationalError as error:
             if "locked" in str(error).casefold():
@@ -258,7 +296,7 @@ class ParserCache:
                     "parser result is currently being produced"
                 ) from error
             raise
-        if claim.rowcount != 1:
+        if claim is not None and claim.rowcount != 1:
             current = self.connection.execute(
                 """
                 SELECT status, result_json, error_json FROM parser_runs
@@ -284,7 +322,8 @@ class ParserCache:
                 UPDATE parser_runs
                 SET status = 'FAILED', error_json = ?, completed_at = ?
                 WHERE source_file_sha256 = ? AND parser_version = ? AND role = ?
-                  AND status = 'PENDING'
+                  AND status = 'PENDING' AND claim_token = ?
+                  AND claim_generation = ?
                 """,
                 (
                     json.dumps(
@@ -296,6 +335,8 @@ class ParserCache:
                     sha256,
                     parser_version,
                     role.value,
+                    token,
+                    claim_generation,
                 ),
             )
             raise
@@ -306,9 +347,18 @@ class ParserCache:
             SET status = 'SUCCESS', result_json = ?, error_json = NULL,
                 completed_at = ?
             WHERE source_file_sha256 = ? AND parser_version = ? AND role = ?
-              AND status = 'PENDING'
+              AND status = 'PENDING' AND claim_token = ?
+              AND claim_generation = ?
             """,
-            (encoded, completed, sha256, parser_version, role.value),
+            (
+                encoded,
+                completed,
+                sha256,
+                parser_version,
+                role.value,
+                token,
+                claim_generation,
+            ),
         )
         if updated.rowcount != 1:
             raise RuntimeError("parser cache reservation was lost")

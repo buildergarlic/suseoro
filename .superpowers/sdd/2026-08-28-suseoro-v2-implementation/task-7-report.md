@@ -168,3 +168,153 @@ Successfully built dist\suseoro_v2-0.1.0-py3-none-any.whl
 `backend/dist/`, `__pycache__/`, `*.pyc`는 ignore 상태이며 commit 대상이 아니다.
 OpenAPI 재생성/diff 안정성, `git diff --check`, 비밀 패턴 scan과 최종 clean status는 commit
 직전/직후에 다시 확인한다.
+
+## 독립 검토 수정 라운드 1/5
+
+기준 커밋은 `855343e`이다. 독립 검토의 Critical 1건, Important 15건과 인접 Minor를
+행동별 회귀 테스트로 먼저 고정한 뒤 최소 제품 구현을 연결했다. 이 라운드는 기존
+`0001`~`0006` migration을 수정하지 않고 새 forward migration만 추가했다.
+
+### 라운드 TDD RED/GREEN 증거
+
+아래 네 focused module에 acquisition composition, mapping/cache, delta window, per-file job
+result, pagination, OpenAPI, error envelope, v1 migration, backup/restore, SSE session revalidation
+probe를 먼저 추가했다.
+
+```text
+uv run pytest tests/test_api_contract.py tests/test_sse_jobs.py tests/test_v1_migration.py tests/test_backup_restore.py -q
+22 failed, 24 passed in 18.79s
+```
+
+첫 RED에는 catalog staging/activation 및 compare route 부재, delta DB trigger 위반,
+ParserCache/template 미사용, per-file 결과 부재, 잘못된 cursor/source role 계약, untyped
+OpenAPI, v1 app visibility 부재, future/old schema restore 검증 부재, SSE revoked-session 미종료가
+각각 실제 assertion failure로 포함됐다. v1 후보 활성화 confirmation boundary를 마지막으로
+추가했을 때도 다음의 별도 RED를 확인했다.
+
+```text
+uv run pytest tests/test_api_contract.py::test_v1_admin_routes_require_local_confirmation_and_configured_path_roots -q
+1 failed (expected activation HTTP 200, received HTTP 404)
+```
+
+최종 fresh focused GREEN:
+
+```text
+uv run pytest tests/test_api_contract.py tests/test_sse_jobs.py tests/test_v1_migration.py tests/test_backup_restore.py -q
+..............................................                           [100%]
+46 passed in 19.45s
+```
+
+최종 fresh backend 전체 GREEN:
+
+```text
+uv run pytest -q
+........................................................................ [ 20%]
+........................................................................ [ 40%]
+........................................................................ [ 61%]
+........................................................................ [ 81%]
+................................................................         [100%]
+352 passed in 59.16s
+```
+
+### 검토 항목별 구현 결정
+
+- catalog full/delta staging과 확인 activation, comparison durable job route를 실제
+  `CatalogSyncService`/`ComparisonService`에 연결했다. compare의 모든 항목이 성공 완료된
+  transaction에서만 workspace가 `CANDIDATE_REVIEW`로 전이된다.
+- configured `mapping_json`을 parser 결과에 적용하고, header fingerprint/vendor/role별
+  `MappingTemplateStore` 조회·저장 및 `remember_template`을 parse/retry 경로에 연결했다.
+  원본 parser 결과는 `(sha256, parser_version, role)` `ParserCache.get_or_parse`와
+  claim token/generation fencing으로 한 번만 계산한다.
+- catalog/holdings delta role은 `requested_start_date`와 `requested_through_date`를 둘 다
+  요구하고 inclusive window를 그대로 보존한다. 역전 window는 durable mutation 전에
+  거부한다.
+- `INGEST`/`PARSE`가 문서별 durable result와 오류를 남기고 집계 상태를
+  `SUCCEEDED`/`PARTIAL`/`FAILED`로 계산하며 `getJob.items`로 공개한다.
+- source configured-role filter, audit qualified cursor, receiving difference의 독립
+  filter와 `(created_at,id)` cursor를 구현했다. 모든 목록은 bounded limit와 stable tie-breaker를
+  갖는다.
+- 모든 JSON operation의 typed success `$ref`와 공통 typed error envelope를 OpenAPI에
+  생성하고 CSRF, request ID, idempotency, If-Match, local confirmation required header를
+  client-visible required parameter로 고정했다. operation ID와 한국어 summary는 안정적이다.
+- `RuntimeError`, retry/cancel/claim, SQLite integrity, filesystem, migration/backup validation이
+  request ID 포함 error envelope로 수렴한다. domain role denial은 원래 403/code를 유지한다.
+- v1 migration은 source를 read-only로 유지하면서 앱에 보이는 school과 read-only history,
+  artifact copy, 최신 healthy DLS pending candidate를 만든다. 후보는 row-count/local-admin
+  confirmation route 전에는 active catalog가 아니며 `catalog_master`는 cache로만 복사한다.
+- DLS 선택은 지원 spreadsheet parser로 실제 1개 이상 행을 읽은 파일만 healthy로 보며
+  날짜/natural filename 순서(`DLS_10 > DLS_9`)를 사용한다. 임의 bytes와 zero-row 파일은
+  후보에서 제외한다.
+- v1 admin은 OPERATOR + loopback + process-local confirmation과 configured import/destination
+  root resolved containment를 모두 요구해 arbitrary server path와 escape를 차단한다.
+- restore는 process-wide lock과 operation replay cache, connection quiescence로 Windows handle과
+  worker를 fencing한다. 검증 후 prebackup은 한 번만 만들고 atomic swap 뒤 system audit는
+  restored DB에 기존 actor가 없어도 안전하다.
+- restore schema history는 bundled migration ID/checksum의 exact prefix만 허용한다. future,
+  incomplete, altered history를 swap 전에 거부하고 compatible older backup은 temporary DB에서
+  forward upgrade한 뒤 교체한다.
+- upload는 batch count/file/aggregate byte limit를 streaming 중 집행하고 idempotency/hash replay를
+  확인해 orphan publish를 제거한다. quote/delivery/candidate bulk 배열은 Pydantic 상한으로 durable
+  mutation 전에 거부한다.
+- v1 migration, backup creation, catalog activation, candidate edit-lock acquisition에 actor/time,
+  before/after, request/version/idempotency audit를 남긴다.
+- SSE는 매 poll마다 session 존재, expiry, revocation을 재검증하고 revoked stream만 닫는다.
+  malformed/negative `Last-Event-ID`는 structured validation error이며 disconnect는 job cancel을
+  일으키지 않는다.
+- backup kind를 enum으로 제한하고 목록을 stable cursor page로 바꿨으며 scheduled backup 생성 시
+  daily/weekly/monthly retention을 실제 파일/manifest에 집행한다.
+
+### 라운드 migration/checksum 증거
+
+추가 migration은 `backend/src/suseoro/db/migrations/0006a_api_hardening.sql` 하나다.
+job item results, comparison/staging, v1 read-only history/candidate 및 관련 무결성 trigger/index를
+forward-only로 추가한다.
+
+```text
+git diff --exit-code 855343e -- backend/src/suseoro/db/migrations \
+  ':(exclude)backend/src/suseoro/db/migrations/0006a_api_hardening.sql'
+exit 0
+
+0006_api_operations.sql
+CE06C0866F14A1E2932CC21CE18C80F239B97E927AC14FB6C9E32E7CB1797EBF
+
+0006a_api_hardening.sql
+4E18920AA31AA5129CC23E123681062CDDE79E9329EB7B90307C27C80A021F86
+```
+
+### 라운드 변경 파일과 품질 gate
+
+주요 제품 변경은 API app/error 및
+`routes/{audit,candidates,deliveries,events,procurement,sources,workspaces}.py`,
+`backup/service.py`, `migration/v1.py`, `db/{connection,migrations}.py`,
+`ingestion/{mapping,templates}.py`, `jobs/{handlers,repository,runner}.py`, catalog/config와
+generated `backend/openapi.json`이다. focused 네 test module과 migration-version fixture 두 곳을
+갱신했다.
+
+```text
+uv run --with ruff ruff format --check src tests
+101 files already formatted
+
+uv run --with ruff ruff check src tests
+All checks passed!
+
+uv run python -m compileall -q src tests
+exit 0
+
+uv lock --check
+Resolved 36 packages in 2ms
+
+uv build --out-dir .task7-build
+Successfully built .task7-build\suseoro_v2-0.1.0.tar.gz
+Successfully built .task7-build\suseoro_v2-0.1.0-py3-none-any.whl
+
+uv run python -m suseoro.api.export_openapi  # twice
+first=14007715585CB5037D54226E50611CAFB649A336F64999BFDC4F734494BF31DE
+second=14007715585CB5037D54226E50611CAFB649A336F64999BFDC4F734494BF31DE
+
+git diff --check
+exit 0
+```
+
+build 산출물은 검증 후 명시 경로에서 제거했다. OpenAPI 두 번 생성의 SHA256이 동일해
+generator stability도 확인했다.

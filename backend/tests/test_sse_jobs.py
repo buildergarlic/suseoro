@@ -4,6 +4,9 @@ import json
 import uuid
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
+from suseoro.api.app import create_app
 from suseoro.api.routes.events import (
     EventFeed,
     publish_event,
@@ -13,6 +16,7 @@ from suseoro.config import Settings
 from suseoro.db.connection import connect
 from suseoro.db.migrations import apply_migrations
 from suseoro.jobs.repository import JobRepository
+from suseoro.repositories.auth import UserRecord, issue_session
 
 NOW = "2026-08-28T00:00:00.000000Z"
 
@@ -275,3 +279,76 @@ def test_event_publication_deduplicates_an_idempotent_mutation_side_effect(
         last_event_id=None,
     )
     assert [event.id for event in events] == [first]
+
+
+def test_event_route_constrains_last_event_id_to_non_negative_integer(
+    data_dir: Path,
+) -> None:
+    settings, school_id, actor_id, _ = _database(data_dir)
+    with connect(settings.database_path) as connection:
+        issued = issue_session(
+            connection,
+            UserRecord(
+                id=actor_id,
+                school_id=school_id,
+                username="operator",
+                display_name="담당자",
+                roles=("OPERATOR",),
+            ),
+            3_600,
+        )
+        connection.commit()
+    client = TestClient(create_app(settings), base_url="https://testserver")
+    client.cookies.set("suseoro_session", issued.session_token)
+
+    with client:
+        schema = client.get("/openapi.json").json()
+    parameter = next(
+        item
+        for item in schema["paths"]["/api/v2/events"]["get"]["parameters"]
+        if item["name"] == "Last-Event-ID"
+    )
+    assert parameter["schema"]["type"] == "integer"
+    assert parameter["schema"]["minimum"] == 0
+
+
+def test_event_feed_revalidates_and_closes_after_session_revocation(
+    data_dir: Path,
+) -> None:
+    settings, school_id, actor_id, workspace_id = _database(data_dir)
+    with connect(settings.database_path) as connection:
+        issued = issue_session(
+            connection,
+            UserRecord(
+                id=actor_id,
+                school_id=school_id,
+                username="operator",
+                display_name="담당자",
+                roles=("OPERATOR",),
+            ),
+            3_600,
+        )
+        connection.commit()
+    feed = EventFeed(
+        settings.database_path,
+        school_id=school_id,
+        workspace_id=workspace_id,
+        last_event_id=None,
+        session_token=issued.session_token,
+        heartbeat_seconds=15,
+        wait=lambda _: None,
+    )
+    assert next(feed) == ": heartbeat\n\n"
+
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            "UPDATE sessions SET revoked_at = ? WHERE id = ?", (NOW, issued.session_id)
+        )
+        connection.commit()
+
+    try:
+        next(feed)
+    except StopIteration:
+        pass
+    else:
+        raise AssertionError("a revoked SSE session must close on the next poll")

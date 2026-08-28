@@ -21,6 +21,7 @@ from suseoro.api.dependencies import (
 )
 from suseoro.api.errors import domain_not_found
 from suseoro.api.routes.events import publish_event
+from suseoro.services.audit import record_audit_event
 from suseoro.services.concurrency import acquire_edit_lock
 from suseoro.services.idempotency import (
     complete_idempotent_request,
@@ -38,7 +39,7 @@ class CandidateUpdate(BaseModel):
 
 
 class CandidateBulkUpdate(BaseModel):
-    items: list[Any]
+    items: list[Any] = Field(min_length=1, max_length=1000)
 
 
 class CandidateLock(BaseModel):
@@ -177,7 +178,7 @@ def lock_candidate(
 ):
     exists = connection.execute(
         """
-        SELECT 1 FROM candidate_decisions
+        SELECT row_version FROM candidate_decisions
         WHERE id = ? AND workspace_id = ? AND school_id = ?
         """,
         (candidate_id, payload.workspace_id, user.school_id),
@@ -210,6 +211,17 @@ def lock_candidate(
         "actor_id": lock.actor_id,
         "expires_at": lock.expires_at.isoformat().replace("+00:00", "Z"),
     }
+    record_audit_event(
+        connection,
+        actor_id=user.id,
+        school_id=user.school_id,
+        action="CANDIDATE_LOCK_ACQUIRED",
+        entity_type="candidate_decision",
+        entity_id=candidate_id,
+        before={"locked": False, "row_version": exists["row_version"]},
+        after={**result, "row_version": exists["row_version"]},
+        request_id=request_id,
+    )
     publish_event(
         connection,
         school_id=user.school_id,

@@ -59,6 +59,14 @@ def _apply_migrations_trusted(
 
     for migration_path in sorted(directory.glob("*.sql")):
         migration_id = migration_path.stem
+        # Letter-suffixed hardening migrations depend on their committed base.
+        # Upgrade-fixture directories intentionally omit newer bases; defer this
+        # migration until the base is supplied by the real bundled directory.
+        if (
+            migration_id == "0006a_api_hardening"
+            and not (directory / "0006_api_operations.sql").is_file()
+        ):
+            continue
         contents = migration_path.read_text(encoding="utf-8")
         checksum = hashlib.sha256(contents.encode("utf-8")).hexdigest()
         applied = connection.execute(

@@ -134,9 +134,12 @@ class CatalogSyncService:
         document = self.connection.execute(
             """
             SELECT sd.*, sf.sha256, sf.detected_format AS file_format,
-                   sf.id AS source_file_id
+                   sf.id AS source_file_id,
+                   COALESCE(config.role, sd.role) AS configured_role
             FROM source_documents sd
             JOIN source_files sf ON sf.id = sd.source_file_id
+            LEFT JOIN source_configurations config
+              ON config.source_document_id = sd.id
             WHERE sd.id = ?
             """,
             (source_document_id,),
@@ -145,7 +148,7 @@ class CatalogSyncService:
             raise CatalogValidationError(
                 "source document does not belong to the requested school"
             )
-        if document["role"] != role:
+        if document["configured_role"] != role:
             raise CatalogValidationError(f"source document role must be {role}")
         if (
             document["detected_format"] not in formats

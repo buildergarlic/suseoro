@@ -24,6 +24,11 @@ class Settings:
     version: str = "0.1.0"
     secure_cookies: bool = True
     session_ttl_seconds: int = 8 * 60 * 60
+    upload_max_files: int = 20
+    upload_max_file_bytes: int = 100 * 1024 * 1024
+    upload_max_batch_bytes: int = 250 * 1024 * 1024
+    v1_import_roots: tuple[Path, ...] = ()
+    v1_destination_root: Path | None = None
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir).expanduser()
@@ -31,6 +36,13 @@ class Settings:
             self.database_path = self.data_dir / "db" / "suseoro.sqlite3"
         else:
             self.database_path = Path(self.database_path).expanduser()
+        self.v1_import_roots = tuple(
+            Path(path).expanduser().resolve() for path in self.v1_import_roots
+        )
+        if self.v1_destination_root is None:
+            self.v1_destination_root = self.data_dir / "v1-imports"
+        else:
+            self.v1_destination_root = Path(self.v1_destination_root).expanduser()
 
         for directory in (
             self.data_dir,
@@ -38,6 +50,7 @@ class Settings:
             self.sources_dir,
             self.exports_dir,
             self.backups_dir,
+            self.v1_destination_root,
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
@@ -66,5 +79,24 @@ class Settings:
             not in {"0", "false", "no"},
             session_ttl_seconds=int(
                 os.environ.get("SUSEORO_SESSION_TTL_SECONDS", str(8 * 60 * 60))
+            ),
+            upload_max_files=int(os.environ.get("SUSEORO_UPLOAD_MAX_FILES", "20")),
+            upload_max_file_bytes=int(
+                os.environ.get("SUSEORO_UPLOAD_MAX_FILE_BYTES", str(100 * 1024 * 1024))
+            ),
+            upload_max_batch_bytes=int(
+                os.environ.get("SUSEORO_UPLOAD_MAX_BATCH_BYTES", str(250 * 1024 * 1024))
+            ),
+            v1_import_roots=tuple(
+                Path(value)
+                for value in os.environ.get("SUSEORO_V1_IMPORT_ROOTS", "").split(
+                    os.pathsep
+                )
+                if value
+            ),
+            v1_destination_root=(
+                Path(os.environ["SUSEORO_V1_DESTINATION_ROOT"])
+                if os.environ.get("SUSEORO_V1_DESTINATION_ROOT")
+                else None
             ),
         )

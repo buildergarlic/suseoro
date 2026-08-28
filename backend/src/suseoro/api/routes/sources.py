@@ -5,9 +5,21 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from datetime import date
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
 
 from suseoro.api.common import decode_cursor, page
@@ -22,6 +34,13 @@ from suseoro.api.dependencies import (
 )
 from suseoro.api.errors import domain_not_found
 from suseoro.api.routes.events import publish_event
+from suseoro.catalog.contracts import CatalogRecord, SourceType
+from suseoro.catalog.sync import (
+    ActivationConfirmationRequired,
+    CatalogSyncService,
+    CatalogValidationError,
+)
+from suseoro.db.connection import connect
 from suseoro.ingestion.contracts import DocumentRole
 from suseoro.ingestion.file_store import (
     FileTooLarge,
@@ -43,6 +62,39 @@ router = APIRouter(prefix="/api/v2", tags=["sources"])
 class SourceMapping(BaseModel):
     role: DocumentRole
     mapping: dict[str, str] = Field(default_factory=dict)
+    remember_template: bool = False
+    vendor_scope: str = Field(default="*", min_length=1, max_length=200)
+
+
+class CatalogStageRequest(BaseModel):
+    source_type: SourceType
+
+
+class CatalogActivateRequest(BaseModel):
+    confirm_anomaly: bool = False
+
+
+def _field_value(fields: dict[str, Any], name: str) -> Any:
+    value = fields.get(name)
+    return value.get("value") if isinstance(value, dict) else value
+
+
+def _catalog_version(version) -> dict[str, Any]:
+    return {
+        "id": version.id,
+        "school_id": version.school_id,
+        "source_type": version.source_type.value,
+        "import_mode": version.import_mode,
+        "status": version.status,
+        "item_count": version.item_count,
+        "as_of_local_date": (
+            version.as_of_local_date.isoformat() if version.as_of_local_date else None
+        ),
+        "created_at": (format_utc(version.created_at) if version.created_at else None),
+        "activated_at": (
+            format_utc(version.activated_at) if version.activated_at else None
+        ),
+    }
 
 
 def _workspace_exists(connection, school_id: str, workspace_id: str) -> bool:
@@ -98,6 +150,9 @@ def upload_sources(
     response: Response,
     files: list[UploadFile] = File(...),
     role: DocumentRole = Form(DocumentRole.UNKNOWN),
+    vendor_scope: str = Form("*"),
+    requested_start_local_date: str | None = Form(None),
+    requested_through_local_date: str | None = Form(None),
     user: AuthenticatedUser = Depends(require_role("OPERATOR")),
     connection: sqlite3.Connection = Depends(database_connection),
     idempotency_key: str = Depends(require_idempotency_key),
@@ -105,11 +160,43 @@ def upload_sources(
 ):
     if not _workspace_exists(connection, user.school_id, workspace_id):
         raise domain_not_found("WORKSPACE_NOT_FOUND")
-    store = ImmutableFileStore(request.app.state.settings.sources_dir)
+    settings = request.app.state.settings
+    if len(files) > settings.upload_max_files:
+        raise HTTPException(
+            status_code=413, detail={"code": "UPLOAD_BATCH_LIMIT_EXCEEDED"}
+        )
+    delta_roles = {
+        DocumentRole.CATALOG_DELTA_REGISTRATION,
+        DocumentRole.CATALOG_DELTA_UPDATE,
+    }
+    requested_start = requested_through = None
+    if role in delta_roles:
+        if not requested_start_local_date or not requested_through_local_date:
+            raise HTTPException(
+                status_code=422, detail={"code": "DELTA_WINDOW_REQUIRED"}
+            )
+        try:
+            requested_start = date.fromisoformat(requested_start_local_date)
+            requested_through = date.fromisoformat(requested_through_local_date)
+        except ValueError as error:
+            raise HTTPException(
+                status_code=422, detail={"code": "INVALID_DELTA_WINDOW"}
+            ) from error
+        if requested_start > requested_through:
+            raise HTTPException(
+                status_code=422, detail={"code": "INVALID_DELTA_WINDOW"}
+            )
+    elif requested_start_local_date or requested_through_local_date:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_DELTA_WINDOW"})
+    store = ImmutableFileStore(
+        settings.sources_dir, max_bytes=settings.upload_max_file_bytes
+    )
     now = format_utc(utc_now())
     items: list[dict[str, Any]] = []
     accepted_ids: list[str] = []
     fingerprints: list[dict[str, Any]] = []
+    newly_published: list[Path] = []
+    aggregate_bytes = 0
     for upload in files:
         filename = upload.filename or "unnamed"
         try:
@@ -117,6 +204,14 @@ def upload_sources(
                 iter(lambda upload=upload: upload.file.read(64 * 1024), b""),
                 filename=filename,
             )
+            if stored.created:
+                newly_published.append(stored.path)
+            aggregate_bytes += stored.size
+            if aggregate_bytes > settings.upload_max_batch_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail={"code": "UPLOAD_BATCH_LIMIT_EXCEEDED"},
+                )
             fingerprints.append({"filename": filename, "sha256": stored.sha256})
             existing = connection.execute(
                 "SELECT id FROM source_files WHERE sha256 = ?", (stored.sha256,)
@@ -145,8 +240,9 @@ def upload_sources(
                 """
                 INSERT INTO source_documents (
                     id, source_file_id, school_id, role, parser_version,
-                    status, detected_format, created_at
-                ) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)
+                    status, detected_format, requested_start_local_date,
+                    requested_through_local_date, created_at
+                ) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)
                 """,
                 (
                     source_id,
@@ -155,6 +251,8 @@ def upload_sources(
                     role,
                     parser_version_for_format(stored.detected_format),
                     stored.detected_format,
+                    requested_start.isoformat() if requested_start else None,
+                    requested_through.isoformat() if requested_through else None,
                     now,
                 ),
             )
@@ -169,15 +267,21 @@ def upload_sources(
             connection.execute(
                 """
                 INSERT INTO source_configurations (
-                    source_document_id, school_id, role, mapping_json, updated_at
-                ) VALUES (?, ?, ?, '{}', ?)
+                    source_document_id, school_id, role, mapping_json,
+                    vendor_scope, updated_at
+                ) VALUES (?, ?, ?, '{}', ?, ?)
                 """,
-                (source_id, user.school_id, role, now),
+                (source_id, user.school_id, role, vendor_scope.strip() or "*", now),
             )
             accepted_ids.append(source_id)
             items.append(
                 {"filename": filename, "status": "ACCEPTED", "source_id": source_id}
             )
+        except HTTPException:
+            connection.rollback()
+            for path in newly_published:
+                path.unlink(missing_ok=True)
+            raise
         except (FileTooLarge, UnsupportedFileType, ValueError) as error:
             code = (
                 "FILE_TOO_LARGE"
@@ -194,7 +298,14 @@ def upload_sources(
             )
         finally:
             upload.file.close()
-    request_body = {"workspace_id": workspace_id, "role": role, "files": fingerprints}
+    request_body = {
+        "workspace_id": workspace_id,
+        "role": role,
+        "vendor_scope": vendor_scope.strip() or "*",
+        "requested_start_local_date": requested_start_local_date,
+        "requested_through_local_date": requested_through_local_date,
+        "files": fingerprints,
+    }
     replay = reserve_idempotency_key(
         connection,
         school_id=user.school_id,
@@ -205,6 +316,13 @@ def upload_sources(
     )
     if replay is not None:
         connection.rollback()
+        for path in newly_published:
+            with connect(request.app.state.settings.database_path) as check:
+                exists = check.execute(
+                    "SELECT 1 FROM source_files WHERE storage_path = ?", (str(path),)
+                ).fetchone()
+            if exists is None:
+                path.unlink(missing_ok=True)
         response.status_code = replay.status
         return replay.body
     job = None
@@ -284,6 +402,7 @@ def list_sources(
     rows = connection.execute(
         f"""
         SELECT document.*, file.sha256, file.size_bytes, file.original_filename,
+               COALESCE(config.role, document.role) AS configured_role,
                COALESCE(config.row_version, 1) AS row_version,
                COALESCE(config.mapping_json, '{{}}') AS mapping_json
         FROM workspace_sources link
@@ -353,12 +472,15 @@ def update_source_mapping(
     updated = connection.execute(
         """
         UPDATE source_configurations SET role = ?, mapping_json = ?,
+            remember_template = ?, vendor_scope = ?,
             row_version = row_version + 1, updated_at = ?
         WHERE source_document_id = ? AND school_id = ? AND row_version = ?
         """,
         (
             payload.role,
             json.dumps(payload.mapping, ensure_ascii=False, sort_keys=True),
+            int(payload.remember_template),
+            payload.vendor_scope.strip(),
             format_utc(utc_now()),
             source_id,
             user.school_id,
@@ -469,6 +591,172 @@ def parse_source(
     return result
 
 
+@router.post(
+    "/sources/{source_id}/catalog/staging",
+    status_code=201,
+    summary="장서 후보 버전 검증하기",
+    operation_id="stageCatalogSnapshot",
+)
+def stage_catalog_snapshot(
+    source_id: str,
+    payload: CatalogStageRequest,
+    user: AuthenticatedUser = Depends(require_role("OPERATOR")),
+    connection: sqlite3.Connection = Depends(database_connection),
+    idempotency_key: str = Depends(require_idempotency_key),
+    request_id: str = Depends(require_request_id),
+):
+    route = f"POST /api/v2/sources/{source_id}/catalog/staging"
+    replay = reserve_idempotency_key(
+        connection,
+        school_id=user.school_id,
+        actor_id=user.id,
+        route=route,
+        key=idempotency_key,
+        request_body=payload.model_dump(),
+    )
+    if replay:
+        connection.rollback()
+        return replay.body
+    source = _source_row(connection, user.school_id, source_id)
+    if source is None:
+        raise domain_not_found("SOURCE_NOT_FOUND")
+    rows = connection.execute(
+        """
+        SELECT id, raw_json, fields_json FROM source_rows
+        WHERE source_document_id = ? AND status = 'SUCCESS'
+        ORDER BY source_row, id
+        """,
+        (source_id,),
+    ).fetchall()
+    records = []
+    for row in rows:
+        raw = json.loads(row["raw_json"])
+        fields = json.loads(row["fields_json"])
+        registration = _field_value(fields, "registration_number")
+        records.append(
+            CatalogRecord(
+                source_item_id=str(registration or row["id"]),
+                source_row_id=row["id"],
+                registration_number=(str(registration) if registration else None),
+                isbn=_field_value(fields, "isbn"),
+                title=str(_field_value(fields, "title") or ""),
+                authors=tuple(
+                    part.strip()
+                    for part in str(_field_value(fields, "author") or "").split(";")
+                    if part.strip()
+                ),
+                publisher=_field_value(fields, "publisher"),
+                call_number=_field_value(fields, "call_number"),
+                raw_fields=raw,
+            )
+        )
+    try:
+        staged = CatalogSyncService(connection).stage_full_snapshot(
+            school_id=user.school_id,
+            source_type=payload.source_type,
+            source_document_id=source_id,
+            records=records,
+        )
+    except (CatalogValidationError, ValueError) as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "CATALOG_VALIDATION_FAILED", "message": str(error)},
+        ) from error
+    result = _catalog_version(staged)
+    record_audit_event(
+        connection,
+        actor_id=user.id,
+        school_id=user.school_id,
+        action="CATALOG_STAGING_CREATED",
+        entity_type="catalog_version",
+        entity_id=staged.id,
+        before=None,
+        after=result,
+        request_id=request_id,
+    )
+    complete_idempotent_request(
+        connection,
+        school_id=user.school_id,
+        actor_id=user.id,
+        route=route,
+        key=idempotency_key,
+        status=201,
+        body=result,
+    )
+    connection.commit()
+    return result
+
+
+@router.post(
+    "/catalog/versions/{version_id}/activate",
+    summary="검증된 장서 버전 활성화하기",
+    operation_id="activateCatalogVersion",
+)
+def activate_catalog_version(
+    version_id: str,
+    payload: CatalogActivateRequest,
+    user: AuthenticatedUser = Depends(require_role("OPERATOR")),
+    connection: sqlite3.Connection = Depends(database_connection),
+    idempotency_key: str = Depends(require_idempotency_key),
+    request_id: str = Depends(require_request_id),
+):
+    route = f"POST /api/v2/catalog/versions/{version_id}/activate"
+    replay = reserve_idempotency_key(
+        connection,
+        school_id=user.school_id,
+        actor_id=user.id,
+        route=route,
+        key=idempotency_key,
+        request_body=payload.model_dump(),
+    )
+    if replay:
+        connection.rollback()
+        return replay.body
+    current = connection.execute(
+        "SELECT * FROM catalog_versions WHERE id = ? AND school_id = ?",
+        (version_id, user.school_id),
+    ).fetchone()
+    if current is None:
+        raise domain_not_found("CATALOG_VERSION_NOT_FOUND")
+    try:
+        activated = CatalogSyncService(connection).activate_staged(
+            version_id, confirm_anomaly=payload.confirm_anomaly
+        )
+    except ActivationConfirmationRequired as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "CATALOG_ACTIVATION_CONFIRMATION_REQUIRED"},
+        ) from error
+    except CatalogValidationError as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "CATALOG_ACTIVATION_FAILED", "message": str(error)},
+        ) from error
+    result = _catalog_version(activated)
+    record_audit_event(
+        connection,
+        actor_id=user.id,
+        school_id=user.school_id,
+        action="CATALOG_VERSION_ACTIVATED",
+        entity_type="catalog_version",
+        entity_id=version_id,
+        before=dict(current),
+        after=result,
+        request_id=request_id,
+    )
+    complete_idempotent_request(
+        connection,
+        school_id=user.school_id,
+        actor_id=user.id,
+        route=route,
+        key=idempotency_key,
+        status=200,
+        body=result,
+    )
+    connection.commit()
+    return result
+
+
 def _job(connection, school_id: str, job_id: str):
     job = JobRepository(connection).get(job_id)
     return job if job is not None and job.school_id == school_id else None
@@ -497,7 +785,9 @@ def get_job(
     job = _job(connection, user.school_id, job_id)
     if job is None:
         raise domain_not_found("JOB_NOT_FOUND")
-    return _job_json(job)
+    result = _job_json(job)
+    result["items"] = JobRepository(connection).file_results(job.id)
+    return result
 
 
 @router.post(

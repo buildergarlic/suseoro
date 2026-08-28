@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/v2", tags=["procurement"])
 class QuoteCreate(BaseModel):
     approval_revision_id: str
     vendor_name: str = Field(min_length=1, max_length=200)
-    rows: list[dict[str, Any]]
+    rows: list[dict[str, Any]] = Field(min_length=1, max_length=5000)
     reason: str = Field(min_length=1, max_length=500)
 
 
@@ -44,7 +44,7 @@ class OrderCreate(BaseModel):
     approval_revision_id: str
     quote_id: str
     reason: str = Field(min_length=1, max_length=500)
-    allocations: list[dict[str, Any]] | None = None
+    allocations: list[dict[str, Any]] | None = Field(default=None, max_length=5000)
     advanced_split_enabled: bool = False
 
 

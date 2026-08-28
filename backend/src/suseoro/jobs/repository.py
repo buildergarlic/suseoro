@@ -297,6 +297,25 @@ class JobRepository:
         self._publish_progress(job)
         return job
 
+    def mark_partial(
+        self, job_id: str, *, claim_token: str, now: datetime | None = None
+    ) -> Job:
+        timestamp = format_utc(now or utc_now())
+        updated = self.connection.execute(
+            """
+            UPDATE durable_jobs
+            SET status = 'PARTIAL', stage = 'COMPLETED', error_json = NULL,
+                heartbeat_at = ?, updated_at = ?
+            WHERE id = ? AND status = 'RUNNING' AND claim_token = ?
+            """,
+            (timestamp, timestamp, job_id, claim_token),
+        )
+        if updated.rowcount != 1:
+            raise RuntimeError("job claim cannot transition to partial")
+        job = self.get(job_id)
+        self._publish_progress(job)
+        return job
+
     def mark_failed(
         self,
         job_id: str,
@@ -403,12 +422,12 @@ class JobRepository:
             (source_document_id,),
         ).fetchone()
         if (
-            job.job_type != "COMPARE"
+            job.job_type not in {"COMPARE", "INGEST", "PARSE"}
             or job.workspace_id is None
             or document is None
             or document["school_id"] != job.school_id
         ):
-            raise ValueError("job file result scope does not match a COMPARE job")
+            raise ValueError("job file result scope does not match the durable job")
         timestamp = format_utc(now or utc_now())
         self.connection.execute(
             """
@@ -441,3 +460,41 @@ class JobRepository:
                 timestamp,
             ),
         )
+
+    def file_results(self, job_id: str) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT result.*, file.original_filename
+            FROM job_file_results result
+            JOIN source_documents document ON document.id = result.source_document_id
+            JOIN source_files file ON file.id = document.source_file_id
+            WHERE result.job_id = ?
+            ORDER BY file.original_filename, result.source_document_id
+            """,
+            (job_id,),
+        ).fetchall()
+        return [
+            {
+                "source_document_id": row["source_document_id"],
+                "filename": row["original_filename"],
+                "status": row["status"],
+                "total_rows": row["total_rows"],
+                "processed_rows": row["processed_rows"],
+                "error": json.loads(row["error_json"]) if row["error_json"] else None,
+            }
+            for row in rows
+        ]
+
+    def item_terminal_status(self, job_id: str) -> str | None:
+        job = self.get(job_id)
+        if job is None or job.job_type not in {"INGEST", "PARSE"}:
+            return None
+        statuses = [item["status"] for item in self.file_results(job_id)]
+        expected = len(job.payload.get("source_document_ids", []))
+        if not statuses or len(statuses) != expected:
+            return "FAILED"
+        if all(status == "FAILED" for status in statuses):
+            return "FAILED"
+        if any(status in {"FAILED", "PARTIAL"} for status in statuses):
+            return "PARTIAL"
+        return "SUCCEEDED"
