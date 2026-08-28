@@ -4,9 +4,11 @@ import json
 import sqlite3
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import date
 from pathlib import Path
-from threading import Barrier, Event, Lock, get_ident
+from threading import Barrier, Event
+from time import monotonic
 
 import pytest
 from fastapi.testclient import TestClient
@@ -865,6 +867,58 @@ def test_partial_upload_fingerprint_includes_changed_rejected_file_bytes(
     assert _upload_durable_state(settings) == before_conflict
 
 
+def test_upload_fingerprint_replays_across_restart_when_server_policy_changes(
+    data_dir: Path,
+) -> None:
+    """Including a server rejection decision in the fingerprint breaks a valid retry."""
+    content = b"title,author\nPolicy,A\n"
+    client, settings, csrf = _client(
+        data_dir,
+        raise_server_exceptions=False,
+        settings_kwargs={"upload_max_file_bytes": 8},
+    )
+    session_token = client.cookies.get("suseoro_session")
+
+    with client:
+        first = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "policy-stable-upload"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("policy.csv", content, "text/csv"))],
+        )
+
+    restarted_settings = Settings(
+        data_dir=settings.data_dir,
+        database_path=settings.database_path,
+        secure_cookies=False,
+        upload_max_file_bytes=1024,
+    )
+    restarted = TestClient(
+        create_app(restarted_settings),
+        base_url="https://testserver",
+        raise_server_exceptions=False,
+    )
+    restarted.cookies.set("suseoro_session", session_token)
+    restarted.cookies.set("suseoro_csrf", csrf)
+    with restarted:
+        replay = restarted.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "policy-stable-upload"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("policy.csv", content, "text/csv"))],
+        )
+
+    assert first.status_code == 207
+    assert first.json()["items"][0]["error"]["code"] == "FILE_TOO_LARGE"
+    assert replay.status_code == 207
+    assert replay.json() == first.json()
+    assert not [
+        path
+        for path in settings.sources_dir.joinpath(".staging").glob("*")
+        if path.is_file()
+    ]
+
+
 def test_concurrent_identical_uploads_commit_once_and_both_return_exact_202(
     data_dir: Path,
 ) -> None:
@@ -903,183 +957,121 @@ def test_concurrent_identical_uploads_commit_once_and_both_return_exact_202(
     assert len(state["blobs"]) == 1
 
 
-def test_concurrent_identical_upload_waits_past_sqlite_timeout_then_replays(
+def test_matching_upload_claim_returns_bounded_retryable_in_progress_response(
     data_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A winner slower than SQLite's busy timeout must not turn replay into 409."""
+    """A matching live claim must stop at its deadline instead of spinning forever."""
     from suseoro.api.routes import sources as sources_module
     from suseoro.ingestion.file_store import ImmutableFileStore
 
     client, settings, csrf = _client(data_dir, raise_server_exceptions=False)
-    original_reserve = sources_module.reserve_idempotency_key
     original_publish = ImmutableFileStore.publish
-    reserve_lock = Lock()
-    reserve_calls = 0
-    publish_lock = Lock()
     publish_calls = 0
-    second_reserve_attempt_finished = Event()
-
-    def coordinated_reserve(*args, **kwargs):
-        nonlocal reserve_calls
-        with reserve_lock:
-            reserve_calls += 1
-            call_number = reserve_calls
-        try:
-            return original_reserve(*args, **kwargs)
-        finally:
-            if call_number == 2:
-                second_reserve_attempt_finished.set()
+    first_publish_started = Event()
+    release_first = Event()
 
     def coordinated_publish(self, staged):
         nonlocal publish_calls
-        with publish_lock:
-            publish_calls += 1
-            call_number = publish_calls
+        publish_calls += 1
+        call_number = publish_calls
         if call_number == 1:
-            assert second_reserve_attempt_finished.wait(timeout=10)
+            first_publish_started.set()
+            assert release_first.wait(timeout=5)
         return original_publish(self, staged)
 
-    monkeypatch.setattr(sources_module, "reserve_idempotency_key", coordinated_reserve)
-    monkeypatch.setattr(ImmutableFileStore, "publish", coordinated_publish)
-    barrier = Barrier(2)
-
-    def upload_once(_index: int):
-        barrier.wait(timeout=5)
-        return client.post(
-            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
-            headers=_headers(csrf, "slow-concurrent-identical-upload"),
-            data={"role": "PURCHASE_REQUEST"},
-            files=[
-                (
-                    "files",
-                    ("slow.csv", b"title,author\nSlow,A\n", "text/csv"),
-                )
-            ],
-        )
-
-    with client, ThreadPoolExecutor(max_workers=2) as executor:
-        first, second = list(executor.map(upload_once, range(2)))
-
-    assert [first.status_code, second.status_code] == [202, 202]
-    assert first.json() == second.json()
-    state = _upload_durable_state(settings)
-    assert state["counts"] == {
-        "source_files": 1,
-        "source_documents": 1,
-        "workspace_sources": 1,
-        "source_configurations": 1,
-        "durable_jobs": 1,
-        "idempotency_keys": 1,
-    }
-    assert len(state["blobs"]) == 1
-
-
-def test_failed_upload_cleanup_cannot_delete_takeover_winners_blob(
-    data_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Rollback must not release a waiter before failed-winner blob cleanup."""
-    from suseoro.api.routes import sources as sources_module
-    from suseoro.db.connection import ProtectedConnection
-    from suseoro.ingestion.file_store import ImmutableFileStore
-
-    client, settings, csrf = _client(data_dir, raise_server_exceptions=False)
-    original_reserve = sources_module.reserve_idempotency_key
-    original_publish = ImmutableFileStore.publish
-    original_create = JobRepository.create
-    original_cleanup = sources_module._remove_unreferenced_source_paths
-    original_rollback = ProtectedConnection.rollback
-    reserve_lock = Lock()
-    reserve_calls = 0
-    publish_lock = Lock()
-    publish_calls = 0
-    create_lock = Lock()
-    create_calls = 0
-    first_published = Event()
-    second_reserve_entered = Event()
-    second_saw_existing = Event()
-    first_rolled_back = Event()
-    cleanup_done = Event()
-    winner_thread_id: int | None = None
-
-    def coordinated_reserve(*args, **kwargs):
-        nonlocal reserve_calls
-        with reserve_lock:
-            reserve_calls += 1
-            call_number = reserve_calls
-        if call_number == 2:
-            second_reserve_entered.set()
-        return original_reserve(*args, **kwargs)
-
-    def coordinated_publish(self, staged):
-        nonlocal publish_calls
-        stored = original_publish(self, staged)
-        with publish_lock:
-            publish_calls += 1
-            call_number = publish_calls
-        if call_number == 1:
-            assert stored.created
-            first_published.set()
-        elif not stored.created:
-            second_saw_existing.set()
-            assert cleanup_done.wait(timeout=10)
-        return stored
-
-    def fail_first_job_create(self, **kwargs):
-        nonlocal create_calls, winner_thread_id
-        with create_lock:
-            create_calls += 1
-            call_number = create_calls
-        if call_number == 1:
-            assert second_reserve_entered.wait(timeout=10)
-            winner_thread_id = get_ident()
-            raise RuntimeError("transient winner failure")
-        return original_create(self, **kwargs)
-
-    def observe_winner_rollback(self):
-        result = original_rollback(self)
-        if get_ident() == winner_thread_id:
-            first_rolled_back.set()
-        return result
-
-    def coordinated_cleanup(database_path, paths):
-        if first_rolled_back.is_set():
-            assert second_saw_existing.wait(timeout=10)
-        try:
-            return original_cleanup(database_path, paths)
-        finally:
-            cleanup_done.set()
-
-    monkeypatch.setattr(sources_module, "reserve_idempotency_key", coordinated_reserve)
-    monkeypatch.setattr(ImmutableFileStore, "publish", coordinated_publish)
-    monkeypatch.setattr(JobRepository, "create", fail_first_job_create)
-    monkeypatch.setattr(ProtectedConnection, "rollback", observe_winner_rollback)
     monkeypatch.setattr(
-        sources_module, "_remove_unreferenced_source_paths", coordinated_cleanup
+        sources_module, "UPLOAD_CLAIM_WAIT_DEADLINE_SECONDS", 0.2, raising=False
     )
+    monkeypatch.setattr(ImmutableFileStore, "publish", coordinated_publish)
 
     def upload_once():
         return client.post(
             f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
-            headers=_headers(csrf, "failed-winner-takeover-upload"),
+            headers=_headers(csrf, "bounded-concurrent-identical-upload"),
             data={"role": "PURCHASE_REQUEST"},
             files=[
                 (
                     "files",
-                    ("takeover.csv", b"title,author\nTakeover,A\n", "text/csv"),
+                    ("bounded.csv", b"title,author\nBounded,A\n", "text/csv"),
                 )
             ],
         )
 
     with client, ThreadPoolExecutor(max_workers=2) as executor:
-        failed_future = executor.submit(upload_once)
-        assert first_published.wait(timeout=10)
-        takeover_future = executor.submit(upload_once)
-        failed = failed_future.result(timeout=15)
-        takeover = takeover_future.result(timeout=15)
+        first_future = executor.submit(upload_once)
+        assert first_publish_started.wait(timeout=5)
+        second_future = executor.submit(upload_once)
+        try:
+            second = second_future.result(timeout=1)
+        except FutureTimeoutError:
+            second = None
+        finally:
+            release_first.set()
+        first = first_future.result(timeout=10)
+        completed_second = second or second_future.result(timeout=10)
+
+    assert second is not None, "the matching waiter exceeded its bounded deadline"
+    assert first.status_code == 202
+    assert completed_second.status_code == 409
+    assert (
+        completed_second.json()["detail"]["code"] == "IDEMPOTENCY_REQUEST_IN_PROGRESS"
+    )
+    assert completed_second.headers["retry-after"] == "1"
+    assert not [
+        path
+        for path in settings.sources_dir.joinpath(".staging").glob("*")
+        if path.is_file()
+    ]
+
+
+def test_failed_upload_keeps_binding_and_allows_only_same_fingerprint_takeover(
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rolling back mutations must not erase the permanent key-to-body binding."""
+    client, settings, csrf = _client(data_dir, raise_server_exceptions=False)
+    original_create = JobRepository.create
+    create_calls = 0
+
+    def fail_first_job_create(self, **kwargs):
+        nonlocal create_calls
+        create_calls += 1
+        call_number = create_calls
+        if call_number == 1:
+            raise RuntimeError("transient winner failure")
+        return original_create(self, **kwargs)
+
+    monkeypatch.setattr(JobRepository, "create", fail_first_job_create)
+
+    original_files = [
+        ("files", ("takeover.csv", b"title,author\nTakeover,A\n", "text/csv"))
+    ]
+    with client:
+        failed = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "failed-winner-takeover-upload"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=original_files,
+        )
+        changed = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "failed-winner-takeover-upload"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                ("files", ("takeover.csv", b"title,author\nChanged,B\n", "text/csv"))
+            ],
+        )
+        takeover = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "failed-winner-takeover-upload"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=original_files,
+        )
 
     assert failed.status_code == 500
+    assert changed.status_code == 409
+    assert changed.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
     assert takeover.status_code == 202
     state = _upload_durable_state(settings)
     assert state["counts"] == {
@@ -1095,7 +1087,73 @@ def test_failed_upload_cleanup_cannot_delete_takeover_winners_blob(
         storage_path = Path(
             connection.execute("SELECT storage_path FROM source_files").fetchone()[0]
         )
+        claim = connection.execute(
+            """
+            SELECT generation, state, response_status
+            FROM upload_idempotency_claims
+            WHERE school_id = ? AND actor_id = ? AND route = ? AND key = ?
+            """,
+            (
+                SCHOOL_ID,
+                OPERATOR_ID,
+                f"POST /api/v2/workspaces/{WORKSPACE_ID}/sources",
+                "failed-winner-takeover-upload",
+            ),
+        ).fetchone()
     assert storage_path.is_file()
+    assert dict(claim) == {
+        "generation": 2,
+        "state": "COMPLETED",
+        "response_status": 202,
+    }
+
+
+def test_unrelated_sqlite_writer_returns_bounded_upload_busy_response(
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unrelated writer lock must not be mislabeled as a matching-key request."""
+    from suseoro.api.routes import sources as sources_module
+
+    client, settings, csrf = _client(data_dir, raise_server_exceptions=False)
+    monkeypatch.setattr(
+        sources_module, "UPLOAD_CLAIM_WAIT_DEADLINE_SECONDS", 0.2, raising=False
+    )
+    blocker = connect(settings.database_path)
+    blocker.execute("BEGIN IMMEDIATE")
+    blocker.execute(
+        "UPDATE schools SET updated_at = updated_at WHERE id = ?", (SCHOOL_ID,)
+    )
+    started = monotonic()
+
+    with client, ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            client.post,
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "unrelated-writer-upload"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("busy.csv", b"title,author\nBusy,A\n", "text/csv"))],
+        )
+        try:
+            busy = future.result(timeout=1)
+        except FutureTimeoutError:
+            busy = None
+        finally:
+            blocker.rollback()
+            blocker.close()
+        completed = busy or future.result(timeout=10)
+    elapsed = monotonic() - started
+
+    assert busy is not None, "an unrelated writer lock exceeded the upload deadline"
+    assert completed.status_code == 503
+    assert completed.json()["detail"]["code"] == "UPLOAD_RESERVATION_BUSY"
+    assert completed.headers["retry-after"] == "1"
+    assert elapsed < 1
+    assert not [
+        path
+        for path in settings.sources_dir.joinpath(".staging").glob("*")
+        if path.is_file()
+    ]
 
 
 def test_adjacent_upload_integrity_conflict_never_exposes_sqlite_identifiers(

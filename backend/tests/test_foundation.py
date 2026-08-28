@@ -23,6 +23,7 @@ FOUNDATION_TABLES = {
     "idempotency_keys",
     "audit_events",
     "durable_jobs",
+    "upload_idempotency_claims",
 }
 
 FOUNDATION_INDEXES = {
@@ -129,6 +130,41 @@ def test_foundation_migration_creates_required_tables_and_indexes(
 
     assert FOUNDATION_TABLES <= tables
     assert FOUNDATION_INDEXES <= indexes
+
+
+def test_upload_claim_forward_migration_has_durable_generation_and_lease_fencing(
+    data_dir: Path,
+) -> None:
+    """Dropping durable fingerprint or generation fields would reopen upload takeover races."""
+    settings = Settings(data_dir=data_dir)
+
+    with connect(settings.database_path) as connection:
+        apply_migrations(connection)
+        columns = {
+            row[1]: {"type": row[2], "not_null": bool(row[3])}
+            for row in connection.execute(
+                "PRAGMA table_info(upload_idempotency_claims)"
+            ).fetchall()
+        }
+        indexes = {
+            row[1]: bool(row[2])
+            for row in connection.execute(
+                "PRAGMA index_list(upload_idempotency_claims)"
+            ).fetchall()
+        }
+
+    assert {
+        "request_fingerprint",
+        "generation",
+        "lease_owner",
+        "lease_expires_at",
+        "state",
+        "response_status",
+        "response_body",
+    } <= columns.keys()
+    assert columns["request_fingerprint"] == {"type": "TEXT", "not_null": True}
+    assert columns["generation"] == {"type": "INTEGER", "not_null": True}
+    assert any(unique for unique in indexes.values())
 
 
 @pytest.mark.parametrize(
@@ -501,7 +537,7 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
         fixture.connection.execute(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
         ).fetchone()[0]
-        == "0006a_api_hardening"
+        == "0006b_upload_idempotency_fencing"
     )
 
 

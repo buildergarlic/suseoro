@@ -21,8 +21,13 @@ class StoredResponse:
 
 
 class IdempotencyConflict(HTTPException):
-    def __init__(self, code: str = "IDEMPOTENCY_KEY_REUSED") -> None:
-        super().__init__(status_code=409, detail={"code": code})
+    def __init__(
+        self,
+        code: str = "IDEMPOTENCY_KEY_REUSED",
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(status_code=409, detail={"code": code}, headers=headers)
 
 
 def request_hash(request_body: Any) -> str:

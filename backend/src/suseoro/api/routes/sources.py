@@ -49,7 +49,6 @@ from suseoro.catalog.sync import (
     FullSnapshotRequired,
     SourcePolicyError,
 )
-from suseoro.db.connection import connect
 from suseoro.ingestion.contracts import DocumentRole
 from suseoro.ingestion.file_store import (
     FileTooLarge,
@@ -62,12 +61,21 @@ from suseoro.jobs.repository import JobRepository
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.audit import record_audit_event
 from suseoro.services.idempotency import (
-    IdempotencyConflict,
     complete_idempotent_request,
     reserve_idempotency_key,
 )
+from suseoro.services.upload_idempotency import (
+    UploadClaimLease,
+    acquire_upload_claim,
+    begin_upload_mutation,
+    cleanup_and_release_upload_claim,
+    complete_upload_claim,
+)
 
 router = APIRouter(prefix="/api/v2", tags=["sources"])
+
+UPLOAD_CLAIM_WAIT_DEADLINE_SECONDS = 2.0
+UPLOAD_CLAIM_LEASE_SECONDS = 30.0
 
 
 class SourceMapping(BaseModel):
@@ -242,31 +250,6 @@ def _source(row) -> dict[str, Any]:
     }
 
 
-def _remove_unreferenced_source_paths(database_path: Path, paths: list[Path]) -> None:
-    """Remove only newly published blobs that no committed row references."""
-    for path in paths:
-        check = connect(database_path)
-        try:
-            referenced = check.execute(
-                "SELECT 1 FROM source_files WHERE storage_path = ?", (str(path),)
-            ).fetchone()
-        finally:
-            check.close()
-        if referenced is None:
-            path.unlink(missing_ok=True)
-
-
-def _reserve_upload_idempotency_key(connection: sqlite3.Connection, **scope):
-    """Wait through a concurrent claim, then replay or take over after rollback."""
-    while True:
-        try:
-            return reserve_idempotency_key(connection, **scope)
-        except IdempotencyConflict as error:
-            if error.detail.get("code") != "IDEMPOTENCY_REQUEST_IN_PROGRESS":
-                raise
-            connection.rollback()
-
-
 @router.post(
     "/workspaces/{workspace_id}/sources",
     status_code=202,
@@ -328,9 +311,10 @@ def upload_sources(
     now = format_utc(utc_now())
     prepared: list[dict[str, Any]] = []
     staged_files: list[StagedFile] = []
-    fingerprints: list[dict[str, Any]] = []
+    client_files: list[dict[str, Any]] = []
     newly_published: list[Path] = []
     aggregate_bytes = 0
+    upload_lease: UploadClaimLease | None = None
 
     def counted_chunks(upload: UploadFile):
         nonlocal aggregate_bytes
@@ -354,13 +338,12 @@ def upload_sources(
             try:
                 staged = store.stage(counted_chunks(upload), filename=filename)
                 staged_files.append(staged)
-                fingerprints.append(
+                client_files.append(
                     {
                         "filename": filename,
                         "content_type": content_type,
                         "sha256": staged.sha256,
                         "size_bytes": staged.size,
-                        "error": None,
                     }
                 )
                 prepared.append({"filename": filename, "staged": staged, "error": None})
@@ -371,13 +354,12 @@ def upload_sources(
                     if isinstance(error, FileTooLarge)
                     else "UNSUPPORTED_FILE_TYPE"
                 )
-                fingerprints.append(
+                client_files.append(
                     {
                         "filename": filename,
                         "content_type": content_type,
                         "sha256": rejected.sha256,
                         "size_bytes": rejected.size,
-                        "error": code,
                     }
                 )
                 prepared.append(
@@ -393,13 +375,36 @@ def upload_sources(
         route = f"POST /api/v2/workspaces/{workspace_id}/sources"
         request_body = {
             "workspace_id": workspace_id,
-            "role": role,
+            "role": role.value,
             "vendor_scope": vendor_scope.strip() or "*",
-            "requested_start_local_date": requested_start_local_date,
-            "requested_through_local_date": requested_through_local_date,
-            "files": fingerprints,
+            "requested_start_local_date": (
+                requested_start.isoformat() if requested_start else None
+            ),
+            "requested_through_local_date": (
+                requested_through.isoformat() if requested_through else None
+            ),
+            "files": client_files,
         }
-        replay = _reserve_upload_idempotency_key(
+        claim = acquire_upload_claim(
+            settings.database_path,
+            school_id=user.school_id,
+            actor_id=user.id,
+            route=route,
+            key=idempotency_key,
+            request_body=request_body,
+            wait_deadline_seconds=UPLOAD_CLAIM_WAIT_DEADLINE_SECONDS,
+            lease_seconds=UPLOAD_CLAIM_LEASE_SECONDS,
+        )
+        if not isinstance(claim, UploadClaimLease):
+            response.status_code = claim.status
+            return claim.body
+        upload_lease = claim
+        begin_upload_mutation(
+            connection,
+            upload_lease,
+            wait_deadline_seconds=UPLOAD_CLAIM_WAIT_DEADLINE_SECONDS,
+        )
+        legacy_replay = reserve_idempotency_key(
             connection,
             school_id=user.school_id,
             actor_id=user.id,
@@ -407,10 +412,17 @@ def upload_sources(
             key=idempotency_key,
             request_body=request_body,
         )
-        if replay is not None:
-            connection.rollback()
-            response.status_code = replay.status
-            return replay.body
+        if legacy_replay is not None:
+            complete_upload_claim(
+                connection,
+                upload_lease,
+                status=legacy_replay.status,
+                body=legacy_replay.body,
+            )
+            connection.commit()
+            upload_lease = None
+            response.status_code = legacy_replay.status
+            return legacy_replay.body
 
         items: list[dict[str, Any]] = []
         accepted_ids: list[str] = []
@@ -548,14 +560,22 @@ def upload_sources(
             status=status_code,
             body=result,
         )
+        complete_upload_claim(
+            connection,
+            upload_lease,
+            status=status_code,
+            body=result,
+        )
         connection.commit()
+        upload_lease = None
         response.status_code = status_code
         return result
     except Exception:
-        try:
-            _remove_unreferenced_source_paths(settings.database_path, newly_published)
-        finally:
-            connection.rollback()
+        connection.rollback()
+        if upload_lease is not None:
+            cleanup_and_release_upload_claim(
+                settings.database_path, upload_lease, newly_published
+            )
         raise
     finally:
         for staged in staged_files:

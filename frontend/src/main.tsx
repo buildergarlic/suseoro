@@ -1,0 +1,17 @@
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+
+import { SuseoroRouter } from "./app/router";
+import "./styles/global.css";
+
+const rootElement = document.getElementById("root");
+
+if (!rootElement) {
+  throw new Error("수서로를 표시할 화면을 찾지 못했습니다.");
+}
+
+createRoot(rootElement).render(
+  <StrictMode>
+    <SuseoroRouter />
+  </StrictMode>,
+);

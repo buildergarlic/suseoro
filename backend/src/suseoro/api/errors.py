@@ -21,6 +21,7 @@ _MESSAGES = {
     "INVALID_IDEMPOTENCY_KEY": "중복 요청 방지 키가 올바르지 않습니다.",
     "IDEMPOTENCY_KEY_REUSED": "같은 중복 요청 방지 키가 다른 요청에 사용되었습니다.",
     "IDEMPOTENCY_REQUEST_IN_PROGRESS": "같은 요청이 처리 중입니다.",
+    "UPLOAD_RESERVATION_BUSY": "다른 저장 작업이 진행 중입니다. 잠시 후 다시 시도해 주세요.",
     "REQUEST_ID_REQUIRED": "요청 식별자가 필요합니다.",
     "INVALID_REQUEST_ID": "요청 식별자가 올바르지 않습니다.",
     "IF_MATCH_REQUIRED": "현재 버전 정보가 필요합니다.",
@@ -76,6 +77,7 @@ def error_response(
     code: str,
     fields: list[dict[str, Any]] | None = None,
     message: str | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -87,6 +89,7 @@ def error_response(
                 message=message,
             )
         },
+        headers=headers,
     )
 
 
@@ -111,6 +114,7 @@ def install_error_handlers(app: FastAPI) -> None:
             code=code,
             fields=fields,
             message=message,
+            headers=error.headers,
         )
 
     @app.exception_handler(RequestValidationError)

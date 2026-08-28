@@ -1,0 +1,20 @@
+:root {
+  color-scheme: light;
+  --color-canvas: #f7f3e8;
+  --color-surface: #fffdf7;
+  --color-surface-soft: #edf4ef;
+  --color-ink: #18231f;
+  --color-muted: #52625c;
+  --color-brand: #24584a;
+  --color-brand-strong: #173e34;
+  --color-accent: #d89a37;
+  --color-border: #a8b7b0;
+  --color-danger: #9f2f2f;
+  --color-danger-soft: #fff0ee;
+  --color-focus: #0b67c2;
+  --shadow-card: 0 0.3rem 1rem rgb(24 35 31 / 10%);
+  --radius-small: 0.45rem;
+  --radius-medium: 0.8rem;
+  --radius-large: 1.2rem;
+  --content-width: 76rem;
+}
