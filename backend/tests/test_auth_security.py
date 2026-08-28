@@ -140,7 +140,9 @@ def test_login_stores_only_session_and_csrf_digests_and_sets_safe_cookies(
     session_token = response.cookies["suseoro_session"]
     csrf_token = response.cookies["suseoro_csrf"]
     cookies = response.headers.get_list("set-cookie")
-    session_cookie = next(value for value in cookies if value.startswith("suseoro_session="))
+    session_cookie = next(
+        value for value in cookies if value.startswith("suseoro_session=")
+    )
     csrf_cookie = next(value for value in cookies if value.startswith("suseoro_csrf="))
     assert "HttpOnly" in session_cookie
     assert "SameSite=lax" in session_cookie
@@ -161,7 +163,9 @@ def test_login_stores_only_session_and_csrf_digests_and_sets_safe_cookies(
     assert csrf_token not in tuple(row)
 
 
-def test_login_replays_one_audited_session_without_plaintext_bearers(data_dir: Path) -> None:
+def test_login_replays_one_audited_session_without_plaintext_bearers(
+    data_dir: Path,
+) -> None:
     """A duplicate login must replay one encrypted result, not mint another session."""
     client, settings, password = _client(data_dir)
 
@@ -204,7 +208,9 @@ def test_login_replays_one_audited_session_without_plaintext_bearers(data_dir: P
     }
 
 
-def test_login_rolls_back_reservation_and_session_when_audit_fails(data_dir: Path) -> None:
+def test_login_rolls_back_reservation_and_session_when_audit_fails(
+    data_dir: Path,
+) -> None:
     """Committing the session before audit insertion must fail this transaction test."""
     client, settings, password = _client(data_dir)
     with connect(settings.database_path) as connection:
@@ -229,8 +235,13 @@ def test_login_rolls_back_reservation_and_session_when_audit_fails(data_dir: Pat
     assert response.status_code == 500
     with connect(settings.database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
-        assert connection.execute("SELECT COUNT(*) FROM idempotency_keys").fetchone()[0] == 0
-        assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT COUNT(*) FROM idempotency_keys").fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0] == 0
+        )
 
 
 def test_logout_requires_session_bound_double_submit_csrf_and_revokes_session(
@@ -256,9 +267,11 @@ def test_logout_requires_session_bound_double_submit_csrf_and_revokes_session(
     assert success.status_code == 204
     assert after_logout.status_code == 401
     with connect(settings.database_path) as connection:
-        assert connection.execute(
-            "SELECT revoked_at FROM sessions"
-        ).fetchone()["revoked_at"].endswith("Z")
+        assert (
+            connection.execute("SELECT revoked_at FROM sessions")
+            .fetchone()["revoked_at"]
+            .endswith("Z")
+        )
 
 
 def test_logout_replay_is_audited_once_after_session_revocation(data_dir: Path) -> None:
@@ -460,7 +473,9 @@ def test_audit_event_recursively_removes_sensitive_fields_in_callers_transaction
             "SELECT before_json, after_json, occurred_at FROM audit_events"
         ).fetchone()
         connection.rollback()
-        persisted = connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0]
+        persisted = connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[
+            0
+        ]
 
     before = json.loads(row["before_json"])
     after = json.loads(row["after_json"])

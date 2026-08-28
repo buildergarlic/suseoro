@@ -54,7 +54,15 @@ def _seed_database(settings: Settings) -> None:
                     created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, SCHOOL_ID, username, password_hash, username.title(), NOW, NOW),
+                (
+                    user_id,
+                    SCHOOL_ID,
+                    username,
+                    password_hash,
+                    username.title(),
+                    NOW,
+                    NOW,
+                ),
             )
             connection.execute(
                 """
@@ -91,7 +99,9 @@ def _seed_database(settings: Settings) -> None:
         connection.commit()
 
 
-def test_same_idempotency_key_and_request_returns_completed_response(data_dir: Path) -> None:
+def test_same_idempotency_key_and_request_returns_completed_response(
+    data_dir: Path,
+) -> None:
     """Executing a completed duplicate instead of replaying it must fail this test."""
     settings = Settings(data_dir=data_dir)
     _seed_database(settings)
@@ -339,7 +349,9 @@ def test_versioned_update_does_not_reveal_or_change_another_school_row(
     assert dict(row) == {"name": "Original", "row_version": 3}
 
 
-def test_versioned_update_rejects_tenant_identity_change_before_sql(data_dir: Path) -> None:
+def test_versioned_update_rejects_tenant_identity_change_before_sql(
+    data_dir: Path,
+) -> None:
     """Allowing school_id in changes must not move or partially update a tenant row."""
     settings = Settings(data_dir=data_dir)
     _seed_database(settings)

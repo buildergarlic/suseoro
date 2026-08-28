@@ -7,7 +7,9 @@ import hmac
 from suseoro.security.sessions import digest_token
 
 
-def validate_csrf_token(cookie_token: str | None, header_token: str | None, digest: str) -> bool:
+def validate_csrf_token(
+    cookie_token: str | None, header_token: str | None, digest: str
+) -> bool:
     """Require matching cookie/header values whose digest belongs to the session."""
     if not cookie_token or not header_token:
         return False

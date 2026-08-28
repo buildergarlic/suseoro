@@ -86,7 +86,9 @@ class MachineSecretStore:
     def __init__(self, protector: SecretProtector | None = None) -> None:
         if protector is None:
             if os.name != "nt":
-                raise RuntimeError("non-Windows use requires an explicit secret protector")
+                raise RuntimeError(
+                    "non-Windows use requires an explicit secret protector"
+                )
             protector = WindowsMachineDPAPI()
         self._protector = protector
 

@@ -162,7 +162,38 @@ class JobRepository:
         )
         if updated.rowcount != 1:
             raise RuntimeError("job claim is no longer current")
-        return self.get(job_id)
+        job = self.get(job_id)
+        self._publish_progress(job)
+        return job
+
+    def _publish_progress(self, job: Job | None) -> None:
+        """Persist job state beside its checkpoint for replayable SSE delivery."""
+        if job is None:
+            return
+        self.connection.execute(
+            """
+            INSERT INTO api_events (
+                school_id, workspace_id, event_type, data_json, created_at
+            ) VALUES (?, ?, 'job.progress', ?, ?)
+            """,
+            (
+                job.school_id,
+                job.workspace_id,
+                json.dumps(
+                    {
+                        "job_id": job.id,
+                        "status": job.status,
+                        "stage": job.stage,
+                        "current": job.progress_current,
+                        "total": job.progress_total,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                format_utc(job.updated_at),
+            ),
+        )
 
     def assert_claim(
         self,
@@ -221,7 +252,9 @@ class JobRepository:
         )
         if updated.rowcount != 1:
             raise RuntimeError("job cannot be cancelled")
-        return self.get(job_id)
+        job = self.get(job_id)
+        self._publish_progress(job)
+        return job
 
     def mark_cancelled(
         self, job_id: str, *, claim_token: str, now: datetime | None = None
@@ -238,7 +271,9 @@ class JobRepository:
         )
         if updated.rowcount != 1:
             raise RuntimeError("job claim cannot transition to cancelled")
-        return self.get(job_id)
+        job = self.get(job_id)
+        self._publish_progress(job)
+        return job
 
     def mark_succeeded(
         self, job_id: str, *, claim_token: str, now: datetime | None = None
@@ -258,7 +293,9 @@ class JobRepository:
         from suseoro.workflow.states import complete_analysis_for_succeeded_job
 
         complete_analysis_for_succeeded_job(self.connection, job_id=job_id)
-        return self.get(job_id)
+        job = self.get(job_id)
+        self._publish_progress(job)
+        return job
 
     def mark_failed(
         self,
@@ -286,7 +323,9 @@ class JobRepository:
         )
         if updated.rowcount != 1:
             raise RuntimeError("job claim cannot transition to failed")
-        return self.get(job_id)
+        job = self.get(job_id)
+        self._publish_progress(job)
+        return job
 
     def retry(self, job_id: str, *, now: datetime | None = None) -> Job:
         timestamp = format_utc(now or utc_now())
@@ -302,7 +341,9 @@ class JobRepository:
         )
         if updated.rowcount != 1:
             raise RuntimeError("only failed or cancelled jobs can be retried")
-        return self.get(job_id)
+        job = self.get(job_id)
+        self._publish_progress(job)
+        return job
 
     def recover_stale(
         self, *, stale_before: datetime, now: datetime | None = None

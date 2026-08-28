@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.115,<0.120",
     "openpyxl>=3.1,<4",
     "pypdf>=6,<7",
+    "python-multipart>=0.0.20,<1",
     "python-calamine>=0.5,<0.7",
     "rapidfuzz>=3.10,<4",
     "tzdata>=2025.2",
@@ -30,6 +31,10 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+
+[tool.ruff.lint]
+# FastAPI intentionally represents dependency injection with call-valued defaults.
+ignore = ["B008"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/suseoro"]

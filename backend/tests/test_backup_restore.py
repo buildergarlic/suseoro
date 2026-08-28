@@ -1,0 +1,241 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from suseoro.api.app import create_app
+from suseoro.backup.service import (
+    BackupService,
+    LocalAdminConfirmationRequired,
+    RestoreVerificationError,
+    select_retained_backups,
+)
+from suseoro.config import Settings
+from suseoro.db.connection import connect
+from suseoro.db.migrations import apply_migrations
+from suseoro.repositories.auth import UserRecord, issue_session
+
+NOW = "2026-08-28T00:00:00.000000Z"
+
+
+def _database(data_dir: Path) -> Settings:
+    settings = Settings(data_dir=data_dir)
+    with connect(settings.database_path) as connection:
+        apply_migrations(connection)
+        connection.execute(
+            "INSERT INTO schools (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("550e8400-e29b-41d4-a716-446655440100", "백업 학교", NOW, NOW),
+        )
+        connection.commit()
+    connection.close()
+    return settings
+
+
+def _school_name(settings: Settings) -> str:
+    with connect(settings.database_path) as connection:
+        name = connection.execute("SELECT name FROM schools").fetchone()["name"]
+    connection.close()
+    return name
+
+
+def test_online_backup_writes_verified_manifest_and_matching_checksum(
+    data_dir: Path,
+) -> None:
+    settings = _database(data_dir)
+    service = BackupService(settings.database_path, settings.backups_dir)
+
+    manifest = service.create(kind="daily", now=datetime(2026, 8, 28, tzinfo=UTC))
+
+    manifest_json = json.loads(manifest.manifest_path.read_text(encoding="utf-8"))
+    assert manifest.verified is True
+    assert manifest.kind == "daily"
+    assert manifest.database_path.is_file()
+    assert (
+        hashlib.sha256(manifest.database_path.read_bytes()).hexdigest()
+        == manifest.sha256
+    )
+    assert manifest_json["sha256"] == manifest.sha256
+    assert manifest_json["verified"] is True
+    assert manifest_json["schema_migrations"]
+    assert all(item["checksum"] for item in manifest_json["schema_migrations"])
+    with connect(manifest.database_path) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    connection.close()
+
+
+def test_retention_keeps_daily_7_weekly_4_monthly_12_buckets() -> None:
+    newest = datetime(2026, 8, 28, 12, tzinfo=UTC)
+    backups = [
+        {
+            "id": f"backup-{index:03d}",
+            "created_at": newest - timedelta(days=index),
+        }
+        for index in range(430)
+    ]
+
+    retained = select_retained_backups(backups)
+    retained_ids = {item["id"] for item in retained}
+
+    assert {f"backup-{index:03d}" for index in range(7)}.issubset(retained_ids)
+    assert len({item["created_at"].isocalendar()[:2] for item in retained}) >= 4
+    assert (
+        len({(item["created_at"].year, item["created_at"].month) for item in retained})
+        >= 12
+    )
+    assert len(retained) <= 23
+
+
+def test_restore_requires_local_admin_confirmation_and_creates_pre_restore_backup(
+    data_dir: Path,
+) -> None:
+    settings = _database(data_dir)
+    service = BackupService(settings.database_path, settings.backups_dir)
+    manifest = service.create(kind="daily", now=datetime(2026, 8, 28, tzinfo=UTC))
+    with connect(settings.database_path) as connection:
+        connection.execute("UPDATE schools SET name = '변경된 학교'")
+        connection.commit()
+    connection.close()
+
+    with pytest.raises(LocalAdminConfirmationRequired):
+        service.restore(
+            manifest.manifest_path,
+            confirmation_token="secret",
+            expected_confirmation_token="secret",
+            local_request=False,
+        )
+    with pytest.raises(LocalAdminConfirmationRequired):
+        service.restore(
+            manifest.manifest_path,
+            confirmation_token="wrong",
+            expected_confirmation_token="secret",
+            local_request=True,
+        )
+
+    restored = service.restore(
+        manifest.manifest_path,
+        confirmation_token="secret",
+        expected_confirmation_token="secret",
+        local_request=True,
+        now=datetime(2026, 8, 29, tzinfo=UTC),
+    )
+
+    assert restored.pre_restore_backup.kind == "pre_restore"
+    assert restored.pre_restore_backup.verified is True
+    assert _school_name(settings) == "백업 학교"
+
+
+def test_checksum_or_schema_failure_leaves_current_database_byte_for_byte_unchanged(
+    data_dir: Path,
+) -> None:
+    settings = _database(data_dir)
+    service = BackupService(settings.database_path, settings.backups_dir)
+    manifest = service.create(kind="daily", now=datetime(2026, 8, 28, tzinfo=UTC))
+    with connect(settings.database_path) as connection:
+        connection.execute("UPDATE schools SET name = '현재 학교'")
+        connection.commit()
+    connection.close()
+    before = settings.database_path.read_bytes()
+    manifest.database_path.write_bytes(
+        manifest.database_path.read_bytes() + b"tampered"
+    )
+
+    with pytest.raises(RestoreVerificationError, match="checksum"):
+        service.restore(
+            manifest.manifest_path,
+            confirmation_token="secret",
+            expected_confirmation_token="secret",
+            local_request=True,
+        )
+
+    assert settings.database_path.read_bytes() == before
+    assert _school_name(settings) == "현재 학교"
+
+
+def test_manifest_checksum_itself_is_verified_before_restore(data_dir: Path) -> None:
+    settings = _database(data_dir)
+    service = BackupService(settings.database_path, settings.backups_dir)
+    manifest = service.create(kind="daily", now=datetime(2026, 8, 28, tzinfo=UTC))
+    data = json.loads(manifest.manifest_path.read_text(encoding="utf-8"))
+    data["sha256"] = "0" * 64
+    manifest.manifest_path.write_text(json.dumps(data), encoding="utf-8")
+    before = settings.database_path.read_bytes()
+
+    with pytest.raises(RestoreVerificationError):
+        service.restore(
+            manifest.manifest_path,
+            confirmation_token="secret",
+            expected_confirmation_token="secret",
+            local_request=True,
+        )
+
+    assert settings.database_path.read_bytes() == before
+
+
+def test_restore_api_replays_without_creating_a_second_pre_restore_backup(
+    data_dir: Path,
+) -> None:
+    settings = _database(data_dir)
+    user_id = "550e8400-e29b-41d4-a716-446655440101"
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO users (
+                id, school_id, username, password_hash, display_name,
+                created_at, updated_at
+            ) VALUES (?, ?, 'operator', 'hash', '담당자', ?, ?)
+            """,
+            (user_id, "550e8400-e29b-41d4-a716-446655440100", NOW, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO user_roles (school_id, user_id, role, created_at)
+            VALUES (?, ?, 'OPERATOR', ?)
+            """,
+            ("550e8400-e29b-41d4-a716-446655440100", user_id, NOW),
+        )
+        issued = issue_session(
+            connection,
+            UserRecord(
+                id=user_id,
+                school_id="550e8400-e29b-41d4-a716-446655440100",
+                username="operator",
+                display_name="담당자",
+                roles=("OPERATOR",),
+            ),
+            3_600,
+        )
+        connection.commit()
+    connection.close()
+    service = BackupService(settings.database_path, settings.backups_dir)
+    manifest = service.create(kind="daily")
+    app = create_app(settings)
+    headers = {
+        "X-CSRF-Token": issued.csrf_token,
+        "X-Request-ID": "550e8400-e29b-41d4-a716-446655440102",
+        "Idempotency-Key": "restore-once",
+        "X-Local-Admin-Confirmation": app.state.local_admin_confirmation_token,
+    }
+    client = TestClient(app, base_url="https://testserver")
+    client.cookies.set("suseoro_session", issued.session_token)
+    client.cookies.set("suseoro_csrf", issued.csrf_token)
+
+    with client:
+        first = client.post(
+            "/api/v2/admin/restores",
+            headers=headers,
+            json={"manifest_file": manifest.manifest_path.name},
+        )
+        second = client.post(
+            "/api/v2/admin/restores",
+            headers=headers,
+            json={"manifest_file": manifest.manifest_path.name},
+        )
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert len([item for item in service.list() if item.kind == "pre_restore"]) == 1

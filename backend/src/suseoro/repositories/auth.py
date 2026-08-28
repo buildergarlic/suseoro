@@ -44,7 +44,9 @@ class IssuedSession:
     expires_at: str
 
 
-def _roles(connection: sqlite3.Connection, school_id: str, user_id: str) -> tuple[str, ...]:
+def _roles(
+    connection: sqlite3.Connection, school_id: str, user_id: str
+) -> tuple[str, ...]:
     rows = connection.execute(
         """
         SELECT role FROM user_roles

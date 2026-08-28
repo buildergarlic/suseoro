@@ -58,7 +58,10 @@ class ImmutableFileStore:
 
             sha256 = digest.hexdigest()
             with temporary.open("rb") as source:
-                if source.read(4).startswith(b"PK"):
+                signature = source.read(4)
+                if signature.startswith(b"MZ"):
+                    raise UnsupportedFileType("executable uploads are not allowed")
+                if signature.startswith(b"PK"):
                     inspect_zip(temporary)
             detected = detect_file_type(temporary)
             if detected.format == "UNKNOWN":

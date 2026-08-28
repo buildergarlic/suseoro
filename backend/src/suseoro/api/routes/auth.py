@@ -87,7 +87,12 @@ def _set_session_cookies(
     )
 
 
-@router.post("/login", response_model=UserResponse)
+@router.post(
+    "/login",
+    response_model=UserResponse,
+    summary="로그인하기",
+    operation_id="login",
+)
 def login(
     payload: LoginRequest,
     request: Request,
@@ -167,7 +172,12 @@ def login(
     return public_response
 
 
-@router.post("/logout", status_code=204)
+@router.post(
+    "/logout",
+    status_code=204,
+    summary="로그아웃하기",
+    operation_id="logout",
+)
 def logout(
     response: Response,
     user: Annotated[AuthenticatedUser, Depends(csrf_protected_user)],
@@ -218,6 +228,11 @@ def logout(
     response.delete_cookie(CSRF_COOKIE_NAME, path="/")
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    summary="현재 사용자 확인하기",
+    operation_id="getCurrentUser",
+)
 def me(user: Annotated[AuthenticatedUser, Depends(current_user)]) -> UserResponse:
     return _response(user)

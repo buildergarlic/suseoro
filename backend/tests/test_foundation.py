@@ -240,6 +240,7 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
         if source.stem not in {
             "0005a_workflow_contract",
             "0005b_analysis_completion_guard",
+            "0006_api_operations",
         }:
             shutil.copy2(source, old_dir / source.name)
     fixture = make_workflow_fixture(
@@ -500,7 +501,7 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
         fixture.connection.execute(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
         ).fetchone()[0]
-        == "0005b_analysis_completion_guard"
+        == "0006_api_operations"
     )
 
 

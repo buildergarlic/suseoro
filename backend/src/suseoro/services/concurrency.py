@@ -37,15 +37,17 @@ class EditLockConflict(HTTPException):
     def __init__(self, actor_id: str, expires_at: str) -> None:
         super().__init__(
             status_code=409,
-            detail={"code": "EDIT_LOCKED", "actor_id": actor_id, "expires_at": expires_at},
+            detail={
+                "code": "EDIT_LOCKED",
+                "actor_id": actor_id,
+                "expires_at": expires_at,
+            },
         )
 
 
 class EditLockAuthorizationError(HTTPException):
     def __init__(self) -> None:
-        super().__init__(
-            status_code=403, detail={"code": "EDIT_LOCK_ROLE_REQUIRED"}
-        )
+        super().__init__(status_code=403, detail={"code": "EDIT_LOCK_ROLE_REQUIRED"})
 
 
 @dataclass(frozen=True)

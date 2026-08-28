@@ -101,9 +101,7 @@ def require_idempotency_key(
         )
     normalized = key.strip()
     if len(normalized) > 200:
-        raise HTTPException(
-            status_code=400, detail={"code": "INVALID_IDEMPOTENCY_KEY"}
-        )
+        raise HTTPException(status_code=400, detail={"code": "INVALID_IDEMPOTENCY_KEY"})
     return normalized
 
 
@@ -125,11 +123,15 @@ def enforce_role(user: AuthenticatedUser, required_role: str) -> AuthenticatedUs
     if required_role not in {"OPERATOR", "REVIEWER"}:
         raise ValueError(f"unknown role: {required_role}")
     if required_role not in user.roles:
-        raise HTTPException(status_code=403, detail={"code": "ROLE_REQUIRED", "role": required_role})
+        raise HTTPException(
+            status_code=403, detail={"code": "ROLE_REQUIRED", "role": required_role}
+        )
     return user
 
 
-def require_role(required_role: str) -> Callable[[AuthenticatedUser], AuthenticatedUser]:
+def require_role(
+    required_role: str,
+) -> Callable[[AuthenticatedUser], AuthenticatedUser]:
     def dependency(
         user: Annotated[AuthenticatedUser, Depends(current_user)],
     ) -> AuthenticatedUser:
