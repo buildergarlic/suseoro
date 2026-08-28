@@ -928,6 +928,305 @@ def test_failed_migration_restores_fts_protection_on_the_same_connection(
             sqlite3.Connection.execute(reopened, "DELETE FROM holding_search_fts_index")
 
 
+_FTS_CONNECTION_STATE_NAMES = (
+    "_fts_trust",
+    "_fts_projection_trust",
+    "_fts_projection_pending",
+    "_fts_projection_activity",
+)
+
+
+@pytest.fixture
+def isolated_fts_connection_state():
+    """Keep lifecycle-state regression cases independent after an expected RED."""
+    import suseoro.db.connection as connection_module
+
+    for name in _FTS_CONNECTION_STATE_NAMES:
+        getattr(connection_module, name).clear()
+    yield connection_module
+    for name in _FTS_CONNECTION_STATE_NAMES:
+        getattr(connection_module, name).clear()
+
+
+def _fts_connection_state(connection_module, connection_key: int) -> dict[str, bool]:
+    return {
+        name: connection_key in getattr(connection_module, name)
+        for name in _FTS_CONNECTION_STATE_NAMES
+    }
+
+
+def _assert_fts_connection_state_cleared(
+    connection_module, connection_key: int
+) -> None:
+    assert _fts_connection_state(connection_module, connection_key) == {
+        "_fts_trust": False,
+        "_fts_projection_trust": False,
+        "_fts_projection_pending": False,
+        "_fts_projection_activity": False,
+    }
+
+
+def _prepare_projection_target(api, connection, *, source_item_id: str, title: str):
+    staged = api.CatalogSyncService(connection).stage_full_snapshot(
+        school_id=SCHOOL_ID,
+        source_type=api.SourceType.DLS_MARC,
+        records=(
+            api.CatalogRecord(
+                source_item_id=source_item_id,
+                title=title,
+                authors=("저자",),
+            ),
+        ),
+    )
+    connection.commit()
+    return staged
+
+
+def _write_final_projection(api, connection, staged, *, source_item_id: str) -> None:
+    api.CatalogRepository(connection).put_holding(
+        version_id=staged.id,
+        school_id=SCHOOL_ID,
+        source_type=api.SourceType.DLS_MARC,
+        record=api.CatalogRecord(
+            source_item_id=source_item_id,
+            title=f"마지막 투영 {source_item_id}",
+            authors=("저자",),
+        ),
+    )
+
+
+def test_successful_connection_context_exit_clears_all_fts_state(
+    tmp_path, isolated_fts_connection_state
+) -> None:
+    """A context-manager commit must retire every connection-local FTS marker."""
+    api = _api()
+    connection_module = isolated_fts_connection_state
+    connection = _database(tmp_path)
+    connection_key = id(connection)
+    try:
+        staged = _prepare_projection_target(
+            api,
+            connection,
+            source_item_id="CONTEXT-BASELINE",
+            title="문맥 관리자 기준",
+        )
+        with connection:
+            _write_final_projection(
+                api,
+                connection,
+                staged,
+                source_item_id="CONTEXT-COMMIT",
+            )
+            assert connection_key in connection_module._fts_projection_pending
+
+        _assert_fts_connection_state_cleared(connection_module, connection_key)
+        assert not connection.in_transaction
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM holdings WHERE catalog_version_id = ?",
+                (staged.id,),
+            ).fetchone()[0]
+            == 2
+        )
+    finally:
+        connection.close()
+
+
+def test_failed_connection_context_exit_clears_all_fts_state_after_rollback(
+    tmp_path, isolated_fts_connection_state
+) -> None:
+    """A context-manager rollback must retire state without swallowing the error."""
+    api = _api()
+    connection_module = isolated_fts_connection_state
+    connection = _database(tmp_path)
+    connection_key = id(connection)
+    try:
+        staged = _prepare_projection_target(
+            api,
+            connection,
+            source_item_id="ROLLBACK-BASELINE",
+            title="롤백 기준",
+        )
+        with (
+            pytest.raises(RuntimeError, match="force catalog rollback"),
+            connection,
+        ):
+            _write_final_projection(
+                api,
+                connection,
+                staged,
+                source_item_id="CONTEXT-ROLLBACK",
+            )
+            assert connection_key in connection_module._fts_projection_pending
+            raise RuntimeError("force catalog rollback")
+
+        _assert_fts_connection_state_cleared(connection_module, connection_key)
+        assert not connection.in_transaction
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM holdings WHERE catalog_version_id = ?",
+                (staged.id,),
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        connection.close()
+
+
+def test_explicit_close_clears_all_fts_state_after_successful_projection(
+    tmp_path, isolated_fts_connection_state
+) -> None:
+    """Closing a completed projection must not retain its object-ID state."""
+    api = _api()
+    connection_module = isolated_fts_connection_state
+    database_path = tmp_path / "catalog.sqlite3"
+    connection = _database(tmp_path)
+    staged = _prepare_projection_target(
+        api,
+        connection,
+        source_item_id="CLOSE-BASELINE",
+        title="명시적 종료 기준",
+    )
+    _write_final_projection(
+        api,
+        connection,
+        staged,
+        source_item_id="EXPLICIT-CLOSE",
+    )
+    connection_key = id(connection)
+    assert connection.in_transaction
+    assert connection_key in connection_module._fts_projection_pending
+
+    connection.close()
+
+    _assert_fts_connection_state_cleared(connection_module, connection_key)
+    reopened = connect(database_path)
+    try:
+        assert (
+            reopened.execute(
+                "SELECT COUNT(*) FROM holdings WHERE catalog_version_id = ?",
+                (staged.id,),
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        reopened.close()
+
+
+def test_explicit_close_during_failed_trusted_maintenance_clears_all_fts_state(
+    tmp_path, isolated_fts_connection_state
+) -> None:
+    """Close inside a failing trusted scope must clean state and preserve the error."""
+    connection_module = isolated_fts_connection_state
+    connection = _database(tmp_path)
+    connection_key = id(connection)
+
+    with (
+        pytest.raises(RuntimeError, match="maintenance interrupted"),
+        connection_module.trusted_fts_maintenance(connection),
+    ):
+        assert connection_key in connection_module._fts_trust
+        connection.close()
+        _assert_fts_connection_state_cleared(connection_module, connection_key)
+        raise RuntimeError("maintenance interrupted")
+
+    _assert_fts_connection_state_cleared(connection_module, connection_key)
+
+
+def test_explicit_close_after_failed_trusted_maintenance_clears_all_fts_state(
+    tmp_path, isolated_fts_connection_state
+) -> None:
+    """A failed trusted scope may not leave projection state behind after close."""
+    api = _api()
+    connection_module = isolated_fts_connection_state
+    connection = _database(tmp_path)
+    connection_key = id(connection)
+    staged = _prepare_projection_target(
+        api,
+        connection,
+        source_item_id="MAINTENANCE-BASELINE",
+        title="유지보수 기준",
+    )
+
+    with (
+        pytest.raises(RuntimeError, match="maintenance failed"),
+        connection_module.trusted_fts_maintenance(connection),
+    ):
+        _write_final_projection(
+            api,
+            connection,
+            staged,
+            source_item_id="FAILED-MAINTENANCE",
+        )
+        raise RuntimeError("maintenance failed")
+
+    assert connection_key in connection_module._fts_projection_pending
+    connection.close()
+
+    _assert_fts_connection_state_cleared(connection_module, connection_key)
+
+
+def test_repeated_projection_connection_closes_do_not_grow_or_reuse_fts_state(
+    tmp_path, isolated_fts_connection_state
+) -> None:
+    """Closed connection IDs must not accumulate or authorize a later connection."""
+    api = _api()
+    connection_module = isolated_fts_connection_state
+    database_path = tmp_path / "catalog.sqlite3"
+    setup_connection = _database(tmp_path)
+    staged = _prepare_projection_target(
+        api,
+        setup_connection,
+        source_item_id="CYCLE-BASELINE",
+        title="반복 기준",
+    )
+    setup_connection.close()
+
+    for index in range(12):
+        connection = connect(database_path)
+        _write_final_projection(
+            api,
+            connection,
+            staged,
+            source_item_id=f"CYCLE-{index}",
+        )
+        connection_key = id(connection)
+        assert connection_key in connection_module._fts_projection_pending
+        connection.close()
+        _assert_fts_connection_state_cleared(connection_module, connection_key)
+
+    assert {
+        name: len(getattr(connection_module, name))
+        for name in _FTS_CONNECTION_STATE_NAMES
+    } == {
+        "_fts_trust": 0,
+        "_fts_projection_trust": 0,
+        "_fts_projection_pending": 0,
+        "_fts_projection_activity": 0,
+    }
+
+    fresh = connect(database_path)
+    fresh_key = id(fresh)
+    try:
+        _assert_fts_connection_state_cleared(connection_module, fresh_key)
+        with pytest.raises(sqlite3.DatabaseError, match="authorized|protected"):
+            sqlite3.Connection.execute(
+                fresh, "DELETE FROM holding_search_fts_index_data WHERE id = -1"
+            )
+        assert (
+            fresh.execute(
+                """
+            SELECT COUNT(*) FROM holding_search_fts_index
+            WHERE holding_search_fts_index MATCH '반복'
+            """
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        fresh.close()
+    _assert_fts_connection_state_cleared(connection_module, fresh_key)
+
+
 def test_activation_detects_corrupted_fts_postings_after_reconnect(tmp_path) -> None:
     """External-content row COUNT can look correct while postings are missing."""
     api = _api()

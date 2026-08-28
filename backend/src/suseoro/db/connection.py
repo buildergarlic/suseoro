@@ -42,6 +42,15 @@ _FTS_SCHEMA_ACTIONS = {
 }
 
 
+def _clear_fts_connection_state(connection: sqlite3.Connection) -> None:
+    """Forget every authorization marker owned by one completed connection scope."""
+    key = id(connection)
+    _fts_trust.pop(key, None)
+    _fts_projection_trust.pop(key, None)
+    _fts_projection_pending.discard(key)
+    _fts_projection_activity.discard(key)
+
+
 def _is_protected_fts_name(value: object) -> bool:
     if not isinstance(value, str):
         return False
@@ -99,6 +108,8 @@ class ProtectedCursor(sqlite3.Cursor):
 
 
 class ProtectedConnection(sqlite3.Connection):
+    _closed = False
+
     def _guard_sql(self, sql: str) -> None:
         if _fts_trust.get(id(self), 0) == 0 and _is_fts_write(sql):
             raise sqlite3.DatabaseError("internal FTS tables are protected")
@@ -120,6 +131,26 @@ class ProtectedConnection(sqlite3.Connection):
 
     def cursor(self, factory=ProtectedCursor):
         return super().cursor(factory)
+
+    def __enter__(self):
+        return super().__enter__()
+
+    def __exit__(self, exception_type, exception_value, traceback):
+        try:
+            return super().__exit__(exception_type, exception_value, traceback)
+        finally:
+            _clear_fts_connection_state(self)
+
+    def close(self):
+        closed = False
+        try:
+            result = super().close()
+            closed = True
+            return result
+        finally:
+            if closed:
+                self._closed = True
+            _clear_fts_connection_state(self)
 
     def commit(self):
         key = id(self)
@@ -231,7 +262,8 @@ def trusted_fts_maintenance(connection: sqlite3.Connection):
         else:
             _fts_trust.pop(key, None)
             # Do not retain cached statements authorized during maintenance.
-            install_fts_protection(connection)
+            if not getattr(connection, "_closed", False):
+                install_fts_protection(connection)
 
 
 def verify_fts_integrity(connection: sqlite3.Connection) -> None:
