@@ -7,6 +7,7 @@ import re
 import sqlite3
 import uuid
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +19,30 @@ from suseoro.matching.engine import MatchingEngine
 from suseoro.security.sessions import format_utc, utc_now
 
 _OUTCOMES = ("CANDIDATE", "NEEDS_REVIEW", "EXCLUDED", "ROW_ERROR")
+
+
+@contextmanager
+def _claim_batch_transaction(connection: sqlite3.Connection):
+    owns_transaction = not connection.in_transaction
+    savepoint = "comparison_claim_" + uuid.uuid4().hex
+    if owns_transaction:
+        connection.execute("BEGIN IMMEDIATE")
+    else:
+        connection.execute(f"SAVEPOINT {savepoint}")
+    try:
+        yield
+    except BaseException:
+        if owns_transaction:
+            connection.rollback()
+        else:
+            connection.execute(f"ROLLBACK TO {savepoint}")
+            connection.execute(f"RELEASE {savepoint}")
+        raise
+    else:
+        if owns_transaction:
+            connection.commit()
+        else:
+            connection.execute(f"RELEASE {savepoint}")
 
 
 def _field_value(fields: dict[str, Any], name: str) -> Any:
@@ -288,6 +313,34 @@ class ComparisonService:
         source_document_ids,
         job_id: str | None = None,
         claim_token: str | None = None,
+        claim_generation: int | None = None,
+        source_row_ids=None,
+        now: datetime | None = None,
+    ) -> ComparisonSummary:
+        arguments = {
+            "school_id": school_id,
+            "workspace_id": workspace_id,
+            "source_document_ids": source_document_ids,
+            "job_id": job_id,
+            "claim_token": claim_token,
+            "claim_generation": claim_generation,
+            "source_row_ids": source_row_ids,
+            "now": now,
+        }
+        if job_id is None:
+            return self._compare_documents_batch(**arguments)
+        with _claim_batch_transaction(self.connection):
+            return self._compare_documents_batch(**arguments)
+
+    def _compare_documents_batch(
+        self,
+        *,
+        school_id: str,
+        workspace_id: str,
+        source_document_ids,
+        job_id: str | None = None,
+        claim_token: str | None = None,
+        claim_generation: int | None = None,
         source_row_ids=None,
         now: datetime | None = None,
     ) -> ComparisonSummary:
@@ -311,7 +364,11 @@ class ComparisonService:
                 )
             if claim_token is None:
                 raise ValueError("a COMPARE job claim token is required")
-            job_repository.assert_claim(job_id, claim_token)
+            job_repository.fence_claim(job_id, claim_token, claim_generation)
+            current_claim = job_repository.assert_claim(
+                job_id, claim_token, claim_generation
+            )
+            claim_generation = current_claim.claim_generation
         requested_row_ids = (
             None if source_row_ids is None else frozenset(source_row_ids)
         )
@@ -442,6 +499,8 @@ class ComparisonService:
                     status = "PARTIAL"
                 else:
                     status = "SUCCESS"
+                if job_repository is not None:
+                    job_repository.assert_claim(job_id, claim_token, claim_generation)
                 self._upsert_file_result(
                     school_id=school_id,
                     workspace_id=workspace_id,
@@ -455,6 +514,7 @@ class ComparisonService:
                     job_repository.record_file_result(
                         job_id=job_id,
                         claim_token=claim_token,
+                        claim_generation=claim_generation,
                         source_document_id=document_id,
                         status=status,
                         total_rows=len(all_rows),

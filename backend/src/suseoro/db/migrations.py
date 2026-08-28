@@ -7,6 +7,8 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from suseoro.db.connection import install_fts_protection, trusted_fts_maintenance
+
 
 class MigrationChecksumMismatch(RuntimeError):
     """Raised when an already-applied migration has been changed."""
@@ -44,32 +46,10 @@ def _ensure_migration_ledger(connection: sqlite3.Connection) -> None:
 
 
 def _protect_internal_fts(connection: sqlite3.Connection) -> None:
-    exists = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE name = 'holding_search_fts_index'"
-    ).fetchone()
-    if exists is None:
-        return
-    allowed_triggers = {
-        "normalized_works_fts_insert",
-        "normalized_works_fts_update",
-        "normalized_works_fts_delete",
-    }
-
-    def authorize(action, table, _column, _database, source):
-        writes = {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE}
-        if (
-            action in writes
-            and table
-            and table == "holding_search_fts_index"
-            and source not in allowed_triggers
-        ):
-            return sqlite3.SQLITE_DENY
-        return sqlite3.SQLITE_OK
-
-    connection.set_authorizer(authorize)
+    install_fts_protection(connection)
 
 
-def apply_migrations(
+def _apply_migrations_trusted(
     connection: sqlite3.Connection, migrations_dir: Path | None = None
 ) -> None:
     """Apply pending SQL files and refuse checksum changes to migration history."""
@@ -122,3 +102,13 @@ def apply_migrations(
             if rebuilds_foreign_key_parents:
                 connection.execute("PRAGMA foreign_keys=ON")
     _protect_internal_fts(connection)
+
+
+def apply_migrations(
+    connection: sqlite3.Connection, migrations_dir: Path | None = None
+) -> None:
+    try:
+        with trusted_fts_maintenance(connection):
+            _apply_migrations_trusted(connection, migrations_dir)
+    finally:
+        install_fts_protection(connection)

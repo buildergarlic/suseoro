@@ -28,7 +28,9 @@ class JobContext:
     def ensure_not_cancelled(self) -> None:
         if self.job.claim_token is None:
             raise RuntimeError("running job has no claim token")
-        current = self.repository.assert_claim(self.job.id, self.job.claim_token)
+        current = self.repository.assert_claim(
+            self.job.id, self.job.claim_token, self.job.claim_generation
+        )
         if current.cancel_requested_at is not None:
             raise JobCancelled()
 

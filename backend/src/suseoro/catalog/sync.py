@@ -20,6 +20,7 @@ from suseoro.catalog.contracts import (
     SourceType,
 )
 from suseoro.catalog.repository import CatalogRepository
+from suseoro.db.connection import verify_fts_integrity
 from suseoro.security.sessions import format_utc, utc_now
 
 SEOUL = ZoneInfo("Asia/Seoul")
@@ -268,6 +269,12 @@ class CatalogSyncService:
                 raise CatalogValidationError(
                     "staged catalog representation count changed"
                 )
+            try:
+                verify_fts_integrity(self.connection)
+            except sqlite3.DatabaseError as error:
+                raise CatalogValidationError(
+                    "FTS search posting integrity check failed"
+                ) from error
 
             current = self.repository.active_version(staged_row["school_id"])
             expected_id = staged_row["expected_active_version_id"]
@@ -416,6 +423,8 @@ class CatalogSyncService:
         delta_file: DeltaFile,
         role: str,
         allow_unbound: bool,
+        expected_start_date: date,
+        expected_through_date: date,
     ) -> dict:
         if delta_file.source_document_id is None:
             if not allow_unbound:
@@ -440,6 +449,19 @@ class CatalogSyncService:
         ).fetchone()
         if document is None or document["school_id"] != school_id:
             raise CatalogValidationError("delta source document school mismatch")
+        if (
+            delta_file.window is None
+            or not delta_file.window.start_inclusive
+            or not delta_file.window.end_inclusive
+            or delta_file.window.start != expected_start_date
+            or delta_file.window.end != expected_through_date
+            or document["requested_start_local_date"] != expected_start_date.isoformat()
+            or document["requested_through_local_date"]
+            != expected_through_date.isoformat()
+        ):
+            raise CatalogValidationError(
+                "delta source document and request window must agree"
+            )
         if document["role"] != role:
             raise CatalogValidationError(f"delta source document role must be {role}")
         if document["detected_format"] != "MARC" or document["file_format"] != "MARC":
@@ -640,6 +662,11 @@ class CatalogSyncService:
         source_type = SourceType(source_type)
         self._allow_delta(source_type)
         current_time = now or utc_now()
+        local_today = current_time.astimezone(SEOUL).date()
+        if through_date > local_today:
+            raise CatalogValidationError(
+                "delta through date cannot be after the current Asia/Seoul local date"
+            )
         state = self.repository.source_state(school_id)
         active = self.repository.active_version(school_id)
         if (
@@ -654,37 +681,6 @@ class CatalogSyncService:
             if state.watermark_local_date is not None
             else through_date - timedelta(days=2)
         )
-        if (
-            registration_file.source_document_id is not None
-            and registration_file.source_document_id == update_file.source_document_id
-        ):
-            raise CatalogValidationError("delta role inputs must be distinct files")
-        registration_binding = self._validate_delta_binding(
-            school_id=school_id,
-            delta_file=registration_file,
-            role="CATALOG_DELTA_REGISTRATION",
-            allow_unbound=(
-                self._allow_unbound_sources
-                if _allow_unbound_sources is None
-                else _allow_unbound_sources
-            ),
-        )
-        update_binding = self._validate_delta_binding(
-            school_id=school_id,
-            delta_file=update_file,
-            role="CATALOG_DELTA_UPDATE",
-            allow_unbound=(
-                self._allow_unbound_sources
-                if _allow_unbound_sources is None
-                else _allow_unbound_sources
-            ),
-        )
-        if registration_binding["document_id"] is not None and (
-            registration_binding["document_id"] == update_binding["document_id"]
-            or registration_binding["source_file_id"]
-            == update_binding["source_file_id"]
-        ):
-            raise CatalogValidationError("delta role inputs must be distinct files")
         batch_key = self._batch_key(registration_file, update_file, through_date)
         existing = self.connection.execute(
             """
@@ -706,7 +702,6 @@ class CatalogSyncService:
             and through_date < state.watermark_local_date
         ):
             raise CatalogValidationError("delta watermark cannot move backwards")
-        local_today = current_time.astimezone(SEOUL).date()
         last_full_local = state.last_full_snapshot_at.astimezone(SEOUL).date()
         if (local_today - last_full_local).days >= 90:
             raise FullSnapshotRequired("a full MARC snapshot is required every 90 days")
@@ -714,20 +709,9 @@ class CatalogSyncService:
             file.status == ParserStatus.SUCCESS and file.activation_allowed
             for file in (registration_file, update_file)
         )
-        if not both_succeeded:
-            return self._record_partial_delta(
-                school_id=school_id,
-                registration_file=registration_file,
-                update_file=update_file,
-                through_date=through_date,
-                requested_start_date=requested_start_date,
-                batch_key=batch_key,
-                registration_binding=registration_binding,
-                update_binding=update_binding,
-                now=current_time,
-            )
-        _validate_records(registration_file.records)
-        _validate_records(update_file.records)
+        if both_succeeded:
+            _validate_records(registration_file.records)
+            _validate_records(update_file.records)
         with _atomic(self.connection, immediate=True):
             locked_active = self.repository.active_version(school_id)
             locked_state = self.repository.source_state(school_id)
@@ -740,6 +724,56 @@ class CatalogSyncService:
             ):
                 raise CatalogValidationError(
                     "active MARC source changed during delta sync"
+                )
+            requested_start_date = (
+                locked_state.watermark_local_date - timedelta(days=2)
+                if locked_state.watermark_local_date is not None
+                else through_date - timedelta(days=2)
+            )
+            allow_unbound = (
+                self._allow_unbound_sources
+                if _allow_unbound_sources is None
+                else _allow_unbound_sources
+            )
+            if (
+                registration_file.source_document_id is not None
+                and registration_file.source_document_id
+                == update_file.source_document_id
+            ):
+                raise CatalogValidationError("delta role inputs must be distinct files")
+            registration_binding = self._validate_delta_binding(
+                school_id=school_id,
+                delta_file=registration_file,
+                role="CATALOG_DELTA_REGISTRATION",
+                allow_unbound=allow_unbound,
+                expected_start_date=requested_start_date,
+                expected_through_date=through_date,
+            )
+            update_binding = self._validate_delta_binding(
+                school_id=school_id,
+                delta_file=update_file,
+                role="CATALOG_DELTA_UPDATE",
+                allow_unbound=allow_unbound,
+                expected_start_date=requested_start_date,
+                expected_through_date=through_date,
+            )
+            if registration_binding["document_id"] is not None and (
+                registration_binding["document_id"] == update_binding["document_id"]
+                or registration_binding["source_file_id"]
+                == update_binding["source_file_id"]
+            ):
+                raise CatalogValidationError("delta role inputs must be distinct files")
+            if not both_succeeded:
+                return self._record_partial_delta(
+                    school_id=school_id,
+                    registration_file=registration_file,
+                    update_file=update_file,
+                    through_date=through_date,
+                    requested_start_date=requested_start_date,
+                    batch_key=batch_key,
+                    registration_binding=registration_binding,
+                    update_binding=update_binding,
+                    now=current_time,
                 )
             self.connection.execute(
                 """

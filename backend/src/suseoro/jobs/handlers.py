@@ -91,6 +91,7 @@ def build_comparison_handler(
                                 source_row_ids=(),
                                 job_id=context.job.id,
                                 claim_token=context.job.claim_token,
+                                claim_generation=context.job.claim_generation,
                             )
                             # Results are the recovery source of truth. Publish
                             # the completed file boundary before checking for a
@@ -104,6 +105,7 @@ def build_comparison_handler(
                         source_row_ids=row_ids,
                         job_id=context.job.id,
                         claim_token=context.job.claim_token,
+                        claim_generation=context.job.claim_generation,
                     )
                     # A process death after this commit may leave job progress
                     # behind, but restart derives it from immutable row results

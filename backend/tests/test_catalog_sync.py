@@ -14,9 +14,10 @@ import pytest
 
 import suseoro.db.migrations as migration_module
 from suseoro.db.connection import connect
-from suseoro.db.migrations import apply_migrations
+from suseoro.db.migrations import MigrationChecksumMismatch, apply_migrations
 
 SCHOOL_ID = "20000000-0000-4000-8000-000000000001"
+OTHER_SCHOOL_ID = "20000000-0000-4000-8000-000000000002"
 NOW = "2026-08-28T00:00:00Z"
 
 
@@ -41,6 +42,7 @@ def _api() -> SimpleNamespace:
         ProductionCatalogSyncService=sync.CatalogSyncService,
         CatalogValidationError=sync.CatalogValidationError,
         DeltaFile=contracts.DeltaFile,
+        DeltaWindow=contracts.DeltaWindow,
         FullSnapshotRequired=sync.FullSnapshotRequired,
         HoldingStatus=contracts.HoldingStatus,
         ParserStatus=contracts.ParserStatus,
@@ -97,7 +99,12 @@ def _marc_document(
     school_id: str = SCHOOL_ID,
     status: str = "SUCCESS",
     activation_allowed: bool = True,
+    window_start: date | None = None,
+    window_end: date | None = None,
 ):
+    if role in ("CATALOG_DELTA_REGISTRATION", "CATALOG_DELTA_UPDATE"):
+        window_start = window_start or date(2026, 8, 18)
+        window_end = window_end or date(2026, 8, 28)
     file_id = str(uuid.uuid4())
     document_id = str(uuid.uuid4())
     connection.execute(
@@ -113,8 +120,9 @@ def _marc_document(
         """
         INSERT INTO source_documents (
             id, source_file_id, school_id, role, parser_version, status,
-            detected_format, activation_allowed, created_at, completed_at
-        ) VALUES (?, ?, ?, ?, 'marc-v1', ?, 'MARC', ?, ?, ?)
+            detected_format, activation_allowed, requested_start_local_date,
+            requested_through_local_date, created_at, completed_at
+        ) VALUES (?, ?, ?, ?, 'marc-v1', ?, 'MARC', ?, ?, ?, ?, ?)
         """,
         (
             document_id,
@@ -123,6 +131,8 @@ def _marc_document(
             role,
             status,
             int(activation_allowed),
+            window_start.isoformat() if window_start else None,
+            window_end.isoformat() if window_end else None,
             NOW,
             NOW,
         ),
@@ -151,6 +161,17 @@ def _marc_document(
             ),
         )
     return document_id, tuple(row_ids)
+
+
+def _bind_delta_window(connection, document_id: str, *, start: date, end: date) -> None:
+    connection.execute(
+        """
+        UPDATE source_documents
+        SET requested_start_local_date = ?, requested_through_local_date = ?
+        WHERE id = ?
+        """,
+        (start.isoformat(), end.isoformat(), document_id),
+    )
 
 
 def test_full_snapshot_requires_confirmation_for_zero_and_more_than_thirty_percent(
@@ -398,6 +419,7 @@ def test_marc_delta_is_idempotent_update_wins_and_preserves_stable_identity(
             registration_file=_delta_file(api, "c"),
             update_file=_delta_file(api, "d"),
             through_date=date(2026, 8, 29),
+            now=datetime(2026, 8, 29, 3, 0, tzinfo=UTC),
         )
         old_overlap_rerun = sync.apply_delta(
             school_id=SCHOOL_ID,
@@ -632,8 +654,9 @@ def test_active_and_superseded_catalog_rows_are_sealed_against_inserts(
 
 
 def test_fts_projection_is_read_only_and_staging_updates_refresh_it(tmp_path) -> None:
-    """A manually mutable FTS copy can silently disagree with normalized works."""
+    """Every normal reopened app connection must reject direct FTS mutations."""
     api = _api()
+    database_path = tmp_path / "catalog.sqlite3"
     with _database(tmp_path) as connection:
         sync = api.CatalogSyncService(connection)
         staged = sync.stage_full_snapshot(
@@ -653,13 +676,192 @@ def test_fts_projection_is_read_only_and_staging_updates_refresh_it(tmp_path) ->
             "SELECT search_text FROM holding_search_fts WHERE catalog_version_id = ?",
             (staged.id,),
         ).fetchone()[0]
+        connection.commit()
 
-        with pytest.raises(sqlite3.OperationalError):
-            connection.execute("DELETE FROM holding_search_fts")
-        with pytest.raises(sqlite3.DatabaseError, match="authorized"):
-            connection.execute("DELETE FROM holding_search_fts_index")
+    mutation_sql = (
+        "DELETE FROM holding_search_fts_index",
+        "DELETE FROM holding_search_fts_index_data",
+        "UPDATE holding_search_fts_index_data SET block = block",
+        """
+        WITH protected_rows AS (
+            SELECT id FROM holding_search_fts_index_data WHERE 0
+        )
+        DELETE FROM holding_search_fts_index_data
+        WHERE id IN (SELECT id FROM protected_rows)
+        """,
+        """
+        INSERT INTO holding_search_fts_index_data(id, block)
+        SELECT max(id) + 1, block FROM holding_search_fts_index_data
+        """,
+    )
+    for statement in mutation_sql:
+        with (
+            connect(database_path) as reopened,
+            pytest.raises(sqlite3.DatabaseError, match="authorized|protected"),
+        ):
+            reopened.execute(statement)
+    with connect(database_path) as reopened:
+        with pytest.raises(sqlite3.DatabaseError, match="authorized|protected"):
+            reopened.executescript(
+                "SELECT 1; DELETE FROM holding_search_fts_index_data;"
+            )
+        with pytest.raises(sqlite3.DatabaseError, match="authorized|protected"):
+            reopened.cursor().execute("DELETE FROM holding_search_fts_index_data")
 
     assert "트리" in indexed
+
+
+def test_failed_migration_restores_fts_protection_on_the_same_connection(
+    tmp_path,
+) -> None:
+    """A failed trusted maintenance scope must not leave its connection writable."""
+    database_path = tmp_path / "catalog.sqlite3"
+    with _database(tmp_path) as connection:
+        connection.commit()
+
+    changed_migrations = tmp_path / "changed-migrations"
+    changed_migrations.mkdir()
+    (changed_migrations / "0004b_catalog_hardening.sql").write_text(
+        "SELECT 1;\n", encoding="utf-8"
+    )
+    with connect(database_path) as reopened:
+        with pytest.raises(MigrationChecksumMismatch, match="0004b"):
+            apply_migrations(reopened, changed_migrations)
+        with pytest.raises(sqlite3.DatabaseError, match="authorized|protected"):
+            sqlite3.Connection.execute(reopened, "DELETE FROM holding_search_fts_index")
+
+
+def test_activation_detects_corrupted_fts_postings_after_reconnect(tmp_path) -> None:
+    """External-content row COUNT can look correct while postings are missing."""
+    api = _api()
+    database_path = tmp_path / "catalog.sqlite3"
+    with _database(tmp_path) as connection:
+        staged = api.CatalogSyncService(connection).stage_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            records=_records(2),
+        )
+        connection.commit()
+
+    raw = sqlite3.connect(database_path)
+    raw.execute("DELETE FROM holding_search_fts_index")
+    raw.commit()
+    raw.close()
+
+    with connect(database_path) as reopened:
+        with pytest.raises(api.CatalogValidationError, match="FTS|search"):
+            api.CatalogSyncService(reopened).activate_staged(
+                staged.id, confirm_anomaly=True
+            )
+        status = reopened.execute(
+            "SELECT status FROM catalog_versions WHERE id = ?", (staged.id,)
+        ).fetchone()[0]
+
+    assert status == "STAGING"
+
+
+def test_parent_identity_links_cannot_be_reparented_after_insert(tmp_path) -> None:
+    """Moving a staging holding or tenant parent can bypass child-side scope triggers."""
+    from suseoro.jobs.repository import JobRepository
+
+    api = _api()
+    with _database(tmp_path) as connection:
+        connection.execute(
+            "INSERT INTO schools (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (OTHER_SCHOOL_ID, "다른 학교", NOW, NOW),
+        )
+        sync = api.CatalogSyncService(connection)
+        first = sync.stage_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            records=_records(1, prefix="FIRST"),
+        )
+        second = sync.stage_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            records=_records(1, prefix="SECOND"),
+        )
+        holding_id = connection.execute(
+            "SELECT id FROM holdings WHERE catalog_version_id = ?", (first.id,)
+        ).fetchone()[0]
+        source_document_id, _ = _marc_document(
+            connection,
+            role="CATALOG_DELTA_REGISTRATION",
+            sha_digit="f",
+        )
+        source_file_id = connection.execute(
+            "SELECT source_file_id FROM source_documents WHERE id = ?",
+            (source_document_id,),
+        ).fetchone()[0]
+        workspace_id = str(uuid.uuid4())
+        connection.execute(
+            """
+            INSERT INTO acquisition_workspaces (
+                id, school_id, name, status, created_at, updated_at
+            ) VALUES (?, ?, '이동 금지', 'DRAFT', ?, ?)
+            """,
+            (workspace_id, SCHOOL_ID, NOW, NOW),
+        )
+        job = JobRepository(connection).create(
+            school_id=SCHOOL_ID,
+            workspace_id=workspace_id,
+            job_type="COMPARE",
+            payload={"source_document_ids": []},
+        )
+
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                "UPDATE holdings SET catalog_version_id = ? WHERE id = ?",
+                (second.id, holding_id),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                "UPDATE catalog_versions SET school_id = ? WHERE id = ?",
+                (OTHER_SCHOOL_ID, first.id),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                "UPDATE source_files SET sha256 = ? WHERE id = ?",
+                ("0" * 64, source_file_id),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                "UPDATE source_documents SET role = 'CATALOG_DELTA_UPDATE' WHERE id = ?",
+                (source_document_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                "UPDATE source_documents SET status = 'FAILED' WHERE id = ?",
+                (source_document_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                """
+                UPDATE source_documents SET requested_start_local_date = '2026-08-19'
+                WHERE id = ?
+                """,
+                (source_document_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                "UPDATE acquisition_workspaces SET school_id = ? WHERE id = ?",
+                (OTHER_SCHOOL_ID, workspace_id),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                "UPDATE durable_jobs SET job_type = 'IMPORT' WHERE id = ?",
+                (job.id,),
+            )
+
+        connection.execute(
+            "UPDATE acquisition_workspaces SET status = 'REVIEWING' WHERE id = ?",
+            (workspace_id,),
+        )
+        connection.execute(
+            "UPDATE durable_jobs SET stage = 'VALIDATING' WHERE id = ?", (job.id,)
+        )
+
+    assert first.status == "STAGING"
 
 
 def test_full_snapshot_requires_a_valid_bound_source_document(tmp_path) -> None:
@@ -756,6 +958,7 @@ def test_marc_delta_binds_distinct_roles_and_persists_window_and_row_accounting(
                     title="신규",
                 ),
             ),
+            window=api.DeltaWindow(date(2026, 8, 18), date(2026, 8, 28)),
         )
         update = api.DeltaFile(
             source_document_id=update_doc,
@@ -769,6 +972,7 @@ def test_marc_delta_binds_distinct_roles_and_persists_window_and_row_accounting(
                     title="갱신",
                 ),
             ),
+            window=api.DeltaWindow(date(2026, 8, 18), date(2026, 8, 28)),
         )
 
         result = sync.apply_delta(
@@ -800,6 +1004,115 @@ def test_marc_delta_binds_distinct_roles_and_persists_window_and_row_accounting(
     assert any(row["reason"] == "MARC_RECORD_DAMAGED" for row in row_results)
 
 
+def test_bound_delta_documents_and_contracts_must_agree_with_inclusive_window(
+    tmp_path,
+) -> None:
+    """A role-bound file from another export window must not advance this watermark."""
+    api = _api()
+    window = api.DeltaWindow(date(2026, 8, 18), date(2026, 8, 28))
+    wrong_window = api.DeltaWindow(date(2026, 8, 19), date(2026, 8, 28))
+    with _database(tmp_path) as connection:
+        full_doc, full_rows = _marc_document(
+            connection,
+            role="CATALOG_FULL",
+            sha_digit="c",
+            rows=({"fields": {"title": "기준"}},),
+        )
+        sync = api.ProductionCatalogSyncService(connection)
+        sync.import_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            records=(
+                api.CatalogRecord(
+                    source_item_id="BASE-WINDOW",
+                    source_row_id=full_rows[0],
+                    title="기준",
+                ),
+            ),
+            source_document_id=full_doc,
+            confirm_anomaly=True,
+            as_of_date=date(2026, 8, 20),
+        )
+        registration_doc, registration_rows = _marc_document(
+            connection,
+            role="CATALOG_DELTA_REGISTRATION",
+            sha_digit="d",
+            rows=({"fields": {"title": "등록"}},),
+        )
+        update_doc, update_rows = _marc_document(
+            connection,
+            role="CATALOG_DELTA_UPDATE",
+            sha_digit="e",
+            rows=({"fields": {"title": "갱신"}},),
+        )
+        for document_id in (registration_doc, update_doc):
+            _bind_delta_window(
+                connection,
+                document_id,
+                start=window.start,
+                end=window.end,
+            )
+        registration = api.DeltaFile(
+            source_document_id=registration_doc,
+            source_file_sha256="d" * 64,
+            parser_version="marc-v1",
+            status=api.ParserStatus.SUCCESS,
+            records=(
+                api.CatalogRecord(
+                    source_item_id="NEW-WINDOW",
+                    source_row_id=registration_rows[0],
+                    title="등록",
+                ),
+            ),
+            window=window,
+        )
+        wrong_update = api.DeltaFile(
+            source_document_id=update_doc,
+            source_file_sha256="e" * 64,
+            parser_version="marc-v1",
+            status=api.ParserStatus.SUCCESS,
+            records=(
+                api.CatalogRecord(
+                    source_item_id="BASE-WINDOW",
+                    source_row_id=update_rows[0],
+                    title="갱신",
+                ),
+            ),
+            window=wrong_window,
+        )
+
+        with pytest.raises(api.CatalogValidationError, match="window"):
+            sync.apply_delta(
+                school_id=SCHOOL_ID,
+                source_type=api.SourceType.DLS_MARC,
+                registration_file=registration,
+                update_file=wrong_update,
+                through_date=window.end,
+            )
+
+        result = sync.apply_delta(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            registration_file=registration,
+            update_file=api.DeltaFile(
+                source_document_id=update_doc,
+                source_file_sha256="e" * 64,
+                parser_version="marc-v1",
+                status=api.ParserStatus.SUCCESS,
+                records=wrong_update.records,
+                window=window,
+            ),
+            through_date=window.end,
+        )
+        batch = connection.execute(
+            "SELECT * FROM catalog_delta_batches WHERE catalog_version_id = ?",
+            (result.catalog_version_id,),
+        ).fetchone()
+
+    assert batch["requested_start_local_date"] == "2026-08-18"
+    assert batch["through_local_date"] == "2026-08-28"
+
+
 def test_delta_rejects_same_file_for_both_roles_and_arbitrary_hashes(tmp_path) -> None:
     """One physical file or a forged digest must never satisfy both delta roles."""
     api = _api()
@@ -823,6 +1136,7 @@ def test_delta_rejects_same_file_for_both_roles_and_arbitrary_hashes(tmp_path) -
             ),
             source_document_id=full_doc,
             confirm_anomaly=True,
+            as_of_date=date(2026, 8, 20),
         )
         registration_doc, _ = _marc_document(
             connection,
@@ -839,18 +1153,21 @@ def test_delta_rejects_same_file_for_both_roles_and_arbitrary_hashes(tmp_path) -
             source_file_sha256="6" * 64,
             parser_version="marc-v1",
             status=api.ParserStatus.SUCCESS,
+            window=api.DeltaWindow(date(2026, 8, 18), date(2026, 8, 28)),
         )
         forged = api.DeltaFile(
             source_document_id=registration_doc,
             source_file_sha256="7" * 64,
             parser_version="marc-v1",
             status=api.ParserStatus.SUCCESS,
+            window=api.DeltaWindow(date(2026, 8, 18), date(2026, 8, 28)),
         )
         valid_update = api.DeltaFile(
             source_document_id=update_doc,
             source_file_sha256="8" * 64,
             parser_version="marc-v1",
             status=api.ParserStatus.SUCCESS,
+            window=api.DeltaWindow(date(2026, 8, 18), date(2026, 8, 28)),
         )
 
         with pytest.raises(api.CatalogValidationError, match="distinct"):
@@ -871,13 +1188,125 @@ def test_delta_rejects_same_file_for_both_roles_and_arbitrary_hashes(tmp_path) -
             )
 
 
+def test_delta_rejects_a_future_asia_seoul_watermark(tmp_path) -> None:
+    """A caller-controlled future date would suppress every later incremental export."""
+    api = _api()
+    now = datetime(2026, 8, 28, 3, 0, tzinfo=UTC)
+    with _database(tmp_path) as connection:
+        sync = api.CatalogSyncService(connection)
+        sync.import_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            records=_records(1),
+            confirm_anomaly=True,
+            as_of_date=date(2026, 8, 20),
+            activated_at=now,
+        )
+
+        with pytest.raises(api.CatalogValidationError, match="future|local date"):
+            sync.apply_delta(
+                school_id=SCHOOL_ID,
+                source_type=api.SourceType.DLS_MARC,
+                registration_file=_delta_file(api, "a"),
+                update_file=_delta_file(api, "b"),
+                through_date=date(2099, 1, 1),
+                now=now,
+            )
+
+
+def test_delta_revalidates_both_provenance_bindings_inside_write_transaction(
+    tmp_path,
+) -> None:
+    """Pre-transaction validation leaves SHA, status, and window open to a race."""
+    api = _api()
+    now = datetime(2026, 8, 28, 3, 0, tzinfo=UTC)
+    with _database(tmp_path) as connection:
+        sync = api.CatalogSyncService(connection)
+        sync.import_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            records=_records(1),
+            confirm_anomaly=True,
+            as_of_date=date(2026, 8, 20),
+            activated_at=now,
+        )
+        connection.commit()
+        observed_transactions: list[bool] = []
+        original_validate = sync._validate_delta_binding
+
+        def observe_transaction(**kwargs):
+            observed_transactions.append(connection.in_transaction)
+            return original_validate(**kwargs)
+
+        sync._validate_delta_binding = observe_transaction
+        sync.apply_delta(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            registration_file=_delta_file(api, "c"),
+            update_file=_delta_file(api, "d"),
+            through_date=date(2026, 8, 28),
+            now=now,
+        )
+
+    assert observed_transactions == [True, True]
+
+
+def test_catalog_roles_flow_through_real_marc_parser_and_parser_cache(tmp_path) -> None:
+    """DB-only role expansion is unusable when typed parser/cache contracts reject it."""
+    from suseoro.ingestion.contracts import DocumentRole
+    from suseoro.ingestion.parsers.marc import parse_marc
+    from suseoro.ingestion.templates import ParserCache
+
+    roles = (
+        DocumentRole.CATALOG_FULL,
+        DocumentRole.CATALOG_DELTA_REGISTRATION,
+        DocumentRole.CATALOG_DELTA_UPDATE,
+    )
+    with _database(tmp_path) as connection:
+        for index, role in enumerate(roles, start=1):
+            target = tmp_path / f"{role.value}.mrc"
+            target.write_bytes(b"")
+            digest = f"{index:x}" * 64
+            parsed = parse_marc(target, role=role, sha256=digest)
+            connection.execute(
+                """
+                INSERT INTO source_files (
+                    id, sha256, size_bytes, storage_path, detected_format, created_at
+                ) VALUES (?, ?, 0, ?, 'MARC', ?)
+                """,
+                (str(uuid.uuid4()), digest, str(target), NOW),
+            )
+            first = ParserCache(connection).get_or_parse(
+                sha256=digest,
+                parser_version=parsed.parser_version,
+                role=role,
+                parse=lambda parsed=parsed: {
+                    "role": parsed.role.value,
+                    "activation_allowed": parsed.activation_allowed,
+                },
+            )
+            cached = ParserCache(connection).get_or_parse(
+                sha256=digest,
+                parser_version=parsed.parser_version,
+                role=role,
+                parse=lambda: {"unexpected": True},
+            )
+
+            assert first.result["role"] == role.value
+            assert cached.cached is True
+            assert cached.result == first.result
+
+
 def test_forward_migration_expands_formats_without_losing_b5fc8_rows(tmp_path) -> None:
     """Rebuilding ingestion checks must preserve prior rows and foreign keys on upgrade."""
     current_dir = Path(migration_module.__file__).with_name("migrations")
     old_dir = tmp_path / "b5fc8-migrations"
     old_dir.mkdir()
     for source in current_dir.glob("*.sql"):
-        if source.stem != "0004a_catalog_integrity":
+        if source.stem not in (
+            "0004a_catalog_integrity",
+            "0004b_catalog_hardening",
+        ):
             shutil.copy2(source, old_dir / source.name)
     connection = connect(tmp_path / "upgrade.sqlite3")
     apply_migrations(connection, old_dir)
@@ -932,10 +1361,61 @@ def test_forward_migration_expands_formats_without_losing_b5fc8_rows(tmp_path) -
         (old_document,),
     ).fetchone()
     foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+    latest = connection.execute(
+        "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
+    ).fetchone()[0]
     connection.close()
 
     assert (preserved["file_format"], preserved["document_format"]) == (
         "XLSX",
         "XLSX",
     )
+    assert foreign_keys == []
+    assert latest == "0004b_catalog_hardening"
+
+
+def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
+    tmp_path,
+) -> None:
+    """0004b must upgrade the committed 0731aa1 schema rather than assuming fresh DBs."""
+    current_dir = Path(migration_module.__file__).with_name("migrations")
+    old_dir = tmp_path / "0731aa1-migrations"
+    old_dir.mkdir()
+    for source in current_dir.glob("*.sql"):
+        if source.stem != "0004b_catalog_hardening":
+            shutil.copy2(source, old_dir / source.name)
+    connection = connect(tmp_path / "0731aa1-upgrade.sqlite3")
+    apply_migrations(connection, old_dir)
+    connection.execute(
+        "INSERT INTO schools (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (SCHOOL_ID, "0731 업그레이드", NOW, NOW),
+    )
+    sync = _api().CatalogSyncService(connection)
+    active = sync.import_full_snapshot(
+        school_id=SCHOOL_ID,
+        source_type=_api().SourceType.DLS_MARC,
+        records=_records(2, prefix="UPGRADE"),
+        confirm_anomaly=True,
+    )
+    connection.commit()
+
+    apply_migrations(connection, current_dir)
+    preserved = connection.execute(
+        "SELECT COUNT(*) FROM holdings WHERE catalog_version_id = ?", (active.id,)
+    ).fetchone()[0]
+    latest = connection.execute(
+        "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
+    ).fetchone()[0]
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(source_documents)")
+    }
+    foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+    connection.close()
+
+    assert preserved == 2
+    assert latest == "0004b_catalog_hardening"
+    assert {
+        "requested_start_local_date",
+        "requested_through_local_date",
+    } <= columns
     assert foreign_keys == []

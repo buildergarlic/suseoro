@@ -13,8 +13,11 @@ _PUBLISHER_MARKERS = re.compile(
     r"(?:\(\s*주\s*\)|（\s*주\s*）|주식회사|유한회사|출판사)", re.IGNORECASE
 )
 _ISBN_PRESENTATION = re.compile(
-    r"^(?:ISBN(?:-(10|13))?\s*:?\s*)?([0-9Xx](?:[0-9Xx -]*[0-9Xx])?)$",
+    r"^(?:ISBN(?:-(10|13))?\s*:?\s*)?(.+)$",
     re.IGNORECASE,
+)
+_ISBN_BODY = re.compile(
+    r"(?:[0-9Xx]+|[0-9Xx]+(?:-[0-9Xx]+){3,4}|[0-9Xx]+(?: [0-9Xx]+){3,4})"
 )
 
 
@@ -26,6 +29,8 @@ def _isbn_digits(value: object) -> str:
     if presentation is None:
         return ""
     declared_length, body = presentation.groups()
+    if _ISBN_BODY.fullmatch(body) is None:
+        return ""
     digits = re.sub(r"[ -]", "", body).upper()
     if declared_length is not None and len(digits) != int(declared_length):
         return ""
@@ -124,18 +129,22 @@ def normalize_volume(value: object) -> str:
 
 def normalize_edition(value: object) -> str:
     """Keep edition/revision/printing qualifiers instead of numeric-only collapse."""
-    key, numbers = _semantic_number(value)
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold().strip()
+    key, numbers = _semantic_number(text)
     if not key:
         return ""
+    edition_match = re.search(r"(?:제\s*)?(\d+)\s*(?:판|edition)", text)
+    printing_match = re.search(r"(?:제\s*)?(\d+)\s*(?:쇄|printing|impression)", text)
+    edition_number = edition_match.group(1) if edition_match else None
+    printing_number = printing_match.group(1) if printing_match else None
     parts: list[str] = []
-    if "초판" in key or "firstedition" in key:
-        parts.append("first-edition")
-    elif "개정" in key or "revision" in key or "revised" in key:
-        parts.append(f"revision:{numbers[0]}" if numbers else "revision")
+    if "개정" in key or "revision" in key or "revised" in key:
+        parts.append(f"revision:{edition_number}" if edition_number else "revision")
+    elif "초판" in key or "firstedition" in key:
+        parts.append("edition:1")
     elif "판" in key or "edition" in key:
-        parts.append(f"edition:{numbers[0]}" if numbers else "edition")
+        parts.append(f"edition:{edition_number}" if edition_number else "edition")
     if "쇄" in key or "printing" in key or "impression" in key:
-        printing_number = numbers[-1] if numbers else ""
         parts.append(f"printing:{printing_number}" if printing_number else "printing")
     if parts:
         return "|".join(dict.fromkeys(parts))

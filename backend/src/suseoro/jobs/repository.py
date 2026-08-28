@@ -164,11 +164,50 @@ class JobRepository:
             raise RuntimeError("job claim is no longer current")
         return self.get(job_id)
 
-    def assert_claim(self, job_id: str, claim_token: str) -> Job:
+    def assert_claim(
+        self,
+        job_id: str,
+        claim_token: str,
+        claim_generation: int | None = None,
+    ) -> Job:
         job = self.get(job_id)
-        if job is None or job.status != "RUNNING" or job.claim_token != claim_token:
+        if (
+            job is None
+            or job.status != "RUNNING"
+            or job.claim_token != claim_token
+            or (
+                claim_generation is not None
+                and job.claim_generation != claim_generation
+            )
+        ):
             raise RuntimeError("job claim is no longer current")
         return job
+
+    def fence_claim(
+        self,
+        job_id: str,
+        claim_token: str,
+        claim_generation: int | None = None,
+    ) -> Job:
+        """Validate a claim while acquiring the current write transaction's lock."""
+        generation_clause = (
+            "" if claim_generation is None else " AND claim_generation = ?"
+        )
+        parameters: tuple[str | int, ...] = (job_id, claim_token)
+        if claim_generation is not None:
+            parameters += (claim_generation,)
+        fenced = self.connection.execute(
+            f"""
+            UPDATE durable_jobs
+            SET claim_generation = claim_generation
+            WHERE id = ? AND status = 'RUNNING' AND claim_token = ?
+                {generation_clause}
+            """,
+            parameters,
+        )
+        if fenced.rowcount != 1:
+            raise RuntimeError("job claim is no longer current")
+        return self.get(job_id)
 
     def request_cancel(self, job_id: str, *, now: datetime | None = None) -> Job:
         timestamp = format_utc(now or utc_now())
@@ -306,6 +345,7 @@ class JobRepository:
         *,
         job_id: str,
         claim_token: str,
+        claim_generation: int,
         source_document_id: str,
         status: str,
         total_rows: int,
@@ -313,7 +353,7 @@ class JobRepository:
         error: dict[str, Any] | None = None,
         now: datetime | None = None,
     ) -> None:
-        job = self.assert_claim(job_id, claim_token)
+        job = self.assert_claim(job_id, claim_token, claim_generation)
         document = self.connection.execute(
             "SELECT school_id FROM source_documents WHERE id = ?",
             (source_document_id,),
@@ -330,13 +370,16 @@ class JobRepository:
             """
             INSERT INTO job_file_results (
                 id, job_id, source_document_id, status, total_rows,
-                processed_rows, error_json, claim_token, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                processed_rows, error_json, claim_token, claim_generation,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (job_id, source_document_id) DO UPDATE SET
                 status = excluded.status, total_rows = excluded.total_rows,
                 processed_rows = excluded.processed_rows,
                 error_json = excluded.error_json,
-                claim_token = excluded.claim_token, updated_at = excluded.updated_at
+                claim_token = excluded.claim_token,
+                claim_generation = excluded.claim_generation,
+                updated_at = excluded.updated_at
             """,
             (
                 str(uuid.uuid4()),
@@ -349,6 +392,7 @@ class JobRepository:
                 if error
                 else None,
                 claim_token,
+                claim_generation,
                 timestamp,
                 timestamp,
             ),

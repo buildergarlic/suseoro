@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import sqlite3
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -586,3 +588,98 @@ def test_stale_claim_cannot_write_comparison_or_file_results(tmp_path) -> None:
 
     assert row_count == 0
     assert file_count == 0
+
+
+def test_reclaim_cannot_interleave_after_old_claim_check_before_domain_commit(
+    tmp_path, monkeypatch
+) -> None:
+    """Claim validation outside the write transaction lets a stale worker persist rows."""
+    jobs = _api()
+    comparison = _comparison_api()
+    from suseoro.jobs.repository import JobRepository
+
+    started = datetime(2026, 8, 28, 10, 0, tzinfo=UTC)
+    database_path = tmp_path / "jobs.sqlite3"
+    with _database(tmp_path) as setup:
+        document_id, row_ids = _source_document(setup, sha_digit="e", row_count=2)
+        repository = jobs.JobRepository(setup)
+        job = repository.create(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            job_type="COMPARE",
+            payload={"source_document_ids": [document_id]},
+            now=started,
+        )
+        old_claim = repository.claim_next(now=started)
+        setup.commit()
+
+    checked = threading.Event()
+    reclaim_attempted = threading.Event()
+    state = {"reclaimed": False, "worker_error": None}
+    original_assert_claim = JobRepository.assert_claim
+
+    def barrier_assert_claim(self, job_id, claim_token, claim_generation=None):
+        current = original_assert_claim(self, job_id, claim_token, claim_generation)
+        if threading.current_thread().name == "old-compare-worker":
+            checked.set()
+            assert reclaim_attempted.wait(5), "reclaim barrier timed out"
+            if not state["reclaimed"]:
+                raise RuntimeError("claim interleaving was fenced")
+        return current
+
+    monkeypatch.setattr(JobRepository, "assert_claim", barrier_assert_claim)
+
+    def run_old_worker() -> None:
+        connection = connect(database_path)
+        try:
+            # Exercise the savepoint path used when a caller already owns the
+            # transaction.  A read-only claim check must be upgraded to a
+            # write fence before the controlled interleaving below.
+            connection.execute("BEGIN")
+            comparison.ComparisonService(connection).compare_documents(
+                school_id=SCHOOL_ID,
+                workspace_id=WORKSPACE_ID,
+                source_document_ids=(document_id,),
+                source_row_ids=(row_ids[0],),
+                job_id=job.id,
+                claim_token=old_claim.claim_token,
+            )
+            connection.commit()
+        except RuntimeError as error:  # the fenced implementation aborts here
+            connection.rollback()
+            state["worker_error"] = error
+        finally:
+            connection.close()
+
+    worker = threading.Thread(target=run_old_worker, name="old-compare-worker")
+    worker.start()
+    assert checked.wait(5), "old worker never reached the claim barrier"
+    reclaim = connect(database_path)
+    reclaim.execute("PRAGMA busy_timeout=100")
+    try:
+        reclaim_repository = jobs.JobRepository(reclaim)
+        reclaim_repository.recover_stale(
+            stale_before=started + timedelta(minutes=1),
+            now=started + timedelta(minutes=2),
+        )
+        new_claim = reclaim_repository.claim_next(now=started + timedelta(minutes=2))
+        reclaim.commit()
+        state["reclaimed"] = new_claim is not None
+    except sqlite3.OperationalError as error:
+        assert "locked" in str(error).casefold()
+        reclaim.rollback()
+    finally:
+        reclaim_attempted.set()
+        reclaim.close()
+    worker.join(5)
+    assert not worker.is_alive()
+
+    with connect(database_path) as verify:
+        domain_rows = verify.execute(
+            "SELECT COUNT(*) FROM comparison_row_results WHERE workspace_id = ?",
+            (WORKSPACE_ID,),
+        ).fetchone()[0]
+
+    assert state["reclaimed"] is False
+    assert isinstance(state["worker_error"], RuntimeError)
+    assert domain_rows == 0

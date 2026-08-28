@@ -65,6 +65,11 @@ def _database(tmp_path):
         ("4006381333931", None),
         ("abc9780306406157def", None),
         ("978/0/306/40615/7", None),
+        ("978--0--306--40615--7", None),
+        ("978 - - 0 - 306 - 40615 - 7", None),
+        ("978- 0-306-40615-7", None),
+        ("978  0  306  40615  7", None),
+        ("ISBN-13: 978-0 306-40615-7", None),
         ("", None),
         (None, None),
     ],
@@ -131,7 +136,76 @@ def test_volume_and_edition_keys_preserve_meaning_without_format_false_conflicts
     assert (
         keys(edition="개정 제2판")[1] == keys(edition="개정판 2판")[1] == "revision:2"
     )
-    assert keys(edition="초판 2쇄")[1] == "first-edition|printing:2"
+    assert keys(edition="초판 2쇄")[1] == "edition:1|printing:2"
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "equivalent"),
+    [
+        ("초판", "제1판", True),
+        ("초판 2쇄", "제1판 2쇄", True),
+        ("개정판 3쇄", "개정 제3판 3쇄", False),
+        ("개정 제2판 3쇄", "개정 제2판 4쇄", False),
+        ("제2판", "제3판", False),
+        ("개정판", "초판", False),
+    ],
+)
+def test_edition_key_matrix_uses_numbers_owned_by_each_label(
+    left, right, equivalent
+) -> None:
+    """Using the first/last global number merges revision, edition, and printing."""
+    api = _api()
+
+    def edition_key(value: str) -> str:
+        return api.normalize_book(
+            api.CatalogRecord(source_item_id=value, title="판차", edition=value)
+        ).edition_key
+
+    assert (edition_key(left) == edition_key(right)) is equivalent
+
+
+@pytest.mark.parametrize(
+    ("holding_edition", "request_edition", "expected"),
+    [
+        ("초판", "제1판", "EXCLUDED"),
+        ("초판 2쇄", "제1판 2쇄", "EXCLUDED"),
+        ("개정판 3쇄", "개정 제3판 3쇄", "NEEDS_REVIEW"),
+        ("개정 제2판 3쇄", "개정 제2판 4쇄", "NEEDS_REVIEW"),
+    ],
+)
+def test_exact_isbn_uses_korean_edition_equivalence_matrix(
+    tmp_path, holding_edition, request_edition, expected
+) -> None:
+    """A same-ISBN edition conflict must be reviewed, while equivalent labels exclude."""
+    api = _api()
+    with _database(tmp_path) as connection:
+        api.CatalogSyncService(connection).import_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            records=(
+                api.CatalogRecord(
+                    source_item_id="H-EDITION",
+                    isbn="9780306406157",
+                    title="판차 행렬",
+                    authors=("저자",),
+                    edition=holding_edition,
+                ),
+            ),
+            confirm_anomaly=True,
+        )
+        decision = api.MatchingEngine(
+            api.CatalogRepository(connection), SCHOOL_ID
+        ).classify(
+            api.CatalogRecord(
+                source_item_id="R-EDITION",
+                isbn="9780306406157",
+                title="판차 행렬",
+                authors=("저자",),
+                edition=request_edition,
+            )
+        )
+
+    assert decision.outcome.value == expected
 
 
 def test_generic_ean_and_embedded_isbn_text_never_auto_exclude(tmp_path) -> None:

@@ -118,6 +118,18 @@ class MatchingDecision:
 
 
 @dataclass(frozen=True)
+class DeltaWindow:
+    start: date
+    end: date
+    start_inclusive: bool = True
+    end_inclusive: bool = True
+
+    def __post_init__(self) -> None:
+        if self.start > self.end:
+            raise ValueError("delta window start cannot follow its end")
+
+
+@dataclass(frozen=True)
 class DeltaFile:
     source_file_sha256: str
     parser_version: str
@@ -125,6 +137,7 @@ class DeltaFile:
     records: tuple[CatalogRecord, ...] = ()
     activation_allowed: bool = True
     source_document_id: str | None = None
+    window: DeltaWindow | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "records", tuple(self.records))
@@ -134,14 +147,6 @@ class DeltaFile:
             raise ValueError("source_file_sha256 must be canonical lowercase SHA-256")
         if not self.parser_version.strip():
             raise ValueError("parser_version is required")
-
-
-@dataclass(frozen=True)
-class DeltaWindow:
-    start: date
-    end: date
-    start_inclusive: bool = True
-    end_inclusive: bool = True
 
 
 @dataclass(frozen=True)
