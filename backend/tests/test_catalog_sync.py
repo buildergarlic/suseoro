@@ -711,6 +711,203 @@ def test_fts_projection_is_read_only_and_staging_updates_refresh_it(tmp_path) ->
     assert "트리" in indexed
 
 
+def _execute_fts_bypass(connection, route: str, statement: str) -> None:
+    if route == "raw_cursor":
+        cursor = sqlite3.Cursor(connection)
+        try:
+            cursor.execute(statement)
+        finally:
+            cursor.close()
+        return
+    if route == "raw_cursor_script":
+        cursor = sqlite3.Cursor(connection)
+        try:
+            cursor.executescript(statement)
+        finally:
+            cursor.close()
+        return
+    if route == "base_script":
+        sqlite3.Connection.executescript(connection, statement)
+        return
+    sqlite3.Connection.execute(connection, statement)
+
+
+@pytest.mark.parametrize(
+    ("route", "statement"),
+    [
+        (
+            "raw_cursor",
+            "DELETE FROM holding_search_fts_index_data WHERE id = -1",
+        ),
+        (
+            "base_connection",
+            "UPDATE holding_search_fts_index_data SET block = block WHERE id = -1",
+        ),
+        ("raw_cursor", "DROP TABLE holding_search_fts_index_data"),
+        (
+            "base_connection",
+            "ALTER TABLE holding_search_fts_index_data RENAME TO fts_data_stolen",
+        ),
+        ("raw_cursor", "DROP VIEW holding_search_fts"),
+        ("base_connection", "DROP TRIGGER normalized_works_fts_insert"),
+        (
+            "raw_cursor",
+            "CREATE TABLE holding_search_fts_attacker (id INTEGER)",
+        ),
+        (
+            "base_connection",
+            "CREATE INDEX attacker_index_on_fts ON holding_search_fts_index_data(id)",
+        ),
+        (
+            "raw_cursor",
+            "CREATE TRIGGER attacker_trigger_on_fts AFTER DELETE ON holding_search_fts_index_data BEGIN SELECT 1; END",
+        ),
+        ("base_connection", "DROP TABLE holding_search_fts_index"),
+        (
+            "raw_cursor",
+            "CREATE VIRTUAL TABLE holding_search_fts_attacker_vtab USING fts5(x)",
+        ),
+        (
+            "base_connection",
+            "ALTER TABLE harmless_for_fts_rename RENAME TO holding_search_fts_attacker_renamed",
+        ),
+        ("raw_cursor", "PRAGMA writable_schema = ON"),
+        (
+            "base_connection",
+            "WITH chosen(id) AS (VALUES (-1)) DELETE FROM holding_search_fts_index_data WHERE id IN chosen",
+        ),
+        (
+            "raw_cursor_script",
+            "DELETE FROM holding_search_fts_index_data WHERE id = -1;",
+        ),
+        (
+            "base_script",
+            "DELETE FROM holding_search_fts_index_data WHERE id = -1;",
+        ),
+    ],
+)
+def test_reopened_authorizer_denies_raw_fts_storage_and_schema_mutation(
+    tmp_path, route, statement
+) -> None:
+    """A raw sqlite cursor/base method must not bypass FTS storage protection."""
+    api = _api()
+    database_path = tmp_path / "catalog.sqlite3"
+    with _database(tmp_path) as connection:
+        api.CatalogSyncService(connection).stage_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            records=(
+                api.CatalogRecord(
+                    source_item_id="FTS-PROTECTED", title="보호", authors=("저자",)
+                ),
+            ),
+        )
+        connection.commit()
+
+    with connect(database_path) as reopened:
+        reopened.execute("CREATE TABLE harmless_for_fts_rename (id INTEGER)")
+        reopened.commit()
+        reopened.execute("BEGIN")
+        try:
+            with pytest.raises(sqlite3.DatabaseError, match="authorized|protected"):
+                _execute_fts_bypass(reopened, route, statement)
+        finally:
+            reopened.rollback()
+        match_count = reopened.execute(
+            """
+            SELECT COUNT(*) FROM holding_search_fts_index
+            WHERE holding_search_fts_index MATCH '보호'
+            """
+        ).fetchone()[0]
+
+    assert match_count == 1
+
+
+def test_authorized_staging_projection_and_trusted_fts_maintenance_stay_working(
+    tmp_path,
+) -> None:
+    """Default-deny authorizer rules must preserve the three projection triggers."""
+    import suseoro.db.connection as connection_module
+
+    api = _api()
+    database_path = tmp_path / "catalog.sqlite3"
+    with _database(tmp_path) as connection:
+        staged = api.CatalogSyncService(connection).stage_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            records=(
+                api.CatalogRecord(
+                    source_item_id="FTS-UPDATE", title="삽입", authors=("저자",)
+                ),
+                api.CatalogRecord(
+                    source_item_id="FTS-DELETE", title="삭제", authors=("저자",)
+                ),
+            ),
+        )
+        connection.commit()
+
+    def match_count(connection, term: str) -> int:
+        return connection.execute(
+            """
+            SELECT COUNT(*) FROM holding_search_fts_index
+            WHERE holding_search_fts_index MATCH ?
+            """,
+            (term,),
+        ).fetchone()[0]
+
+    with connect(database_path) as reopened:
+        assert match_count(reopened, "삽입") == 1
+        assert match_count(reopened, "삭제") == 1
+        repository = api.CatalogRepository(reopened)
+        repository.put_holding(
+            version_id=staged.id,
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            record=api.CatalogRecord(
+                source_item_id="FTS-UPDATE", title="갱신", authors=("저자",)
+            ),
+        )
+        repository.put_holding(
+            version_id=staged.id,
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            record=api.CatalogRecord(
+                source_item_id="FTS-SCRIPT", title="실행", authors=("저자",)
+            ),
+        )
+        cursor = reopened.cursor()
+        try:
+            cursor.executescript("SELECT 1;")
+        finally:
+            cursor.close()
+        reopened.execute(
+            """
+            DELETE FROM holdings
+            WHERE catalog_version_id = ? AND source_item_id = 'FTS-DELETE'
+            """,
+            (staged.id,),
+        )
+        assert match_count(reopened, "삽입") == 0
+        assert match_count(reopened, "갱신") == 1
+        assert match_count(reopened, "실행") == 1
+        assert match_count(reopened, "삭제") == 0
+        connection_module.verify_fts_integrity(reopened)
+        connection_module.rebuild_fts_index(reopened)
+        assert match_count(reopened, "갱신") == 1
+        with pytest.raises(sqlite3.DatabaseError, match="authorized|protected"):
+            sqlite3.Cursor(reopened).execute(
+                "DELETE FROM holding_search_fts_index_data WHERE id = -1"
+            )
+        reopened.commit()
+
+    with connect(database_path) as protected_again:
+        with pytest.raises(sqlite3.DatabaseError, match="authorized|protected"):
+            sqlite3.Cursor(protected_again).execute(
+                "DELETE FROM holding_search_fts_index_data WHERE id = -1"
+            )
+        assert match_count(protected_again, "갱신") == 1
+
+
 def test_failed_migration_restores_fts_protection_on_the_same_connection(
     tmp_path,
 ) -> None:
