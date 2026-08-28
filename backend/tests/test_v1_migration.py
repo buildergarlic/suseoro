@@ -128,9 +128,19 @@ def test_latest_healthy_dls_uses_natural_order_and_rejects_zero_or_arbitrary_byt
 ) -> None:
     source = tmp_path / "v1-workspace"
     school = source / "자연정렬학교"
-    _xlsx(school / "DLS_9.xlsx", [["ISBN", "자료명"], ["9", "아홉"]])
-    _xlsx(school / "DLS_10.xlsx", [["ISBN", "자료명"], ["10", "열"]])
+    _xlsx(
+        school / "DLS_9.xlsx",
+        [["등록번호", "자료명", "ISBN"], ["R-9", "아홉", "9780306406157"]],
+    )
+    _xlsx(
+        school / "DLS_10.xlsx",
+        [["등록번호", "자료명", "ISBN"], ["R-10", "열", "9780306406157"]],
+    )
     _xlsx(school / "DLS_12.xlsx", [["ISBN", "자료명"]])
+    _xlsx(
+        school / "DLS_13.xlsx",
+        [["학생명", "학년"], ["홍길동", "3"]],
+    )
     (school / "DLS_11.xls").write_bytes(b"not-a-workbook")
 
     report = inspect_v1(source)
@@ -138,7 +148,7 @@ def test_latest_healthy_dls_uses_natural_order_and_rejects_zero_or_arbitrary_byt
 
     assert selected is not None and selected.name == "DLS_10.xlsx"
     assert report.schools[0].catalog_candidate_row_count == 1
-    assert report.read_error_count == 2
+    assert report.read_error_count == 3
 
 
 def test_migration_registers_visible_schools_read_only_history_and_pending_catalog(

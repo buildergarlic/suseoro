@@ -24,6 +24,11 @@ from suseoro.workflow.orders import OrderService
 from suseoro.workflow.quotes import QuoteService
 
 router = APIRouter(prefix="/api/v2", tags=["procurement"])
+ORDER_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+class OrderDownloadResponse(BinaryResponse):
+    media_type = ORDER_MEDIA_TYPE
 
 
 class QuoteCreate(BaseModel):
@@ -194,6 +199,7 @@ def create_order(
 
 @router.get(
     "/orders/{order_revision_id}/download",
+    response_class=OrderDownloadResponse,
     summary="발주 파일 내려받기",
     operation_id="downloadOrder",
 )
@@ -213,9 +219,8 @@ def download_order(
     ).fetchone()
     if row is None:
         raise domain_not_found("ORDER_NOT_FOUND")
-    return BinaryResponse(
+    return OrderDownloadResponse(
         content=row["content_bytes"],
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": f'attachment; filename="order-{order_revision_id}.xlsx"',
             "ETag": f'"{row["sha256"]}"',

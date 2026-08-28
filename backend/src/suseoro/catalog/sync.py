@@ -155,14 +155,22 @@ class CatalogSyncService:
             or document["file_format"] != document["detected_format"]
         ):
             raise CatalogValidationError("source document format is not allowed")
-        if document["status"] in ("PENDING", "FAILED"):
-            raise CatalogValidationError("source document parsing did not succeed")
+        if document["status"] != "SUCCESS":
+            raise CatalogValidationError(
+                "full catalog source parsing must succeed without row errors"
+            )
         if not document["activation_allowed"]:
             raise CatalogValidationError("source document is not safe for activation")
         rows = self.connection.execute(
             "SELECT id, status FROM source_rows WHERE source_document_id = ?",
             (source_document_id,),
         ).fetchall()
+        if not rows:
+            raise CatalogValidationError("full catalog source contains no logical rows")
+        if any(row["status"] != "SUCCESS" for row in rows):
+            raise CatalogValidationError(
+                "full catalog source contains partial or failed rows"
+            )
         successful_ids = {row["id"] for row in rows if row["status"] == "SUCCESS"}
         record_row_ids = tuple(record.source_row_id for record in records)
         record_ids = set(record_row_ids)

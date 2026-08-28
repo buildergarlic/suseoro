@@ -46,6 +46,40 @@ def _school_name(settings: Settings) -> str:
     return name
 
 
+def _issue_operator_session(settings: Settings):
+    user_id = "550e8400-e29b-41d4-a716-446655440101"
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO users (
+                id, school_id, username, password_hash, display_name,
+                created_at, updated_at
+            ) VALUES (?, ?, 'operator', 'hash', '담당자', ?, ?)
+            """,
+            (user_id, "550e8400-e29b-41d4-a716-446655440100", NOW, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO user_roles (school_id, user_id, role, created_at)
+            VALUES (?, ?, 'OPERATOR', ?)
+            """,
+            ("550e8400-e29b-41d4-a716-446655440100", user_id, NOW),
+        )
+        issued = issue_session(
+            connection,
+            UserRecord(
+                id=user_id,
+                school_id="550e8400-e29b-41d4-a716-446655440100",
+                username="operator",
+                display_name="담당자",
+                roles=("OPERATOR",),
+            ),
+            3_600,
+        )
+        connection.commit()
+    return issued
+
+
 def test_online_backup_writes_verified_manifest_and_matching_checksum(
     data_dir: Path,
 ) -> None:
@@ -179,7 +213,7 @@ def test_manifest_checksum_itself_is_verified_before_restore(data_dir: Path) -> 
     assert settings.database_path.read_bytes() == before
 
 
-def test_restore_api_replays_without_creating_a_second_pre_restore_backup(
+def test_restore_completion_survives_missing_restored_actor_but_replay_reauthenticates(
     data_dir: Path,
 ) -> None:
     settings = _database(data_dir)
@@ -241,9 +275,91 @@ def test_restore_api_replays_without_creating_a_second_pre_restore_backup(
             json={"manifest_file": manifest.manifest_path.name},
         )
 
-    assert first.status_code == second.status_code == 200
-    assert first.json() == second.json()
+    assert first.status_code == 200
+    assert second.status_code == 401
+    assert second.json()["detail"]["code"] == "INVALID_SESSION"
     assert len([item for item in service.list() if item.kind == "pre_restore"]) == 1
+
+
+def test_restore_replay_is_durable_fingerprint_bound_and_never_bypasses_security(
+    data_dir: Path,
+) -> None:
+    settings = _database(data_dir)
+    issued = _issue_operator_session(settings)
+    service = BackupService(settings.database_path, settings.backups_dir)
+    manifest = service.create(kind="daily")
+    app = create_app(settings)
+    confirmation = app.state.local_admin_confirmation_token
+    headers = {
+        "X-CSRF-Token": issued.csrf_token,
+        "X-Request-ID": "550e8400-e29b-41d4-a716-446655440102",
+        "Idempotency-Key": "durable-restore-once",
+        "X-Local-Admin-Confirmation": confirmation,
+    }
+    client = TestClient(app, base_url="https://testserver")
+    client.cookies.set("suseoro_session", issued.session_token)
+    client.cookies.set("suseoro_csrf", issued.csrf_token)
+
+    with client:
+        first = client.post(
+            "/api/v2/admin/restores",
+            headers=headers,
+            json={"manifest_file": manifest.manifest_path.name},
+        )
+        missing_csrf = client.post(
+            "/api/v2/admin/restores",
+            headers={
+                "X-Request-ID": headers["X-Request-ID"],
+                "Idempotency-Key": headers["Idempotency-Key"],
+                "X-Local-Admin-Confirmation": confirmation,
+            },
+            json={"manifest_file": manifest.manifest_path.name},
+        )
+
+    assert first.status_code == 200
+    assert missing_csrf.status_code == 403
+    assert missing_csrf.json()["detail"]["code"] == "CSRF_VALIDATION_FAILED"
+
+    # A new app plus an empty process cache models restart; replay must come
+    # from the durable operation journal and must not make another prebackup.
+    getattr(BackupService, "_restore_results", {}).clear()
+    restarted_app = create_app(settings)
+    restarted_headers = {
+        **headers,
+        "X-Local-Admin-Confirmation": restarted_app.state.local_admin_confirmation_token,
+    }
+    restarted_client = TestClient(restarted_app, base_url="https://testserver")
+    restarted_client.cookies.set("suseoro_session", issued.session_token)
+    restarted_client.cookies.set("suseoro_csrf", issued.csrf_token)
+    with restarted_client:
+        replay = restarted_client.post(
+            "/api/v2/admin/restores",
+            headers=restarted_headers,
+            json={"manifest_file": manifest.manifest_path.name},
+        )
+        mismatched_body = restarted_client.post(
+            "/api/v2/admin/restores",
+            headers=restarted_headers,
+            json={"manifest_file": "different.manifest.json"},
+        )
+
+    assert replay.status_code == 200
+    assert replay.json() == first.json()
+    assert mismatched_body.status_code == 409
+    assert mismatched_body.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+    assert len([item for item in service.list() if item.kind == "pre_restore"]) == 1
+
+    with connect(settings.database_path) as connection:
+        connection.execute("UPDATE sessions SET revoked_at = ?", (NOW,))
+        connection.commit()
+    with restarted_client:
+        revoked = restarted_client.post(
+            "/api/v2/admin/restores",
+            headers=restarted_headers,
+            json={"manifest_file": manifest.manifest_path.name},
+        )
+    assert revoked.status_code == 401
+    assert revoked.json()["detail"]["code"] == "INVALID_SESSION"
 
 
 def _rewrite_manifest_for_database(manifest) -> None:

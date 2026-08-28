@@ -34,11 +34,19 @@ from suseoro.api.dependencies import (
 )
 from suseoro.api.errors import domain_not_found
 from suseoro.api.routes.events import publish_event
-from suseoro.catalog.contracts import CatalogRecord, SourceType
+from suseoro.catalog.contracts import (
+    CatalogRecord,
+    DeltaFile,
+    DeltaWindow,
+    ParserStatus,
+    SourceType,
+)
 from suseoro.catalog.sync import (
     ActivationConfirmationRequired,
     CatalogSyncService,
     CatalogValidationError,
+    FullSnapshotRequired,
+    SourcePolicyError,
 )
 from suseoro.db.connection import connect
 from suseoro.ingestion.contracts import DocumentRole
@@ -74,6 +82,14 @@ class CatalogActivateRequest(BaseModel):
     confirm_anomaly: bool = False
 
 
+class CatalogDeltaApplyRequest(BaseModel):
+    source_type: SourceType
+    registration_source_id: str
+    update_source_id: str
+    requested_start_local_date: date
+    requested_through_local_date: date
+
+
 def _field_value(fields: dict[str, Any], name: str) -> Any:
     value = fields.get(name)
     return value.get("value") if isinstance(value, dict) else value
@@ -95,6 +111,82 @@ def _catalog_version(version) -> dict[str, Any]:
             format_utc(version.activated_at) if version.activated_at else None
         ),
     }
+
+
+def _catalog_records_for_source(
+    connection: sqlite3.Connection, source_id: str, *, require_stable_id: bool = False
+) -> tuple[CatalogRecord, ...]:
+    rows = connection.execute(
+        """
+        SELECT id, raw_json, fields_json FROM source_rows
+        WHERE source_document_id = ? AND status = 'SUCCESS'
+        ORDER BY source_row, id
+        """,
+        (source_id,),
+    ).fetchall()
+    records = []
+    for row in rows:
+        raw = json.loads(row["raw_json"])
+        fields = json.loads(row["fields_json"])
+        registration = _field_value(fields, "registration_number")
+        if require_stable_id and not registration:
+            raise CatalogValidationError(
+                "delta catalog rows require a stable registration number"
+            )
+        records.append(
+            CatalogRecord(
+                source_item_id=str(registration or row["id"]),
+                source_row_id=row["id"],
+                registration_number=(str(registration) if registration else None),
+                isbn=_field_value(fields, "isbn"),
+                title=str(_field_value(fields, "title") or ""),
+                authors=tuple(
+                    part.strip()
+                    for part in str(_field_value(fields, "author") or "").split(";")
+                    if part.strip()
+                ),
+                publisher=_field_value(fields, "publisher"),
+                call_number=_field_value(fields, "call_number"),
+                raw_fields=raw,
+            )
+        )
+    return tuple(records)
+
+
+def _delta_file_for_source(
+    connection: sqlite3.Connection,
+    *,
+    school_id: str,
+    source_id: str,
+    expected_role: DocumentRole,
+    window: DeltaWindow,
+) -> DeltaFile:
+    source = _source_row(connection, school_id, source_id)
+    if source is None:
+        raise CatalogValidationError("delta source document was not found")
+    if source["configured_role"] != expected_role:
+        raise CatalogValidationError(
+            f"delta source document role must be {expected_role.value}"
+        )
+    activation_allowed = bool(source["activation_allowed"])
+    parser_succeeded = source["status"] in {"SUCCESS", "ROW_ERROR"}
+    return DeltaFile(
+        source_document_id=source_id,
+        source_file_sha256=source["sha256"],
+        parser_version=source["parser_version"],
+        status=(
+            ParserStatus.SUCCESS
+            if parser_succeeded and activation_allowed
+            else ParserStatus.FAILED
+        ),
+        records=(
+            _catalog_records_for_source(connection, source_id, require_stable_id=True)
+            if parser_succeeded and activation_allowed
+            else ()
+        ),
+        activation_allowed=activation_allowed,
+        window=window,
+    )
 
 
 def _workspace_exists(connection, school_id: str, workspace_id: str) -> bool:
@@ -197,21 +289,31 @@ def upload_sources(
     fingerprints: list[dict[str, Any]] = []
     newly_published: list[Path] = []
     aggregate_bytes = 0
-    for upload in files:
-        filename = upload.filename or "unnamed"
-        try:
-            stored = store.store(
-                iter(lambda upload=upload: upload.file.read(64 * 1024), b""),
-                filename=filename,
-            )
-            if stored.created:
-                newly_published.append(stored.path)
-            aggregate_bytes += stored.size
+
+    def counted_chunks(upload: UploadFile):
+        nonlocal aggregate_bytes
+        while True:
+            remaining = settings.upload_max_batch_bytes - aggregate_bytes
+            chunk = upload.file.read(min(64 * 1024, max(1, remaining + 1)))
+            if not chunk:
+                return
+            aggregate_bytes += len(chunk)
             if aggregate_bytes > settings.upload_max_batch_bytes:
                 raise HTTPException(
                     status_code=413,
                     detail={"code": "UPLOAD_BATCH_LIMIT_EXCEEDED"},
                 )
+            yield chunk
+
+    for upload in files:
+        filename = upload.filename or "unnamed"
+        try:
+            stored = store.store(
+                counted_chunks(upload),
+                filename=filename,
+            )
+            if stored.created:
+                newly_published.append(stored.path)
             fingerprints.append({"filename": filename, "sha256": stored.sha256})
             existing = connection.execute(
                 "SELECT id FROM source_files WHERE sha256 = ?", (stored.sha256,)
@@ -620,36 +722,7 @@ def stage_catalog_snapshot(
     source = _source_row(connection, user.school_id, source_id)
     if source is None:
         raise domain_not_found("SOURCE_NOT_FOUND")
-    rows = connection.execute(
-        """
-        SELECT id, raw_json, fields_json FROM source_rows
-        WHERE source_document_id = ? AND status = 'SUCCESS'
-        ORDER BY source_row, id
-        """,
-        (source_id,),
-    ).fetchall()
-    records = []
-    for row in rows:
-        raw = json.loads(row["raw_json"])
-        fields = json.loads(row["fields_json"])
-        registration = _field_value(fields, "registration_number")
-        records.append(
-            CatalogRecord(
-                source_item_id=str(registration or row["id"]),
-                source_row_id=row["id"],
-                registration_number=(str(registration) if registration else None),
-                isbn=_field_value(fields, "isbn"),
-                title=str(_field_value(fields, "title") or ""),
-                authors=tuple(
-                    part.strip()
-                    for part in str(_field_value(fields, "author") or "").split(";")
-                    if part.strip()
-                ),
-                publisher=_field_value(fields, "publisher"),
-                call_number=_field_value(fields, "call_number"),
-                raw_fields=raw,
-            )
-        )
+    records = _catalog_records_for_source(connection, source_id)
     try:
         staged = CatalogSyncService(connection).stage_full_snapshot(
             school_id=user.school_id,
@@ -757,6 +830,115 @@ def activate_catalog_version(
     return result
 
 
+@router.post(
+    "/catalog/deltas",
+    summary="DLS 장서 증분 두 파일 적용하기",
+    operation_id="applyCatalogDelta",
+)
+def apply_catalog_delta(
+    payload: CatalogDeltaApplyRequest,
+    user: AuthenticatedUser = Depends(require_role("OPERATOR")),
+    connection: sqlite3.Connection = Depends(database_connection),
+    idempotency_key: str = Depends(require_idempotency_key),
+    request_id: str = Depends(require_request_id),
+):
+    if payload.requested_start_local_date > payload.requested_through_local_date:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_DELTA_WINDOW"})
+    if payload.registration_source_id == payload.update_source_id:
+        raise HTTPException(
+            status_code=422, detail={"code": "DELTA_SOURCES_MUST_BE_DISTINCT"}
+        )
+    route = "POST /api/v2/catalog/deltas"
+    request_body = payload.model_dump(mode="json")
+    replay = reserve_idempotency_key(
+        connection,
+        school_id=user.school_id,
+        actor_id=user.id,
+        route=route,
+        key=idempotency_key,
+        request_body=request_body,
+    )
+    if replay:
+        connection.rollback()
+        return replay.body
+    window = DeltaWindow(
+        payload.requested_start_local_date,
+        payload.requested_through_local_date,
+    )
+    before = connection.execute(
+        """
+        SELECT active_version_id, watermark_local_date
+        FROM catalog_source_state WHERE school_id = ?
+        """,
+        (user.school_id,),
+    ).fetchone()
+    try:
+        registration = _delta_file_for_source(
+            connection,
+            school_id=user.school_id,
+            source_id=payload.registration_source_id,
+            expected_role=DocumentRole.CATALOG_DELTA_REGISTRATION,
+            window=window,
+        )
+        update = _delta_file_for_source(
+            connection,
+            school_id=user.school_id,
+            source_id=payload.update_source_id,
+            expected_role=DocumentRole.CATALOG_DELTA_UPDATE,
+            window=window,
+        )
+        applied = CatalogSyncService(connection).apply_delta(
+            school_id=user.school_id,
+            source_type=payload.source_type,
+            registration_file=registration,
+            update_file=update,
+            through_date=payload.requested_through_local_date,
+        )
+    except FullSnapshotRequired as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "FULL_CATALOG_SNAPSHOT_REQUIRED", "message": str(error)},
+        ) from error
+    except (CatalogValidationError, SourcePolicyError, ValueError) as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "CATALOG_DELTA_VALIDATION_FAILED", "message": str(error)},
+        ) from error
+    result = {
+        "applied": applied.applied,
+        "status": applied.status,
+        "catalog_version_id": applied.catalog_version_id,
+        "watermark_local_date": (
+            applied.watermark_local_date.isoformat()
+            if applied.watermark_local_date
+            else None
+        ),
+        "idempotent": applied.idempotent,
+    }
+    record_audit_event(
+        connection,
+        actor_id=user.id,
+        school_id=user.school_id,
+        action="CATALOG_DELTA_APPLIED",
+        entity_type="catalog_version",
+        entity_id=applied.catalog_version_id,
+        before=dict(before) if before else None,
+        after=result,
+        request_id=request_id,
+    )
+    complete_idempotent_request(
+        connection,
+        school_id=user.school_id,
+        actor_id=user.id,
+        route=route,
+        key=idempotency_key,
+        status=200,
+        body=result,
+    )
+    connection.commit()
+    return result
+
+
 def _job(connection, school_id: str, job_id: str):
     job = JobRepository(connection).get(job_id)
     return job if job is not None and job.school_id == school_id else None
@@ -792,6 +974,7 @@ def get_job(
 
 @router.post(
     "/jobs/{job_id}/retry",
+    status_code=202,
     summary="실패한 자료 처리 다시 시도하기",
     operation_id="retryJob",
 )
@@ -836,7 +1019,7 @@ def retry_job(
         actor_id=user.id,
         route=route,
         key=idempotency_key,
-        status=200,
+        status=202,
         body=body,
     )
     connection.commit()

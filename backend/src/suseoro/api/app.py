@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
 
 from suseoro.api.dependencies import authenticated_user_from_session
 from suseoro.api.errors import error_response, install_error_handlers, request_id_for
@@ -21,6 +20,10 @@ from suseoro.api.routes.events import router as events_router
 from suseoro.api.routes.procurement import router as procurement_router
 from suseoro.api.routes.sources import router as sources_router
 from suseoro.api.routes.workspaces import router as workspaces_router
+from suseoro.api.schemas import (
+    OPERATION_RESPONSE_MODELS,
+    ApiErrorResponse,
+)
 from suseoro.config import Settings
 from suseoro.db.connection import connect
 from suseoro.db.migrations import apply_migrations
@@ -55,7 +58,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.database_ready = False
     app.state.worker_state = "not_started"
     app.state.local_admin_confirmation_token = secrets.token_urlsafe(32)
-    app.state.restore_replays = {}
     install_error_handlers(app)
     for router in (
         auth_router,
@@ -79,21 +81,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             routes=app.routes,
         )
         components = schema.setdefault("components", {}).setdefault("schemas", {})
-        components["ApiErrorDetail"] = {
-            "type": "object",
-            "required": ["code", "message", "request_id", "fields"],
-            "properties": {
-                "code": {"type": "string"},
-                "message": {"type": "string"},
-                "request_id": {"type": "string", "format": "uuid"},
-                "fields": {"type": "array", "items": {"type": "object"}},
-            },
-        }
-        components["ApiErrorResponse"] = {
-            "type": "object",
-            "required": ["detail"],
-            "properties": {"detail": {"$ref": "#/components/schemas/ApiErrorDetail"}},
-        }
+
+        def install_model(model) -> None:
+            generated = model.model_json_schema(
+                ref_template="#/components/schemas/{model}"
+            )
+            definitions = generated.pop("$defs", {})
+            components.update(definitions)
+            components[model.__name__] = generated
+
+        install_model(ApiErrorResponse)
+        for response_model in set(OPERATION_RESPONSE_MODELS.values()):
+            install_model(response_model)
         methods = {"get", "post", "put", "patch", "delete"}
         for path, path_item in schema["paths"].items():
             for method, operation in path_item.items():
@@ -108,17 +107,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     content = response.get("content", {})
                     json_content = content.get("application/json")
                     if status.startswith("2") and json_content is not None:
-                        name = operation_id[0].upper() + operation_id[1:] + "Response"
-                        original = json_content.get("schema") or {
-                            "type": "object",
-                            "additionalProperties": True,
-                        }
-                        if original.get("$ref"):
-                            name = original["$ref"].rsplit("/", 1)[-1]
-                        else:
-                            components.setdefault(name, original)
+                        if operation_id in {"downloadOrder", "streamEvents"}:
+                            continue
+                        response_model = OPERATION_RESPONSE_MODELS.get(operation_id)
+                        if response_model is None:
+                            raise RuntimeError(
+                                f"missing concrete response model for {operation_id}"
+                            )
                         json_content["schema"] = {
-                            "$ref": f"#/components/schemas/{name}"
+                            "$ref": (f"#/components/schemas/{response_model.__name__}")
                         }
                 for status in (
                     "400",
@@ -130,6 +127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "422",
                     "428",
                     "500",
+                    "503",
                 ):
                     operation["responses"][status] = {
                         "description": "구조화된 오류",
@@ -206,14 +204,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.middleware("http")
     async def csrf_boundary(request: Request, call_next):
         request_id_for(request)
-        if request.url.path == "/api/v2/admin/restores":
-            replay_key = (
-                request.cookies.get(SESSION_COOKIE_NAME),
-                request.headers.get("Idempotency-Key"),
-            )
-            replay = app.state.restore_replays.get(replay_key)
-            if replay is not None:
-                return JSONResponse(status_code=200, content=replay)
         if (
             request.method not in {"GET", "HEAD", "OPTIONS", "TRACE"}
             and request.url.path != "/api/v2/auth/login"

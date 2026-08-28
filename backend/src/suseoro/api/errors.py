@@ -36,6 +36,7 @@ _MESSAGES = {
     "LOCAL_ADMIN_CONFIRMATION_REQUIRED": "서버에서 관리자 확인이 필요합니다.",
     "BACKUP_NOT_FOUND": "백업을 찾을 수 없습니다.",
     "RESTORE_VERIFICATION_FAILED": "백업 검증에 실패해 복원하지 않았습니다.",
+    "DATABASE_UNAVAILABLE": "데이터베이스 작업을 완료할 수 없습니다. 잠시 후 다시 시도해 주세요.",
 }
 
 
@@ -169,6 +170,17 @@ def install_error_handlers(app: FastAPI) -> None:
             status_code=409,
             code="INTEGRITY_CONFLICT",
             message=str(error),
+        )
+
+    @app.exception_handler(sqlite3.OperationalError)
+    @app.exception_handler(sqlite3.ProgrammingError)
+    async def database_unavailable(
+        request: Request, error: sqlite3.Error
+    ) -> JSONResponse:
+        return error_response(
+            request,
+            status_code=503,
+            code="DATABASE_UNAVAILABLE",
         )
 
     @app.exception_handler(OSError)

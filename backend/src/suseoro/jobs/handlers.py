@@ -350,13 +350,17 @@ def _persist_parse_result(
             ),
         )
     status = (
-        "ROW_ERROR"
+        "FAILED"
+        if not result.rows
+        else "ROW_ERROR"
         if any(row.status == RowStatus.ROW_ERROR for row in result.rows)
         else "SUCCESS"
     )
     activation_allowed = (
         int(result.activation_allowed) if isinstance(result, MarcParseResult) else 1
     )
+    if not result.rows:
+        activation_allowed = 0
     connection.execute(
         """
         UPDATE source_documents
@@ -474,11 +478,14 @@ def build_ingestion_handler(
                 )
                 item_status = (
                     "FAILED"
+                    if not result.rows
+                    else "FAILED"
                     if result.rows and row_errors == len(result.rows)
                     else "PARTIAL"
                     if row_errors
                     else "SUCCESS"
                 )
+                item_error = {"code": "NO_LOGICAL_ROWS"} if not result.rows else None
                 JobRepository(connection).record_file_result(
                     job_id=context.job.id,
                     claim_token=context.job.claim_token,
@@ -487,6 +494,7 @@ def build_ingestion_handler(
                     status=item_status,
                     total_rows=len(result.rows),
                     processed_rows=len(result.rows),
+                    error=item_error,
                 )
             except Exception as error:  # noqa: BLE001 - one file must not drop peers
                 connection.execute(

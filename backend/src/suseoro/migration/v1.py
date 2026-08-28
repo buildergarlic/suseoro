@@ -9,12 +9,10 @@ import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from zipfile import BadZipFile
-
-from openpyxl import load_workbook
-from python_calamine import CalamineError, CalamineWorkbook
 
 from suseoro.db.connection import connect
+from suseoro.ingestion.contracts import DocumentRole, RowStatus
+from suseoro.ingestion.parsers.tabular import parse_tabular
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.audit import record_audit_event, record_system_audit_event
 
@@ -91,31 +89,22 @@ def _digest(path: Path) -> str:
 
 
 def _workbook_rows(path: Path) -> int:
-    try:
-        workbook = CalamineWorkbook.from_path(path)
-        populated = sum(
-            1
-            for name in workbook.sheet_names
-            for row in workbook.get_sheet_by_name(name).to_python()
-            if any(value not in (None, "") for value in row)
-        )
-    except (CalamineError, OSError, ValueError):
-        if path.suffix.casefold() != ".xlsx":
-            raise ValueError("unreadable workbook")
-        workbook = load_workbook(path, read_only=True, data_only=True)
-        try:
-            populated = sum(
-                1
-                for worksheet in workbook.worksheets
-                for row in worksheet.iter_rows(values_only=True)
-                if any(value not in (None, "") for value in row)
-            )
-        finally:
-            workbook.close()
-    rows = max(0, populated - 1)
-    if rows == 0:
-        raise ValueError("workbook contains no data rows")
-    return rows
+    parsed = parse_tabular(
+        path,
+        role=DocumentRole.CATALOG_FULL,
+        sha256=_digest(path),
+    )
+    if not parsed.rows:
+        raise ValueError("workbook contains no catalog rows")
+    for row in parsed.rows:
+        title = row.fields.get("title")
+        if (
+            row.status != RowStatus.SUCCESS
+            or title is None
+            or title.value in (None, "")
+        ):
+            raise ValueError("workbook does not contain only usable catalog rows")
+    return len(parsed.rows)
 
 
 def _is_legacy(path: Path, school: Path) -> bool:
@@ -157,7 +146,7 @@ def inspect_v1(source_root: Path) -> V1MigrationReport:
         for path in dls_files:
             try:
                 valid_dls.append((path, _workbook_rows(path)))
-            except (OSError, ValueError, KeyError, BadZipFile, CalamineError):
+            except Exception:  # noqa: BLE001 - isolate every untrusted v1 workbook
                 report.read_error_count += 1
         valid_dls.sort(
             key=lambda item: tuple(
@@ -237,6 +226,11 @@ def _register_visible_import(
                     (school_id, school.name, now, now),
                 )
             imported_school_ids.append(school_id)
+            # The authenticated tenant owns the imported read-only material.
+            # We still register every discovered legacy school as application
+            # metadata, but never publish records into a tenant that has no
+            # authenticated administrator to review and activate them.
+            owning_school_id = actor_school_id or school_id
             target = destination / "schools" / school.name
             for legacy in school.legacy_workspaces:
                 copied = (
@@ -253,7 +247,7 @@ def _register_visible_import(
                     """,
                     (
                         str(uuid.uuid4()),
-                        school_id,
+                        owning_school_id,
                         legacy.parent.name + " / " + legacy.name,
                         str(copied),
                         _digest(legacy),
@@ -271,7 +265,7 @@ def _register_visible_import(
                     """,
                     (
                         str(uuid.uuid4()),
-                        school_id,
+                        owning_school_id,
                         str(copied),
                         _digest(school.catalog_candidate),
                         school.catalog_candidate_row_count,

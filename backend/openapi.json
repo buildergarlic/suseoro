@@ -1,30 +1,26 @@
 {
   "components": {
     "schemas": {
-      "ActivateCatalogVersionResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "ActivateV1CatalogCandidateResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
       "ApiErrorDetail": {
+        "additionalProperties": false,
         "properties": {
           "code": {
+            "title": "Code",
             "type": "string"
           },
           "fields": {
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/ApiErrorField"
             },
+            "title": "Fields",
             "type": "array"
           },
           "message": {
+            "title": "Message",
             "type": "string"
           },
           "request_id": {
-            "format": "uuid",
+            "title": "Request Id",
             "type": "string"
           }
         },
@@ -34,9 +30,47 @@
           "request_id",
           "fields"
         ],
+        "title": "ApiErrorDetail",
+        "type": "object"
+      },
+      "ApiErrorField": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "field",
+          "message",
+          "value"
+        ],
+        "title": "ApiErrorField",
         "type": "object"
       },
       "ApiErrorResponse": {
+        "additionalProperties": false,
         "properties": {
           "detail": {
             "$ref": "#/components/schemas/ApiErrorDetail"
@@ -45,6 +79,7 @@
         "required": [
           "detail"
         ],
+        "title": "ApiErrorResponse",
         "type": "object"
       },
       "ApprovalAction": {
@@ -65,6 +100,35 @@
           "reason"
         ],
         "title": "ApprovalAction",
+        "type": "object"
+      },
+      "ApprovalCancellationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cancellation_id": {
+            "title": "Cancellation Id",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cancellation_id",
+          "revision_id",
+          "state",
+          "row_version"
+        ],
+        "title": "ApprovalCancellationResponse",
         "type": "object"
       },
       "ApprovalComment": {
@@ -94,6 +158,128 @@
         "title": "ApprovalComment",
         "type": "object"
       },
+      "ApprovalCommentResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "comment_id": {
+            "title": "Comment Id",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "comment_id",
+          "content",
+          "created_at",
+          "state",
+          "row_version"
+        ],
+        "title": "ApprovalCommentResponse",
+        "type": "object"
+      },
+      "ApprovalDecisionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision_id",
+          "decision",
+          "state",
+          "row_version"
+        ],
+        "title": "ApprovalDecisionResponse",
+        "type": "object"
+      },
+      "ApprovalDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "revision_number": {
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision_id",
+          "revision_number",
+          "sha256",
+          "payload"
+        ],
+        "title": "ApprovalDetailResponse",
+        "type": "object"
+      },
+      "ApprovalPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ApprovalPage",
+        "type": "object"
+      },
       "ApprovalRequest": {
         "properties": {
           "budget_won": {
@@ -115,8 +301,205 @@
         "title": "ApprovalRequest",
         "type": "object"
       },
-      "ApproveApprovalResponse": {
-        "additionalProperties": true,
+      "ApprovalRequestResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "budget_won": {
+            "title": "Budget Won",
+            "type": "integer"
+          },
+          "expected_total_won": {
+            "title": "Expected Total Won",
+            "type": "integer"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "revision_number": {
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision_id",
+          "revision_number",
+          "sha256",
+          "expected_total_won",
+          "budget_won",
+          "state",
+          "row_version"
+        ],
+        "title": "ApprovalRequestResponse",
+        "type": "object"
+      },
+      "ApprovalSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "budget_won": {
+            "title": "Budget Won",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "expected_total_won": {
+            "title": "Expected Total Won",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision_number": {
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "revision_number",
+          "budget_won",
+          "expected_total_won",
+          "sha256",
+          "created_at"
+        ],
+        "title": "ApprovalSummary",
+        "type": "object"
+      },
+      "AuditEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "actor_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Name"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "actor_id",
+          "actor_name",
+          "action",
+          "entity_type",
+          "entity_id",
+          "before",
+          "after",
+          "request_id",
+          "occurred_at"
+        ],
+        "title": "AuditEvent",
+        "type": "object"
+      },
+      "AuditEventPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuditEvent"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "AuditEventPage",
         "type": "object"
       },
       "BackupCreateRequest": {
@@ -135,6 +518,92 @@
           }
         },
         "title": "BackupCreateRequest",
+        "type": "object"
+      },
+      "BackupManifestResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "database_file": {
+            "title": "Database File",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "manifest_file": {
+            "title": "Manifest File",
+            "type": "string"
+          },
+          "schema_migrations": {
+            "items": {
+              "$ref": "#/components/schemas/SchemaMigration"
+            },
+            "title": "Schema Migrations",
+            "type": "array"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "created_at",
+          "database_file",
+          "manifest_file",
+          "sha256",
+          "size_bytes",
+          "schema_migrations",
+          "verified"
+        ],
+        "title": "BackupManifestResponse",
+        "type": "object"
+      },
+      "BackupPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BackupManifestResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "BackupPage",
         "type": "object"
       },
       "Body_uploadSources": {
@@ -185,16 +654,50 @@
         "title": "Body_uploadSources",
         "type": "object"
       },
-      "BulkDecideCandidatesResponse": {
-        "additionalProperties": true,
+      "CandidateBulkItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "outcome",
+          "row_version"
+        ],
+        "title": "CandidateBulkItem",
         "type": "object"
       },
-      "CancelApprovalResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "CancelJobResponse": {
-        "additionalProperties": true,
+      "CandidateBulkResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateBulkItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CandidateBulkResponse",
         "type": "object"
       },
       "CandidateBulkUpdate": {
@@ -224,6 +727,200 @@
           "workspace_id"
         ],
         "title": "CandidateLock",
+        "type": "object"
+      },
+      "CandidateLockResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "actor_id",
+          "expires_at"
+        ],
+        "title": "CandidateLockResponse",
+        "type": "object"
+      },
+      "CandidateMutationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Price"
+          }
+        },
+        "required": [
+          "id",
+          "outcome",
+          "quantity",
+          "unit_price",
+          "row_version"
+        ],
+        "title": "CandidateMutationResponse",
+        "type": "object"
+      },
+      "CandidatePage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "CandidatePage",
+        "type": "object"
+      },
+      "CandidateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "edition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edition"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isbn13": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn13"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Price"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "title",
+          "authors",
+          "isbn13",
+          "edition",
+          "outcome",
+          "reason",
+          "quantity",
+          "unit_price",
+          "row_version",
+          "updated_at"
+        ],
+        "title": "CandidateResponse",
         "type": "object"
       },
       "CandidateUpdate": {
@@ -263,6 +960,88 @@
         "title": "CatalogActivateRequest",
         "type": "object"
       },
+      "CatalogDeltaApplyRequest": {
+        "properties": {
+          "registration_source_id": {
+            "title": "Registration Source Id",
+            "type": "string"
+          },
+          "requested_start_local_date": {
+            "format": "date",
+            "title": "Requested Start Local Date",
+            "type": "string"
+          },
+          "requested_through_local_date": {
+            "format": "date",
+            "title": "Requested Through Local Date",
+            "type": "string"
+          },
+          "source_type": {
+            "$ref": "#/components/schemas/SourceType"
+          },
+          "update_source_id": {
+            "title": "Update Source Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_type",
+          "registration_source_id",
+          "update_source_id",
+          "requested_start_local_date",
+          "requested_through_local_date"
+        ],
+        "title": "CatalogDeltaApplyRequest",
+        "type": "object"
+      },
+      "CatalogDeltaResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "catalog_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Version Id"
+          },
+          "idempotent": {
+            "title": "Idempotent",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "watermark_local_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark Local Date"
+          }
+        },
+        "required": [
+          "applied",
+          "status",
+          "catalog_version_id",
+          "watermark_local_date",
+          "idempotent"
+        ],
+        "title": "CatalogDeltaResponse",
+        "type": "object"
+      },
       "CatalogStageRequest": {
         "properties": {
           "source_type": {
@@ -275,8 +1054,79 @@
         "title": "CatalogStageRequest",
         "type": "object"
       },
-      "CommentApprovalResponse": {
-        "additionalProperties": true,
+      "CatalogVersionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "as_of_local_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of Local Date"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "import_mode": {
+            "title": "Import Mode",
+            "type": "string"
+          },
+          "item_count": {
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "school_id": {
+            "title": "School Id",
+            "type": "string"
+          },
+          "source_type": {
+            "title": "Source Type",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "school_id",
+          "source_type",
+          "import_mode",
+          "status",
+          "item_count",
+          "as_of_local_date",
+          "created_at",
+          "activated_at"
+        ],
+        "title": "CatalogVersionResponse",
         "type": "object"
       },
       "ComparisonCreate": {
@@ -297,32 +1147,33 @@
         "title": "ComparisonCreate",
         "type": "object"
       },
-      "CompleteReceivingResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "CreateBackupResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "CreateComparisonJobResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "CreateDeliveryResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "CreateOrderResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "CreateQuoteResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "CreateWorkspaceResponse": {
-        "additionalProperties": true,
+      "ComparisonJobResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "workspace_status": {
+            "title": "Workspace Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "workspace_status",
+          "row_version"
+        ],
+        "title": "ComparisonJobResponse",
         "type": "object"
       },
       "DeliveryCreate": {
@@ -356,6 +1207,133 @@
         "title": "DeliveryCreate",
         "type": "object"
       },
+      "DeliveryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "differences": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Differences",
+            "type": "array"
+          },
+          "differences_truncated": {
+            "title": "Differences Truncated",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeliverySummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "differences",
+          "differences_truncated"
+        ],
+        "title": "DeliveryPage",
+        "type": "object"
+      },
+      "DeliveryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery_batch_id": {
+            "title": "Delivery Batch Id",
+            "type": "string"
+          },
+          "delivery_number": {
+            "title": "Delivery Number",
+            "type": "integer"
+          },
+          "differences": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Differences",
+            "type": "array"
+          },
+          "received_quantity": {
+            "title": "Received Quantity",
+            "type": "integer"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "delivery_batch_id",
+          "delivery_number",
+          "received_quantity",
+          "differences",
+          "state",
+          "row_version"
+        ],
+        "title": "DeliveryResponse",
+        "type": "object"
+      },
+      "DeliverySummary": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "delivery_number": {
+            "title": "Delivery Number",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "order_revision_id": {
+            "title": "Order Revision Id",
+            "type": "string"
+          },
+          "sealed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sealed At"
+          }
+        },
+        "required": [
+          "id",
+          "order_revision_id",
+          "delivery_number",
+          "created_at",
+          "sealed_at"
+        ],
+        "title": "DeliverySummary",
+        "type": "object"
+      },
       "DifferenceDisposition": {
         "properties": {
           "disposition": {
@@ -381,6 +1359,30 @@
         "title": "DifferenceDisposition",
         "type": "object"
       },
+      "DifferenceDispositionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "difference_id": {
+            "title": "Difference Id",
+            "type": "string"
+          },
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "difference_id",
+          "disposition",
+          "row_version"
+        ],
+        "title": "DifferenceDispositionResponse",
+        "type": "object"
+      },
       "DocumentRole": {
         "enum": [
           "UNKNOWN",
@@ -393,33 +1395,6 @@
         ],
         "title": "DocumentRole",
         "type": "string"
-      },
-      "DownloadOrderResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "GetApprovalResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "GetHealthResponse": {
-        "additionalProperties": {
-          "type": "string"
-        },
-        "title": "Response Gethealth",
-        "type": "object"
-      },
-      "GetJobResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "GetSourceResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "GetWorkspaceResponse": {
-        "additionalProperties": true,
-        "type": "object"
       },
       "HTTPValidationError": {
         "properties": {
@@ -434,48 +1409,289 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
-      "InspectV1MigrationResponse": {
-        "additionalProperties": true,
+      "HealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "database": {
+            "title": "Database",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "worker": {
+            "title": "Worker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "database",
+          "worker"
+        ],
+        "title": "HealthResponse",
         "type": "object"
       },
-      "ListApprovalsResponse": {
-        "additionalProperties": true,
+      "JobCommandResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "progress_current": {
+            "title": "Progress Current",
+            "type": "integer"
+          },
+          "progress_total": {
+            "title": "Progress Total",
+            "type": "integer"
+          },
+          "retry_count": {
+            "title": "Retry Count",
+            "type": "integer"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "type",
+          "status",
+          "stage",
+          "progress_current",
+          "progress_total",
+          "error",
+          "retry_count"
+        ],
+        "title": "JobCommandResponse",
         "type": "object"
       },
-      "ListAuditEventsResponse": {
-        "additionalProperties": true,
+      "JobFileResult": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "processed_rows": {
+            "title": "Processed Rows",
+            "type": "integer"
+          },
+          "source_document_id": {
+            "title": "Source Document Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "total_rows": {
+            "title": "Total Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_document_id",
+          "filename",
+          "status",
+          "total_rows",
+          "processed_rows",
+          "error"
+        ],
+        "title": "JobFileResult",
         "type": "object"
       },
-      "ListBackupsResponse": {
-        "additionalProperties": true,
+      "JobResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JobFileResult"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "progress_current": {
+            "title": "Progress Current",
+            "type": "integer"
+          },
+          "progress_total": {
+            "title": "Progress Total",
+            "type": "integer"
+          },
+          "retry_count": {
+            "title": "Retry Count",
+            "type": "integer"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "type",
+          "status",
+          "stage",
+          "progress_current",
+          "progress_total",
+          "error",
+          "retry_count",
+          "items"
+        ],
+        "title": "JobResponse",
         "type": "object"
       },
-      "ListCandidatesResponse": {
-        "additionalProperties": true,
+      "LegacyWorkspace": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "imported_at": {
+            "title": "Imported At",
+            "type": "string"
+          },
+          "is_read_only": {
+            "title": "Is Read Only",
+            "type": "boolean"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "source_copy_path": {
+            "title": "Source Copy Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "source_copy_path",
+          "sha256",
+          "is_read_only",
+          "imported_at"
+        ],
+        "title": "LegacyWorkspace",
         "type": "object"
       },
-      "ListDeliveriesResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "ListQuotesResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "ListReceivingDifferencesResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "ListSourcesResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "ListWorkspacesResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "LockCandidateResponse": {
-        "additionalProperties": true,
+      "LegacyWorkspacePage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LegacyWorkspace"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "LegacyWorkspacePage",
         "type": "object"
       },
       "LoginRequest": {
@@ -499,14 +1715,6 @@
           "password"
         ],
         "title": "LoginRequest",
-        "type": "object"
-      },
-      "MarkOrderSentResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "MatchQuoteRowResponse": {
-        "additionalProperties": true,
         "type": "object"
       },
       "OrderCreate": {
@@ -555,6 +1763,162 @@
         "title": "OrderCreate",
         "type": "object"
       },
+      "OrderResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "allocations": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Allocations"
+          },
+          "artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Id"
+          },
+          "artifacts": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifacts"
+          },
+          "diagnostics": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Diagnostics"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Path"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Revision Id"
+          },
+          "revision_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Revision Number"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sha256"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Size Bytes"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "validation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Validation Id"
+          }
+        },
+        "required": [
+          "status",
+          "state",
+          "row_version"
+        ],
+        "title": "OrderResponse",
+        "type": "object"
+      },
       "OrderSent": {
         "properties": {
           "reason": {
@@ -575,8 +1939,52 @@
         "title": "OrderSent",
         "type": "object"
       },
-      "ParseSourceResponse": {
-        "additionalProperties": true,
+      "OrderSentResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "external_send_performed": {
+            "title": "External Send Performed",
+            "type": "boolean"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "transmission_id": {
+            "title": "Transmission Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transmission_id",
+          "state",
+          "row_version",
+          "external_send_performed"
+        ],
+        "title": "OrderSentResponse",
+        "type": "object"
+      },
+      "QueuedJobResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "QueuedJobResponse",
         "type": "object"
       },
       "QuoteCreate": {
@@ -647,6 +2055,208 @@
         "title": "QuoteMatch",
         "type": "object"
       },
+      "QuoteMatchResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "parent_quote_id": {
+            "title": "Parent Quote Id",
+            "type": "string"
+          },
+          "quote_id": {
+            "title": "Quote Id",
+            "type": "string"
+          },
+          "revision_number": {
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "quote_id",
+          "parent_quote_id",
+          "revision_number",
+          "state",
+          "row_version",
+          "rows"
+        ],
+        "title": "QuoteMatchResponse",
+        "type": "object"
+      },
+      "QuotePage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QuoteSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "QuotePage",
+        "type": "object"
+      },
+      "QuoteResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "budget_overrun_won": {
+            "title": "Budget Overrun Won",
+            "type": "integer"
+          },
+          "discount_won": {
+            "title": "Discount Won",
+            "type": "integer"
+          },
+          "list_mismatch_count": {
+            "title": "List Mismatch Count",
+            "type": "integer"
+          },
+          "list_total_won": {
+            "title": "List Total Won",
+            "type": "integer"
+          },
+          "missing_price_count": {
+            "title": "Missing Price Count",
+            "type": "integer"
+          },
+          "needs_review_count": {
+            "title": "Needs Review Count",
+            "type": "integer"
+          },
+          "out_of_stock_count": {
+            "title": "Out Of Stock Count",
+            "type": "integer"
+          },
+          "quote_id": {
+            "title": "Quote Id",
+            "type": "string"
+          },
+          "reconciliation": {
+            "additionalProperties": true,
+            "title": "Reconciliation",
+            "type": "object"
+          },
+          "requires_reapproval": {
+            "title": "Requires Reapproval",
+            "type": "boolean"
+          },
+          "revision_number": {
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "total_won": {
+            "title": "Total Won",
+            "type": "integer"
+          },
+          "unmatched_count": {
+            "title": "Unmatched Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "quote_id",
+          "revision_number",
+          "state",
+          "row_version",
+          "total_won",
+          "list_total_won",
+          "discount_won",
+          "budget_overrun_won",
+          "out_of_stock_count",
+          "missing_price_count",
+          "list_mismatch_count",
+          "needs_review_count",
+          "unmatched_count",
+          "requires_reapproval",
+          "reconciliation"
+        ],
+        "title": "QuoteResponse",
+        "type": "object"
+      },
+      "QuoteSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "budget_overrun_won": {
+            "title": "Budget Overrun Won",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "reconciliation": {
+            "additionalProperties": true,
+            "title": "Reconciliation",
+            "type": "object"
+          },
+          "requires_reapproval": {
+            "title": "Requires Reapproval",
+            "type": "boolean"
+          },
+          "total_won": {
+            "title": "Total Won",
+            "type": "integer"
+          },
+          "vendor_name": {
+            "title": "Vendor Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "vendor_name",
+          "total_won",
+          "budget_overrun_won",
+          "requires_reapproval",
+          "reconciliation",
+          "created_at"
+        ],
+        "title": "QuoteSummary",
+        "type": "object"
+      },
       "ReceivingComplete": {
         "properties": {
           "reason": {
@@ -662,20 +2272,95 @@
         "title": "ReceivingComplete",
         "type": "object"
       },
-      "RecordScanResponse": {
-        "additionalProperties": true,
+      "ReceivingDifference": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reference_key": {
+            "title": "Reference Key",
+            "type": "string"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "reference_key",
+          "disposition",
+          "active",
+          "row_version",
+          "details",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ReceivingDifference",
         "type": "object"
       },
-      "RequestApprovalChangesResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "RequestApprovalResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "RestoreBackupResponse": {
-        "additionalProperties": true,
+      "ReceivingDifferencePage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReceivingDifference"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ReceivingDifferencePage",
         "type": "object"
       },
       "RestoreRequest": {
@@ -691,12 +2376,21 @@
         "title": "RestoreRequest",
         "type": "object"
       },
-      "RetryJobResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "RunV1MigrationResponse": {
-        "additionalProperties": true,
+      "RestoreResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "pre_restore_backup": {
+            "$ref": "#/components/schemas/BackupManifestResponse"
+          },
+          "restored": {
+            "$ref": "#/components/schemas/BackupManifestResponse"
+          }
+        },
+        "required": [
+          "restored",
+          "pre_restore_backup"
+        ],
+        "title": "RestoreResponse",
         "type": "object"
       },
       "ScanRecord": {
@@ -728,6 +2422,78 @@
         "title": "ScanRecord",
         "type": "object"
       },
+      "ScanResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "isbn13": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn13"
+          },
+          "order_row_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Row Id"
+          },
+          "scanned_quantity": {
+            "title": "Scanned Quantity",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_id",
+          "code",
+          "isbn13",
+          "scanned_quantity",
+          "order_row_id"
+        ],
+        "title": "ScanResponse",
+        "type": "object"
+      },
+      "ScanSessionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "state",
+          "row_version"
+        ],
+        "title": "ScanSessionResponse",
+        "type": "object"
+      },
       "ScanStart": {
         "properties": {
           "order_revision_id": {
@@ -748,8 +2514,23 @@
         "title": "ScanStart",
         "type": "object"
       },
-      "SetReceivingDispositionResponse": {
-        "additionalProperties": true,
+      "SchemaMigration": {
+        "additionalProperties": false,
+        "properties": {
+          "checksum": {
+            "title": "Checksum",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "checksum"
+        ],
+        "title": "SchemaMigration",
         "type": "object"
       },
       "SourceMapping": {
@@ -783,6 +2564,116 @@
         "title": "SourceMapping",
         "type": "object"
       },
+      "SourcePage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SourceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "SourcePage",
+        "type": "object"
+      },
+      "SourceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "detected_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detected Format"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mapping": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Mapping",
+            "type": "object"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "sha256",
+          "size_bytes",
+          "role",
+          "status",
+          "detected_format",
+          "mapping",
+          "row_version",
+          "created_at",
+          "completed_at"
+        ],
+        "title": "SourceResponse",
+        "type": "object"
+      },
       "SourceType": {
         "enum": [
           "DLS_MARC",
@@ -792,35 +2683,98 @@
         "title": "SourceType",
         "type": "string"
       },
-      "StageCatalogSnapshotResponse": {
-        "additionalProperties": true,
+      "UploadItem": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UploadItemError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "status",
+          "source_id",
+          "error"
+        ],
+        "title": "UploadItem",
         "type": "object"
       },
-      "StartScanSessionResponse": {
-        "additionalProperties": true,
+      "UploadItemError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "UploadItemError",
         "type": "object"
       },
-      "StreamEventsResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "TransitionWorkspaceResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "UpdateCandidateResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "UpdateSourceMappingResponse": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "UploadSourcesResponse": {
-        "additionalProperties": true,
+      "UploadResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UploadItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          }
+        },
+        "required": [
+          "job_id",
+          "items"
+        ],
+        "title": "UploadResponse",
         "type": "object"
       },
       "UserResponse": {
+        "additionalProperties": false,
         "properties": {
           "display_name": {
             "title": "Display Name",
@@ -856,6 +2810,35 @@
         "title": "UserResponse",
         "type": "object"
       },
+      "V1ActivationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_version_id": {
+            "title": "Catalog Version Id",
+            "type": "string"
+          },
+          "confirmed_row_count": {
+            "title": "Confirmed Row Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "catalog_version_id",
+          "confirmed_row_count"
+        ],
+        "title": "V1ActivationResponse",
+        "type": "object"
+      },
       "V1CatalogActivationRequest": {
         "properties": {
           "confirmed_row_count": {
@@ -869,6 +2852,98 @@
         "title": "V1CatalogActivationRequest",
         "type": "object"
       },
+      "V1CatalogCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "catalog_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Version Id"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "row_count": {
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "source_copy_path": {
+            "title": "Source Copy Path",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_copy_path",
+          "sha256",
+          "row_count",
+          "status",
+          "catalog_version_id",
+          "created_at",
+          "activated_at"
+        ],
+        "title": "V1CatalogCandidate",
+        "type": "object"
+      },
+      "V1CatalogCandidatePage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/V1CatalogCandidate"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "V1CatalogCandidatePage",
+        "type": "object"
+      },
       "V1InspectRequest": {
         "properties": {
           "source_path": {
@@ -880,6 +2955,83 @@
           "source_path"
         ],
         "title": "V1InspectRequest",
+        "type": "object"
+      },
+      "V1MigrationReport": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_cache_count": {
+            "title": "Catalog Cache Count",
+            "type": "integer"
+          },
+          "catalog_candidate_count": {
+            "title": "Catalog Candidate Count",
+            "type": "integer"
+          },
+          "copied_count": {
+            "title": "Copied Count",
+            "type": "integer"
+          },
+          "duplicate_count": {
+            "title": "Duplicate Count",
+            "type": "integer"
+          },
+          "legacy_workspace_count": {
+            "title": "Legacy Workspace Count",
+            "type": "integer"
+          },
+          "missing_count": {
+            "title": "Missing Count",
+            "type": "integer"
+          },
+          "read_error_count": {
+            "title": "Read Error Count",
+            "type": "integer"
+          },
+          "school_count": {
+            "title": "School Count",
+            "type": "integer"
+          },
+          "schools": {
+            "items": {
+              "$ref": "#/components/schemas/V1SchoolReport"
+            },
+            "title": "Schools",
+            "type": "array"
+          },
+          "skipped_existing_count": {
+            "title": "Skipped Existing Count",
+            "type": "integer"
+          },
+          "source_delete_recommended": {
+            "title": "Source Delete Recommended",
+            "type": "boolean"
+          },
+          "source_retention_message": {
+            "title": "Source Retention Message",
+            "type": "string"
+          },
+          "source_root": {
+            "title": "Source Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_root",
+          "school_count",
+          "legacy_workspace_count",
+          "catalog_cache_count",
+          "catalog_candidate_count",
+          "missing_count",
+          "duplicate_count",
+          "read_error_count",
+          "copied_count",
+          "skipped_existing_count",
+          "source_delete_recommended",
+          "source_retention_message",
+          "schools"
+        ],
+        "title": "V1MigrationReport",
         "type": "object"
       },
       "V1MigrationRequest": {
@@ -898,6 +3050,65 @@
           "destination_path"
         ],
         "title": "V1MigrationRequest",
+        "type": "object"
+      },
+      "V1SchoolReport": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_caches": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Catalog Caches",
+            "type": "array"
+          },
+          "catalog_candidate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Candidate"
+          },
+          "catalog_candidate_row_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Candidate Row Count"
+          },
+          "legacy_workspaces": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Legacy Workspaces",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "requires_catalog_confirmation": {
+            "title": "Requires Catalog Confirmation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "catalog_candidate",
+          "catalog_candidate_row_count",
+          "requires_catalog_confirmation",
+          "legacy_workspaces",
+          "catalog_caches"
+        ],
+        "title": "V1SchoolReport",
         "type": "object"
       },
       "ValidationError": {
@@ -946,6 +3157,93 @@
           "name"
         ],
         "title": "WorkspaceCreate",
+        "type": "object"
+      },
+      "WorkspacePage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "WorkspacePage",
+        "type": "object"
+      },
+      "WorkspaceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "row_version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "WorkspaceResponse",
+        "type": "object"
+      },
+      "WorkspaceStateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "row_version"
+        ],
+        "title": "WorkspaceStateResponse",
         "type": "object"
       },
       "WorkspaceTransition": {
@@ -1030,7 +3328,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListBackupsResponse"
+                  "$ref": "#/components/schemas/BackupPage"
                 }
               }
             },
@@ -1117,6 +3415,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1208,7 +3516,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CreateBackupResponse"
+                  "$ref": "#/components/schemas/BackupManifestResponse"
                 }
               }
             },
@@ -1295,6 +3603,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1388,7 +3706,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RestoreBackupResponse"
+                  "$ref": "#/components/schemas/RestoreResponse"
                 }
               }
             },
@@ -1475,6 +3793,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1593,7 +3921,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ActivateV1CatalogCandidateResponse"
+                  "$ref": "#/components/schemas/V1ActivationResponse"
                 }
               }
             },
@@ -1680,6 +4008,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1775,7 +4113,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InspectV1MigrationResponse"
+                  "$ref": "#/components/schemas/V1MigrationReport"
                 }
               }
             },
@@ -1862,6 +4200,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1971,7 +4319,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunV1MigrationResponse"
+                  "$ref": "#/components/schemas/V1MigrationReport"
                 }
               }
             },
@@ -2058,6 +4406,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2109,7 +4467,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GetApprovalResponse"
+                  "$ref": "#/components/schemas/ApprovalDetailResponse"
                 }
               }
             },
@@ -2196,6 +4554,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2314,7 +4682,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApproveApprovalResponse"
+                  "$ref": "#/components/schemas/ApprovalDecisionResponse"
                 }
               }
             },
@@ -2401,6 +4769,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2519,7 +4897,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CancelApprovalResponse"
+                  "$ref": "#/components/schemas/ApprovalCancellationResponse"
                 }
               }
             },
@@ -2606,6 +4984,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2724,7 +5112,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RequestApprovalChangesResponse"
+                  "$ref": "#/components/schemas/ApprovalDecisionResponse"
                 }
               }
             },
@@ -2811,6 +5199,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2929,7 +5327,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CommentApprovalResponse"
+                  "$ref": "#/components/schemas/ApprovalCommentResponse"
                 }
               }
             },
@@ -3016,6 +5414,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3118,7 +5526,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListAuditEventsResponse"
+                  "$ref": "#/components/schemas/AuditEventPage"
                 }
               }
             },
@@ -3205,6 +5613,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3360,6 +5778,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3554,6 +5982,16 @@
               }
             },
             "description": "구조화된 오류"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
           }
         },
         "summary": "로그아웃하기",
@@ -3683,6 +6121,16 @@
               }
             },
             "description": "구조화된 오류"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
           }
         },
         "summary": "현재 사용자 확인하기",
@@ -3793,7 +6241,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UpdateCandidateResponse"
+                  "$ref": "#/components/schemas/CandidateMutationResponse"
                 }
               }
             },
@@ -3880,6 +6328,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3982,7 +6440,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LockCandidateResponse"
+                  "$ref": "#/components/schemas/CandidateLockResponse"
                 }
               }
             },
@@ -4077,11 +6535,211 @@
               }
             },
             "description": "구조화된 오류"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
           }
         },
         "summary": "수서 후보 편집 잠금 잡기",
         "tags": [
           "candidates"
+        ]
+      }
+    },
+    "/api/v2/catalog/deltas": {
+      "post": {
+        "operationId": "applyCatalogDelta",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Request-ID",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "suseoro_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suseoro Session"
+            }
+          },
+          {
+            "description": "CSRF 방지 토큰",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogDeltaApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogDeltaResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          }
+        },
+        "summary": "DLS 장서 증분 두 파일 적용하기",
+        "tags": [
+          "sources"
         ]
       }
     },
@@ -4171,7 +6829,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ActivateCatalogVersionResponse"
+                  "$ref": "#/components/schemas/CatalogVersionResponse"
                 }
               }
             },
@@ -4258,6 +6916,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4324,9 +6992,7 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StreamEventsResponse"
-                }
+                "schema": {}
               }
             },
             "description": "Successful Response"
@@ -4412,6 +7078,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4436,7 +7112,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GetHealthResponse"
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             },
@@ -4523,6 +7199,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4571,7 +7257,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GetJobResponse"
+                  "$ref": "#/components/schemas/JobResponse"
                 }
               }
             },
@@ -4658,6 +7344,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4750,7 +7446,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CancelJobResponse"
+                  "$ref": "#/components/schemas/JobCommandResponse"
                 }
               }
             },
@@ -4837,6 +7533,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4925,11 +7631,11 @@
           }
         ],
         "responses": {
-          "200": {
+          "202": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RetryJobResponse"
+                  "$ref": "#/components/schemas/JobCommandResponse"
                 }
               }
             },
@@ -5016,6 +7722,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5065,9 +7781,9 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
                 "schema": {
-                  "$ref": "#/components/schemas/DownloadOrderResponse"
+                  "type": "string"
                 }
               }
             },
@@ -5154,6 +7870,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5272,7 +7998,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MarkOrderSentResponse"
+                  "$ref": "#/components/schemas/OrderSentResponse"
                 }
               }
             },
@@ -5359,6 +8085,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5477,7 +8213,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MatchQuoteRowResponse"
+                  "$ref": "#/components/schemas/QuoteMatchResponse"
                 }
               }
             },
@@ -5564,6 +8300,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5682,7 +8428,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SetReceivingDispositionResponse"
+                  "$ref": "#/components/schemas/DifferenceDispositionResponse"
                 }
               }
             },
@@ -5769,6 +8515,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5871,7 +8627,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RecordScanResponse"
+                  "$ref": "#/components/schemas/ScanResponse"
                 }
               }
             },
@@ -5958,6 +8714,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6009,7 +8775,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GetSourceResponse"
+                  "$ref": "#/components/schemas/SourceResponse"
                 }
               }
             },
@@ -6096,6 +8862,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6198,7 +8974,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StageCatalogSnapshotResponse"
+                  "$ref": "#/components/schemas/CatalogVersionResponse"
                 }
               }
             },
@@ -6285,6 +9061,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6403,7 +9189,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UpdateSourceMappingResponse"
+                  "$ref": "#/components/schemas/SourceResponse"
                 }
               }
             },
@@ -6490,6 +9276,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6582,7 +9378,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ParseSourceResponse"
+                  "$ref": "#/components/schemas/QueuedJobResponse"
                 }
               }
             },
@@ -6677,11 +9473,376 @@
               }
             },
             "description": "구조화된 오류"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
           }
         },
         "summary": "자료 분석 시작하기",
         "tags": [
           "sources"
+        ]
+      }
+    },
+    "/api/v2/v1/catalog-candidates": {
+      "get": {
+        "operationId": "listV1CatalogCandidates",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "PENDING_CONFIRMATION",
+                    "ACTIVATED",
+                    "REJECTED"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "suseoro_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suseoro Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V1CatalogCandidatePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          }
+        },
+        "summary": "이전 장서 활성화 후보 보기",
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/api/v2/v1/legacy-workspaces": {
+      "get": {
+        "operationId": "listV1LegacyWorkspaces",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "suseoro_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suseoro Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyWorkspacePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          }
+        },
+        "summary": "읽기 전용 이전 작업 보기",
+        "tags": [
+          "operations"
         ]
       }
     },
@@ -6755,7 +9916,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListWorkspacesResponse"
+                  "$ref": "#/components/schemas/WorkspacePage"
                 }
               }
             },
@@ -6842,6 +10003,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6933,7 +10104,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CreateWorkspaceResponse"
+                  "$ref": "#/components/schemas/WorkspaceResponse"
                 }
               }
             },
@@ -7020,6 +10191,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7071,7 +10252,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GetWorkspaceResponse"
+                  "$ref": "#/components/schemas/WorkspaceResponse"
                 }
               }
             },
@@ -7158,6 +10339,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7237,7 +10428,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListApprovalsResponse"
+                  "$ref": "#/components/schemas/ApprovalPage"
                 }
               }
             },
@@ -7324,6 +10515,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7442,7 +10643,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RequestApprovalResponse"
+                  "$ref": "#/components/schemas/ApprovalRequestResponse"
                 }
               }
             },
@@ -7529,6 +10730,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7641,7 +10852,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListCandidatesResponse"
+                  "$ref": "#/components/schemas/CandidatePage"
                 }
               }
             },
@@ -7728,6 +10939,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7830,7 +11051,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BulkDecideCandidatesResponse"
+                  "$ref": "#/components/schemas/CandidateBulkResponse"
                 }
               }
             },
@@ -7917,6 +11138,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8035,7 +11266,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CreateComparisonJobResponse"
+                  "$ref": "#/components/schemas/ComparisonJobResponse"
                 }
               }
             },
@@ -8122,6 +11353,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8201,7 +11442,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListDeliveriesResponse"
+                  "$ref": "#/components/schemas/DeliveryPage"
                 }
               }
             },
@@ -8288,6 +11529,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8404,7 +11655,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CreateDeliveryResponse"
+                  "$ref": "#/components/schemas/DeliveryResponse"
                 }
               }
             },
@@ -8491,6 +11742,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8609,7 +11870,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CreateOrderResponse"
+                  "$ref": "#/components/schemas/OrderResponse"
                 }
               }
             },
@@ -8696,6 +11957,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8775,7 +12046,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListQuotesResponse"
+                  "$ref": "#/components/schemas/QuotePage"
                 }
               }
             },
@@ -8862,6 +12133,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8978,7 +12259,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CreateQuoteResponse"
+                  "$ref": "#/components/schemas/QuoteResponse"
                 }
               }
             },
@@ -9065,6 +12346,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9183,7 +12474,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CompleteReceivingResponse"
+                  "$ref": "#/components/schemas/WorkspaceStateResponse"
                 }
               }
             },
@@ -9270,6 +12561,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9398,7 +12699,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListReceivingDifferencesResponse"
+                  "$ref": "#/components/schemas/ReceivingDifferencePage"
                 }
               }
             },
@@ -9485,6 +12786,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9603,7 +12914,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StartScanSessionResponse"
+                  "$ref": "#/components/schemas/ScanSessionResponse"
                 }
               }
             },
@@ -9690,6 +13001,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9785,7 +13106,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListSourcesResponse"
+                  "$ref": "#/components/schemas/SourcePage"
                 }
               }
             },
@@ -9872,6 +13193,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -9972,7 +13303,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UploadSourcesResponse"
+                  "$ref": "#/components/schemas/UploadResponse"
                 }
               }
             },
@@ -10059,6 +13390,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10177,7 +13518,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TransitionWorkspaceResponse"
+                  "$ref": "#/components/schemas/WorkspaceStateResponse"
                 }
               }
             },
@@ -10264,6 +13605,16 @@
             "description": "구조화된 오류"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {

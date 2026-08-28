@@ -26,6 +26,7 @@ from suseoro.api.errors import domain_not_found
 from suseoro.backup.service import (
     BackupService,
     LocalAdminConfirmationRequired,
+    RestoreReplayConflict,
     RestoreVerificationError,
 )
 from suseoro.catalog.contracts import CatalogRecord, SourceType
@@ -136,6 +137,88 @@ def list_audit_events(
     ]
     return page(
         items, limit=limit, cursor_values=lambda item: (item["occurred_at"], item["id"])
+    )
+
+
+@router.get(
+    "/v1/catalog-candidates",
+    summary="이전 장서 활성화 후보 보기",
+    operation_id="listV1CatalogCandidates",
+)
+def list_v1_catalog_candidates(
+    user: AuthenticatedUser = Depends(current_user),
+    connection: sqlite3.Connection = Depends(database_connection),
+    status: Literal["PENDING_CONFIRMATION", "ACTIVATED", "REJECTED"] | None = Query(
+        default=None
+    ),
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+):
+    decoded = decode_cursor(cursor, 2)
+    clauses = ["school_id = ?"]
+    parameters: list[object] = [user.school_id]
+    if status:
+        clauses.append("status = ?")
+        parameters.append(status)
+    if decoded:
+        clauses.append("(created_at < ? OR (created_at = ? AND id < ?))")
+        parameters.extend((decoded[0], decoded[0], decoded[1]))
+    rows = connection.execute(
+        f"""
+        SELECT id, source_copy_path, sha256, row_count, status,
+               catalog_version_id, created_at, activated_at
+        FROM v1_catalog_candidates
+        WHERE {" AND ".join(clauses)}
+        ORDER BY created_at DESC, id DESC LIMIT ?
+        """,
+        (*parameters, limit + 1),
+    ).fetchall()
+    items = [dict(row) for row in rows]
+    return page(
+        items,
+        limit=limit,
+        cursor_values=lambda item: (item["created_at"], item["id"]),
+    )
+
+
+@router.get(
+    "/v1/legacy-workspaces",
+    summary="읽기 전용 이전 작업 보기",
+    operation_id="listV1LegacyWorkspaces",
+)
+def list_v1_legacy_workspaces(
+    user: AuthenticatedUser = Depends(current_user),
+    connection: sqlite3.Connection = Depends(database_connection),
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+):
+    decoded = decode_cursor(cursor, 2)
+    parameters: list[object] = [user.school_id]
+    cursor_clause = ""
+    if decoded:
+        cursor_clause = "AND (imported_at < ? OR (imported_at = ? AND id < ?))"
+        parameters.extend((decoded[0], decoded[0], decoded[1]))
+    rows = connection.execute(
+        f"""
+        SELECT id, display_name, source_copy_path, sha256,
+               is_read_only, imported_at
+        FROM legacy_v1_workspaces
+        WHERE school_id = ? {cursor_clause}
+        ORDER BY imported_at DESC, id DESC LIMIT ?
+        """,
+        (*parameters, limit + 1),
+    ).fetchall()
+    items = [
+        {
+            **dict(row),
+            "is_read_only": bool(row["is_read_only"]),
+        }
+        for row in rows
+    ]
+    return page(
+        items,
+        limit=limit,
+        cursor_values=lambda item: (item["imported_at"], item["id"]),
     )
 
 
@@ -256,8 +339,8 @@ def activate_v1_catalog_candidate(
         connection.rollback()
         return replay.body
     candidate = connection.execute(
-        "SELECT * FROM v1_catalog_candidates WHERE id = ?",
-        (candidate_id,),
+        "SELECT * FROM v1_catalog_candidates WHERE id = ? AND school_id = ?",
+        (candidate_id, user.school_id),
     ).fetchone()
     if candidate is None:
         raise domain_not_found("V1_CATALOG_CANDIDATE_NOT_FOUND")
@@ -321,9 +404,9 @@ def activate_v1_catalog_candidate(
         """
         UPDATE v1_catalog_candidates
         SET status = 'ACTIVATED', catalog_version_id = ?, activated_at = ?
-        WHERE id = ? AND status = 'PENDING_CONFIRMATION'
+        WHERE id = ? AND school_id = ? AND status = 'PENDING_CONFIRMATION'
         """,
-        (version.id, now, candidate_id),
+        (version.id, now, candidate_id, user.school_id),
     )
     result = {
         "id": candidate_id,
@@ -465,10 +548,16 @@ def restore_backup(
         json.dumps(
             {
                 "school_id": user.school_id,
-                "actor_id": user.id,
+                "route": "POST /api/v2/admin/restores",
                 "idempotency_key": idempotency_key,
-                "request": request_body,
             },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_fingerprint = hashlib.sha256(
+        json.dumps(
+            request_body,
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -480,46 +569,45 @@ def restore_backup(
             expected_confirmation_token=request.app.state.local_admin_confirmation_token,
             local_request=local_request,
             operation_key=operation_key,
+            request_fingerprint=request_fingerprint,
         )
     except LocalAdminConfirmationRequired as error:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=403, detail={"code": "LOCAL_ADMIN_CONFIRMATION_REQUIRED"}
         ) from error
     except (RestoreVerificationError, FileNotFoundError) as error:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=400, detail={"code": "RESTORE_VERIFICATION_FAILED"}
+        ) from error
+    except RestoreReplayConflict as error:
+        raise HTTPException(
+            status_code=409, detail={"code": "IDEMPOTENCY_KEY_REUSED"}
         ) from error
     body = {
         "restored": result.restored_manifest.to_dict(),
         "pre_restore_backup": result.pre_restore_backup.to_dict(),
     }
-    restored_connection = connect(settings.database_path)
-    try:
-        school = restored_connection.execute(
-            "SELECT id FROM schools WHERE id = ?", (user.school_id,)
-        ).fetchone()
-        if school is not None:
-            record_system_audit_event(
-                restored_connection,
-                school_id=user.school_id,
-                action="DATABASE_RESTORED",
-                entity_type="backup_manifest",
-                entity_id=result.restored_manifest.id,
-                before={"pre_restore_backup_id": result.pre_restore_backup.id},
-                after={
-                    "restored_backup_id": result.restored_manifest.id,
-                    "requested_by_actor_id": user.id,
-                },
-                request_id=request_id,
-            )
-            restored_connection.commit()
-    finally:
-        restored_connection.close()
-    request.app.state.restore_replays[
-        (request.cookies.get("suseoro_session"), idempotency_key)
-    ] = body
+    if not result.replayed:
+        restored_connection = connect(settings.database_path)
+        try:
+            school = restored_connection.execute(
+                "SELECT id FROM schools WHERE id = ?", (user.school_id,)
+            ).fetchone()
+            if school is not None:
+                record_system_audit_event(
+                    restored_connection,
+                    school_id=user.school_id,
+                    action="DATABASE_RESTORED",
+                    entity_type="backup_manifest",
+                    entity_id=result.restored_manifest.id,
+                    before={"pre_restore_backup_id": result.pre_restore_backup.id},
+                    after={
+                        "restored_backup_id": result.restored_manifest.id,
+                        "requested_by_actor_id": user.id,
+                    },
+                    request_id=request_id,
+                )
+                restored_connection.commit()
+        finally:
+            restored_connection.close()
     return body

@@ -354,12 +354,12 @@ class JobRepository:
             SET status = 'QUEUED', stage = 'QUEUED', retry_count = retry_count + 1,
                 cancel_requested_at = NULL, heartbeat_at = NULL,
                 claim_token = NULL, error_json = NULL, updated_at = ?
-            WHERE id = ? AND status IN ('FAILED', 'CANCELLED')
+            WHERE id = ? AND status IN ('FAILED', 'PARTIAL', 'CANCELLED')
             """,
             (timestamp, job_id),
         )
         if updated.rowcount != 1:
-            raise RuntimeError("only failed or cancelled jobs can be retried")
+            raise RuntimeError("only failed, partial, or cancelled jobs can be retried")
         job = self.get(job_id)
         self._publish_progress(job)
         return job
@@ -487,11 +487,16 @@ class JobRepository:
 
     def item_terminal_status(self, job_id: str) -> str | None:
         job = self.get(job_id)
-        if job is None or job.job_type not in {"INGEST", "PARSE"}:
+        if job is None or job.job_type not in {"COMPARE", "INGEST", "PARSE"}:
             return None
         statuses = [item["status"] for item in self.file_results(job_id)]
         expected = len(job.payload.get("source_document_ids", []))
-        if not statuses or len(statuses) != expected:
+        # Custom runners may use these durable job types without the production
+        # per-file result protocol. Once a handler publishes any item result,
+        # however, completeness and terminal truth are mandatory.
+        if not statuses:
+            return None
+        if len(statuses) != expected:
             return "FAILED"
         if all(status == "FAILED" for status in statuses):
             return "FAILED"

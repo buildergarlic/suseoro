@@ -318,3 +318,134 @@ exit 0
 
 build 산출물은 검증 후 명시 경로에서 제거했다. OpenAPI 두 번 생성의 SHA256이 동일해
 generator stability도 확인했다.
+
+## 독립 검토 수정 라운드 2 (2026-08-29, 기준 `2484a6f`)
+
+### focused RED/GREEN 증거
+
+아래 8개 검토 항목을 고정하는 회귀 테스트를 제품 코드보다 먼저 추가했다. 장서 full/delta
+안전성, COMPARE/빈 ingestion terminal truth, 구체 OpenAPI schema, restore durable replay와 보안
+선행조건, v1 tenant discovery/activation, 실제 parser 기반 DLS 건강성, rejected stream byte까지
+포함한 aggregate cap, SQLite connection 오류 envelope를 각각 직접 검증한다.
+
+```text
+uv run pytest tests/test_api_contract.py tests/test_sse_jobs.py tests/test_v1_migration.py tests/test_backup_restore.py -q
+12 failed, 43 passed in 24.96s
+```
+
+RED 실패는 다음 12개 behavior probe였다.
+
+- `test_catalog_full_staging_rejects_non_full_partial_and_activation_blocked_sources`
+- `test_catalog_delta_api_applies_distinct_inclusive_registration_and_update_files`
+- `test_partial_compare_is_retryable_and_does_not_advance_workspace`
+- `test_empty_ingestion_is_failed_with_a_durable_zero_row_item`
+- `test_openapi_has_typed_json_responses_errors_and_required_mutation_headers`
+- `test_upload_aggregate_limit_counts_bytes_from_per_file_rejections`
+- `test_expected_sqlite_failures_use_structured_request_id_envelope` 두 parameter case
+- `test_v1_pending_candidates_and_legacy_history_are_tenant_scoped_and_paginated`
+- `test_inspect_selects_latest_semantically_healthy_dls_candidate`
+- `test_restore_replay_does_not_bypass_authentication_when_restored_actor_is_absent`
+- `test_restore_replay_is_durable_fingerprint_bound_and_never_bypasses_security`
+
+최초 구현 후 focused는 `6 failed, 49 passed`였다. 이 실행에서 OpenAPI missing operation
+binding, v1 import ownership, restore exception import shadowing을 확인해 원인을 수정했다. 최종
+focused GREEN은 다음과 같다.
+
+```text
+uv run pytest tests/test_api_contract.py tests/test_sse_jobs.py tests/test_v1_migration.py tests/test_backup_restore.py -q
+.......................................................                  [100%]
+55 passed in 22.14s
+```
+
+전체 suite 첫 실행은 custom COMPARE handler가 production per-file result protocol을 사용하지
+않는 기존 계약 두 건을 찾아 `2 failed, 359 passed in 57.19s`였다. item result가 한 건이라도
+발행된 production job에는 completeness를 강제하되, protocol을 사용하지 않는 custom runner에는
+기존 semantics를 보존했다. 최종 전체 GREEN:
+
+```text
+uv run pytest -q
+........................................................................ [ 19%]
+........................................................................ [ 39%]
+........................................................................ [ 59%]
+........................................................................ [ 79%]
+........................................................................ [ 99%]
+.                                                                        [100%]
+361 passed in 54.97s
+```
+
+### 수정 결정과 제품 동작
+
+- full staging은 tenant의 `CATALOG_FULL` source만 허용하며 document `SUCCESS`, non-empty,
+  모든 row `SUCCESS`, `activation_allowed`, parser/file-format binding을 모두 검사한다. 추천/증분,
+  partial/empty/blocked source는 staging하지 않는다. registration/update delta는 서로 다른 source와
+  정확한 inclusive 요청 구간을 검증해 `CatalogSyncService.apply_delta`로만 적용하고 full snapshot으로
+  오인하지 않는다.
+- `COMPARE`도 durable item result로 `PARTIAL`/`FAILED`/`SUCCEEDED`를 산출한다. partial은 retry할
+  수 있고 workspace는 `ANALYZING`에 남으며, 성공한 complete compare만 기존 guard를 통해
+  `CANDIDATE_REVIEW`로 간다. 빈 parse/ingestion은 `NO_LOGICAL_ROWS` item failure다.
+- `api/schemas.py`에 workspace/source/job/catalog/candidate/approval/procurement/receiving/audit/v1/
+  backup page와 mutation, nested error를 구체 Pydantic model로 정의했다. 모든 JSON operation ID는
+  fail-closed registry에 binding되며 새 operation이 schema 없이 추가되면 OpenAPI 생성이 실패한다.
+  `ApiErrorField`, job item 배열, required/type와 nullable 경계가 TypeScript client에서 보존된다.
+- restore replay는 session/expiry/revocation, CSRF, request ID, local confirmation을 통과한 뒤에만
+  진입한다. backup 폴더의 별도 SQLite operation journal이 operation key와 body fingerprint를
+  영속화하고 process lock/`BEGIN IMMEDIATE`로 same-key concurrent 실행과 prebackup을 한 번으로
+  제한한다. restart 뒤 replay도 manifest를 다시 검증해 결과를 복원하며 다른 body는 409다.
+- v1 migration 실행 결과는 인증 tenant가 소유하고, pending catalog candidate와 read-only legacy
+  history를 tenant-scoped stable cursor API로 조회한다. 후보 조회/활성화/update 모두 `school_id`를
+  함께 조건으로 사용해 다른 학교 ID를 알아도 볼 수 없고 활성화할 수 없다.
+- healthy DLS 선정은 readable row 수가 아니라 production `CATALOG_FULL` parser/normalization의
+  모든 row 성공과 usable title을 요구한다. arbitrary/zero/unrelated workbook은 격리하고 자연수
+  순서에서 최신 valid 파일을 고른다.
+- upload stream wrapper가 accepted/rejected file에 관계없이 실제 읽은 모든 byte를 aggregate에
+  더하고 한계를 넘는 첫 chunk에서 413으로 중단한다. 기존 per-file limit, orphan 정리, hash/
+  idempotency semantics는 유지한다.
+- 예상 가능한 `sqlite3.OperationalError`/`ProgrammingError`는 내부 오류문을 노출하지 않고 503
+  `DATABASE_UNAVAILABLE` + 동일 request ID envelope로 변환한다. 기존 role 403 경계는 유지한다.
+
+주요 변경 파일은 `api/{app,errors,schemas}.py`,
+`api/routes/{audit,procurement,sources}.py`, `backup/service.py`, `catalog/sync.py`,
+`jobs/{handlers,repository}.py`, `migration/v1.py`, generated `backend/openapi.json`과 focused
+회귀 테스트 세 파일이다.
+
+### migration/checksum 및 최종 gate 증거
+
+이 라운드는 schema migration을 추가하지 않았다. 기준 `2484a6f` 대비 migrations diff가 없으며
+기존 `0006`/`0006a`를 포함해 모두 byte-for-byte 보존했다.
+
+```text
+git diff --exit-code 2484a6f -- backend/src/suseoro/db/migrations
+exit 0
+
+0006_api_operations.sql
+ce06c0866f14a1e2932cc21ce18c80f239b97e927ac14fb6c9e32e7cb1797ebf
+
+0006a_api_hardening.sql
+4e18920aa31aa5129cc23e123681062cdde79e9329eb7b90307c27c80a021f86
+
+uv run --with ruff ruff format --check src tests
+102 files already formatted
+
+uv run --with ruff ruff check src tests
+All checks passed!
+
+uv run python -m compileall -q src tests
+exit 0
+
+uv lock --check
+Resolved 36 packages in 1ms
+
+uv build --out-dir .task7-round2-build
+Successfully built .task7-round2-build\suseoro_v2-0.1.0.tar.gz
+Successfully built .task7-round2-build\suseoro_v2-0.1.0-py3-none-any.whl
+
+uv run python -m suseoro.api.export_openapi  # twice
+first=C96090ECE9BC49BBDF34C7E155250D469D1D794494FF50C6A3A844F748AE4169
+second=C96090ECE9BC49BBDF34C7E155250D469D1D794494FF50C6A3A844F748AE4169
+
+rg dangerous execution / embedded secret patterns backend/src/suseoro
+no matches
+
+git diff --check
+exit 0
+```

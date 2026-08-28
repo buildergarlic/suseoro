@@ -12,7 +12,7 @@ import tempfile
 import threading
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
@@ -26,6 +26,10 @@ class RestoreVerificationError(RuntimeError):
 
 
 class LocalAdminConfirmationRequired(PermissionError):
+    pass
+
+
+class RestoreReplayConflict(RuntimeError):
     pass
 
 
@@ -59,6 +63,7 @@ class BackupManifest:
 class RestoreResult:
     restored_manifest: BackupManifest
     pre_restore_backup: BackupManifest
+    replayed: bool = field(default=False, compare=False)
 
 
 def _sha256(path: Path) -> str:
@@ -141,7 +146,6 @@ def select_retained_backups(
 
 class BackupService:
     _restore_lock: ClassVar[threading.RLock] = threading.RLock()
-    _restore_results: ClassVar[dict[tuple[str, str], RestoreResult]] = {}
 
     def __init__(self, database_path: Path, backups_dir: Path) -> None:
         self.database_path = Path(database_path).resolve()
@@ -303,6 +307,77 @@ class BackupService:
                 "backup migration history is future, incomplete, or altered"
             )
 
+    def _open_restore_journal(self) -> sqlite3.Connection:
+        journal = sqlite3.connect(
+            str(self.backups_dir / "restore-operations.sqlite3"),
+            timeout=60,
+        )
+        journal.row_factory = sqlite3.Row
+        journal.execute(
+            """
+            CREATE TABLE IF NOT EXISTS restore_operations (
+                operation_key TEXT PRIMARY KEY,
+                request_fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED')),
+                result_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        journal.commit()
+        return journal
+
+    def _result_from_journal(self, encoded: str) -> RestoreResult:
+        data = json.loads(encoded)
+        restored = self._load_manifest(
+            self.backups_dir / str(data["restored_manifest_file"])
+        )
+        pre_restore = self._load_manifest(
+            self.backups_dir / str(data["pre_restore_manifest_file"])
+        )
+        return RestoreResult(restored, pre_restore, replayed=True)
+
+    def _perform_restore(
+        self, manifest_path: Path, *, now: datetime | None = None
+    ) -> RestoreResult:
+        manifest = self._load_manifest(manifest_path)
+        if not manifest.verified:
+            raise RestoreVerificationError("backup is not marked verified")
+        if not hmac.compare_digest(_sha256(manifest.database_path), manifest.sha256):
+            raise RestoreVerificationError("backup checksum mismatch")
+        if manifest.database_path.stat().st_size != manifest.size_bytes:
+            raise RestoreVerificationError("backup size mismatch")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".restore-", suffix=".sqlite3", dir=self.database_path.parent
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            shutil.copyfile(manifest.database_path, temporary)
+            actual_schema = _verify_database(temporary, manifest.schema_migrations)
+            self._validate_migration_history(actual_schema)
+            upgrade = connect(temporary)
+            try:
+                apply_migrations(upgrade)
+                upgrade.commit()
+            finally:
+                upgrade.close()
+            _verify_database(temporary, self._bundled_schema())
+            with quiesce_database(self.database_path):
+                pre_restore = self.create(kind="pre_restore", now=now)
+                checkpoint = sqlite3.connect(str(self.database_path))
+                try:
+                    checkpoint.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                finally:
+                    checkpoint.close()
+                os.replace(temporary, self.database_path)
+                for suffix in ("-wal", "-shm"):
+                    Path(f"{self.database_path}{suffix}").unlink(missing_ok=True)
+            return RestoreResult(manifest, pre_restore)
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def restore(
         self,
         manifest_path: Path,
@@ -312,6 +387,7 @@ class BackupService:
         local_request: bool,
         now: datetime | None = None,
         operation_key: str | None = None,
+        request_fingerprint: str | None = None,
     ) -> RestoreResult:
         if (
             not local_request
@@ -320,49 +396,63 @@ class BackupService:
             or not hmac.compare_digest(confirmation_token, expected_confirmation_token)
         ):
             raise LocalAdminConfirmationRequired("local admin confirmation is required")
-        replay_key = (str(self.database_path), operation_key or str(uuid.uuid4()))
+        if operation_key is None:
+            with self._restore_lock:
+                return self._perform_restore(manifest_path, now=now)
+        fingerprint = request_fingerprint or operation_key
         with self._restore_lock:
-            replay = self._restore_results.get(replay_key)
-            if replay is not None:
-                return replay
-            manifest = self._load_manifest(manifest_path)
-            if not manifest.verified:
-                raise RestoreVerificationError("backup is not marked verified")
-            if not hmac.compare_digest(
-                _sha256(manifest.database_path), manifest.sha256
-            ):
-                raise RestoreVerificationError("backup checksum mismatch")
-            if manifest.database_path.stat().st_size != manifest.size_bytes:
-                raise RestoreVerificationError("backup size mismatch")
-            descriptor, temporary_name = tempfile.mkstemp(
-                prefix=".restore-", suffix=".sqlite3", dir=self.database_path.parent
-            )
-            os.close(descriptor)
-            temporary = Path(temporary_name)
+            journal = self._open_restore_journal()
             try:
-                shutil.copyfile(manifest.database_path, temporary)
-                actual_schema = _verify_database(temporary, manifest.schema_migrations)
-                self._validate_migration_history(actual_schema)
-                upgrade = connect(temporary)
-                try:
-                    apply_migrations(upgrade)
-                    upgrade.commit()
-                finally:
-                    upgrade.close()
-                _verify_database(temporary, self._bundled_schema())
-                with quiesce_database(self.database_path):
-                    pre_restore = self.create(kind="pre_restore", now=now)
-                    checkpoint = sqlite3.connect(str(self.database_path))
-                    try:
-                        checkpoint.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                    finally:
-                        checkpoint.close()
-                    os.replace(temporary, self.database_path)
-                    for suffix in ("-wal", "-shm"):
-                        Path(f"{self.database_path}{suffix}").unlink(missing_ok=True)
-                result = RestoreResult(manifest, pre_restore)
-                if operation_key is not None:
-                    self._restore_results[replay_key] = result
+                journal.execute("BEGIN IMMEDIATE")
+                existing = journal.execute(
+                    "SELECT * FROM restore_operations WHERE operation_key = ?",
+                    (operation_key,),
+                ).fetchone()
+                if existing is not None:
+                    if not hmac.compare_digest(
+                        existing["request_fingerprint"], fingerprint
+                    ):
+                        raise RestoreReplayConflict(
+                            "restore idempotency key was reused with another request"
+                        )
+                    if existing["status"] == "SUCCEEDED" and existing["result_json"]:
+                        result = self._result_from_journal(existing["result_json"])
+                        journal.commit()
+                        return result
+                timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                journal.execute(
+                    """
+                    INSERT INTO restore_operations (
+                        operation_key, request_fingerprint, status,
+                        result_json, created_at, updated_at
+                    ) VALUES (?, ?, 'RUNNING', NULL, ?, ?)
+                    ON CONFLICT (operation_key) DO UPDATE SET
+                        status = 'RUNNING', result_json = NULL,
+                        updated_at = excluded.updated_at
+                    """,
+                    (operation_key, fingerprint, timestamp, timestamp),
+                )
+                result = self._perform_restore(manifest_path, now=now)
+                encoded = json.dumps(
+                    {
+                        "restored_manifest_file": result.restored_manifest.manifest_path.name,
+                        "pre_restore_manifest_file": result.pre_restore_backup.manifest_path.name,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                journal.execute(
+                    """
+                    UPDATE restore_operations
+                    SET status = 'SUCCEEDED', result_json = ?, updated_at = ?
+                    WHERE operation_key = ? AND request_fingerprint = ?
+                    """,
+                    (encoded, timestamp, operation_key, fingerprint),
+                )
+                journal.commit()
                 return result
+            except BaseException:
+                journal.rollback()
+                raise
             finally:
-                temporary.unlink(missing_ok=True)
+                journal.close()

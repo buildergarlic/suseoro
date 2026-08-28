@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,8 @@ from fastapi.testclient import TestClient
 
 from suseoro.api.app import create_app
 from suseoro.backup.service import BackupService
+from suseoro.catalog.contracts import CatalogRecord, SourceType
+from suseoro.catalog.sync import CatalogSyncService
 from suseoro.config import Settings
 from suseoro.db.connection import connect
 from suseoro.db.migrations import apply_migrations
@@ -219,6 +223,89 @@ def _source_and_candidates(settings: Settings) -> tuple[str, list[str]]:
             candidate_ids.append(candidate_id)
         connection.commit()
     return source_document_id, candidate_ids
+
+
+def _catalog_source_document(
+    settings: Settings,
+    *,
+    role: str,
+    sha_digit: str,
+    rows: tuple[dict[str, object], ...],
+    status: str = "SUCCESS",
+    activation_allowed: bool = True,
+    window_start: str | None = None,
+    window_end: str | None = None,
+    school_id: str = SCHOOL_ID,
+) -> str:
+    file_id = str(uuid.uuid4())
+    document_id = str(uuid.uuid4())
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO source_files (
+                id, sha256, size_bytes, storage_path, original_filename,
+                detected_format, created_at
+            ) VALUES (?, ?, 10, ?, ?, 'MARC', ?)
+            """,
+            (
+                file_id,
+                sha_digit * 64,
+                f"fixture-{sha_digit}.mrc",
+                f"fixture-{sha_digit}.mrc",
+                NOW,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO source_documents (
+                id, source_file_id, school_id, role, parser_version, status,
+                detected_format, activation_allowed,
+                requested_start_local_date, requested_through_local_date,
+                created_at, completed_at
+            ) VALUES (?, ?, ?, ?, 'marc-v1', ?, 'MARC', ?, ?, ?, ?, ?)
+            """,
+            (
+                document_id,
+                file_id,
+                school_id,
+                role,
+                status,
+                int(activation_allowed),
+                window_start,
+                window_end,
+                NOW,
+                NOW,
+            ),
+        )
+        for index, row in enumerate(rows, start=1):
+            title = row.get("title")
+            registration = row.get("registration_number")
+            fields = {
+                "title": {"value": title},
+                "registration_number": {"value": registration},
+            }
+            connection.execute(
+                """
+                INSERT INTO source_rows (
+                    id, source_document_id, source_row, status, raw_json,
+                    fields_json, warnings_json, error_code, error_message,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    document_id,
+                    index,
+                    row.get("status", "SUCCESS"),
+                    json.dumps(row, ensure_ascii=False),
+                    json.dumps(fields, ensure_ascii=False),
+                    row.get("error_code"),
+                    row.get("error_message"),
+                    NOW,
+                ),
+            )
+        connection.commit()
+    return document_id
 
 
 def test_openapi_exposes_complete_stable_korean_v2_contract(data_dir: Path) -> None:
@@ -705,6 +792,152 @@ def test_delta_source_upload_requires_and_persists_exact_inclusive_window(
     assert tuple(row) == ("2026-08-18", "2026-08-28")
 
 
+def test_catalog_full_staging_rejects_non_full_partial_and_activation_blocked_sources(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    with client:
+        recommendation = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "catalog-role-rejection"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                (
+                    "files",
+                    ("recommendation.csv", "제목,저자\n추천 책,저자\n", "text/csv"),
+                )
+            ],
+        )
+    recommendation_id = recommendation.json()["items"][0]["source_id"]
+    with connect(settings.database_path) as connection:
+        assert build_job_runner(connection).run_once() is not None
+    partial_id = _catalog_source_document(
+        settings,
+        role="CATALOG_FULL",
+        sha_digit="5",
+        rows=(
+            {"registration_number": "R-1", "title": "정상 장서"},
+            {
+                "status": "ROW_ERROR",
+                "error_code": "INVALID_ROW",
+                "error_message": "제목 누락",
+            },
+        ),
+        status="ROW_ERROR",
+        activation_allowed=True,
+    )
+    blocked_id = _catalog_source_document(
+        settings,
+        role="CATALOG_FULL",
+        sha_digit="6",
+        rows=({"registration_number": "R-2", "title": "차단 장서"},),
+        status="SUCCESS",
+        activation_allowed=False,
+    )
+
+    with client:
+        wrong_role = client.post(
+            f"/api/v2/sources/{recommendation_id}/catalog/staging",
+            headers=_headers(csrf, "catalog-wrong-role-stage"),
+            json={"source_type": "DLS_EXCEL"},
+        )
+        partial_parse = client.post(
+            f"/api/v2/sources/{partial_id}/catalog/staging",
+            headers=_headers(csrf, "catalog-partial-stage"),
+            json={"source_type": "DLS_MARC"},
+        )
+        activation_blocked = client.post(
+            f"/api/v2/sources/{blocked_id}/catalog/staging",
+            headers=_headers(csrf, "catalog-activation-blocked-stage"),
+            json={"source_type": "DLS_MARC"},
+        )
+
+    assert (
+        wrong_role.status_code
+        == partial_parse.status_code
+        == activation_blocked.status_code
+        == 422
+    )
+    assert wrong_role.json()["detail"]["code"] == "CATALOG_VALIDATION_FAILED"
+    assert partial_parse.json()["detail"]["code"] == "CATALOG_VALIDATION_FAILED"
+    assert activation_blocked.json()["detail"]["code"] == "CATALOG_VALIDATION_FAILED"
+    with connect(settings.database_path) as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM catalog_versions").fetchone()[0]
+            == 0
+        )
+
+
+def test_catalog_delta_api_applies_distinct_inclusive_registration_and_update_files(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    with connect(settings.database_path) as connection:
+        CatalogSyncService(
+            connection, _allow_unbound_sources=True
+        ).import_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=SourceType.DLS_MARC,
+            records=(CatalogRecord(source_item_id="BASE-1", title="기준 장서"),),
+            confirm_anomaly=True,
+            as_of_date=date(2026, 8, 20),
+            _allow_unbound_source=True,
+        )
+        connection.commit()
+    registration_id = _catalog_source_document(
+        settings,
+        role="CATALOG_DELTA_REGISTRATION",
+        sha_digit="3",
+        rows=({"registration_number": "NEW-1", "title": "신규 장서"},),
+        window_start="2026-08-18",
+        window_end="2026-08-28",
+    )
+    update_id = _catalog_source_document(
+        settings,
+        role="CATALOG_DELTA_UPDATE",
+        sha_digit="4",
+        rows=({"registration_number": "BASE-1", "title": "갱신 장서"},),
+        window_start="2026-08-18",
+        window_end="2026-08-28",
+    )
+
+    with client:
+        applied = client.post(
+            "/api/v2/catalog/deltas",
+            headers=_headers(csrf, "apply-catalog-delta"),
+            json={
+                "source_type": "DLS_MARC",
+                "registration_source_id": registration_id,
+                "update_source_id": update_id,
+                "requested_start_local_date": "2026-08-18",
+                "requested_through_local_date": "2026-08-28",
+            },
+        )
+
+    assert applied.status_code == 200
+    assert applied.json()["status"] == "SUCCESS"
+    assert applied.json()["watermark_local_date"] == "2026-08-28"
+    with connect(settings.database_path) as connection:
+        state = connection.execute(
+            "SELECT watermark_local_date FROM catalog_source_state WHERE school_id = ?",
+            (SCHOOL_ID,),
+        ).fetchone()
+        active_titles = {
+            row["original_title"]
+            for row in connection.execute(
+                """
+                SELECT holding.original_title
+                FROM holdings holding JOIN catalog_versions version
+                  ON version.id = holding.catalog_version_id
+                WHERE version.school_id = ? AND version.status = 'ACTIVE'
+                """,
+                (SCHOOL_ID,),
+            )
+        }
+    assert state["watermark_local_date"] == "2026-08-28"
+    assert active_titles == {"갱신 장서", "신규 장서"}
+
+
 def test_saved_mapping_template_and_parser_cache_are_used_by_durable_retries(
     data_dir: Path,
 ) -> None:
@@ -820,6 +1053,100 @@ def test_ingestion_job_exposes_truthful_partial_per_file_results(
     )
 
 
+def test_partial_compare_is_retryable_and_does_not_advance_workspace(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    with connect(settings.database_path) as connection:
+        CatalogSyncService(
+            connection, _allow_unbound_sources=True
+        ).import_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=SourceType.DLS_EXCEL,
+            records=(CatalogRecord(source_item_id="BASE", title="기준"),),
+            confirm_anomaly=True,
+            _allow_unbound_source=True,
+        )
+        connection.commit()
+    with client:
+        workspace = client.post(
+            "/api/v2/workspaces",
+            headers=_headers(csrf, "partial-compare-workspace"),
+            json={"name": "부분 비교 복구"},
+        )
+        workspace_id = workspace.json()["id"]
+        uploaded = client.post(
+            f"/api/v2/workspaces/{workspace_id}/sources",
+            headers=_headers(csrf, "partial-compare-source"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                (
+                    "files",
+                    (
+                        "partial.csv",
+                        "제목,저자\n정상 추천,저자\n,누락\n",
+                        "text/csv",
+                    ),
+                )
+            ],
+        )
+    source_id = uploaded.json()["items"][0]["source_id"]
+    with connect(settings.database_path) as connection:
+        ingested = build_job_runner(connection).run_once()
+        assert ingested is not None and ingested.status == "PARTIAL"
+    with client:
+        queued = client.post(
+            f"/api/v2/workspaces/{workspace_id}/comparison-jobs",
+            headers=_headers(csrf, "partial-compare-start", version=1),
+            json={"source_document_ids": [source_id]},
+        )
+    compare_job_id = queued.json()["job_id"]
+    with connect(settings.database_path) as connection:
+        compared = build_job_runner(connection).run_once()
+    with client:
+        current_workspace = client.get(f"/api/v2/workspaces/{workspace_id}")
+        retried = client.post(
+            f"/api/v2/jobs/{compare_job_id}/retry",
+            headers=_headers(csrf, "partial-compare-retry"),
+        )
+
+    assert compared is not None and compared.status == "PARTIAL"
+    assert current_workspace.json()["status"] == "ANALYZING"
+    assert retried.status_code == 202
+    assert retried.json()["status"] == "QUEUED"
+
+
+def test_empty_ingestion_is_failed_with_a_durable_zero_row_item(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    with client:
+        uploaded = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "empty-ingestion"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("empty.csv", "제목,저자\n", "text/csv"))],
+        )
+    job_id = uploaded.json()["job_id"]
+    with connect(settings.database_path) as connection:
+        completed = build_job_runner(connection).run_once()
+    with client:
+        job = client.get(f"/api/v2/jobs/{job_id}")
+
+    assert completed is not None and completed.status == "FAILED"
+    assert job.json()["status"] == "FAILED"
+    assert job.json()["items"] == [
+        {
+            "source_document_id": uploaded.json()["items"][0]["source_id"],
+            "filename": "empty.csv",
+            "status": "FAILED",
+            "total_rows": 0,
+            "processed_rows": 0,
+            "error": {"code": "NO_LOGICAL_ROWS"},
+        }
+    ]
+
+
 def test_source_and_audit_cursor_lists_use_configured_role_and_qualified_keys(
     data_dir: Path,
 ) -> None:
@@ -892,6 +1219,74 @@ def test_openapi_has_typed_json_responses_errors_and_required_mutation_headers(
                     "X-Request-ID",
                     "Idempotency-Key",
                 } <= required_headers
+
+    components = schema["components"]["schemas"]
+
+    def resolved(response_schema: dict[str, object]) -> dict[str, object]:
+        reference = response_schema.get("$ref")
+        assert isinstance(reference, str) and reference.startswith(
+            "#/components/schemas/"
+        )
+        return components[reference.rsplit("/", 1)[-1]]
+
+    for path_item in schema["paths"].values():
+        for method, operation in path_item.items():
+            if method not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            if operation["operationId"] == "streamEvents":
+                continue
+            for status, success in operation["responses"].items():
+                if not status.startswith("2") or "content" not in success:
+                    continue
+                content = success["content"].get("application/json")
+                if content is None:
+                    continue
+                model = resolved(content["schema"])
+                assert model.get("type") == "object", operation["operationId"]
+                assert model.get("properties"), operation["operationId"]
+                assert model.get("required"), operation["operationId"]
+                assert model.get("additionalProperties") is not True
+
+    workspace_model = resolved(
+        schema["paths"]["/api/v2/workspaces"]["post"]["responses"]["201"]["content"][
+            "application/json"
+        ]["schema"]
+    )
+    assert {"id", "name", "status", "row_version"} <= set(workspace_model["required"])
+    assert workspace_model["properties"]["row_version"]["type"] == "integer"
+
+    job_model = resolved(
+        schema["paths"]["/api/v2/jobs/{job_id}"]["get"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]
+    )
+    assert {
+        "id",
+        "type",
+        "status",
+        "stage",
+        "progress_current",
+        "items",
+    } <= set(job_model["required"])
+    assert job_model["properties"]["items"]["type"] == "array"
+
+    error_detail = components["ApiErrorDetail"]
+    error_field = resolved(error_detail["properties"]["fields"]["items"])
+    assert {"field", "message"} <= set(error_field["properties"])
+
+    delta_path = schema["paths"].get("/api/v2/catalog/deltas")
+    assert delta_path is not None
+    delta_request_reference = delta_path["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"]["$ref"]
+    delta_request = components[delta_request_reference.rsplit("/", 1)[-1]]
+    assert {
+        "source_type",
+        "registration_source_id",
+        "update_source_id",
+        "requested_start_local_date",
+        "requested_through_local_date",
+    } <= set(delta_request["required"])
 
 
 def test_job_runtime_and_domain_role_errors_keep_structured_status_codes(
@@ -997,6 +1392,80 @@ def test_upload_and_bulk_payload_limits_reject_before_durable_mutation(
                 "reason": "제한",
             }
         )
+
+
+def test_upload_aggregate_limit_counts_bytes_from_per_file_rejections(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(
+        data_dir,
+        settings_kwargs={
+            "upload_max_file_bytes": 20,
+            "upload_max_batch_bytes": 30,
+        },
+    )
+    first = b"a,b\n1234567890,1234567890\n"
+    second = b"a,b\nabcdefghij,abcdefghij\n"
+    assert len(first) > 20 and len(second) > 20 and len(first) + len(second) > 30
+
+    with client:
+        response = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "aggregate-rejected-bytes"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                ("files", ("first.csv", first, "text/csv")),
+                ("files", ("second.csv", second, "text/csv")),
+            ],
+        )
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "UPLOAD_BATCH_LIMIT_EXCEEDED"
+    with connect(settings.database_path) as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM source_files").fetchone()[0] == 0
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM durable_jobs").fetchone()[0] == 0
+        )
+    assert not [path for path in settings.sources_dir.rglob("*") if path.is_file()]
+
+
+@pytest.mark.parametrize(
+    "database_error",
+    [
+        sqlite3.OperationalError("database is locked: internal path"),
+        sqlite3.ProgrammingError("closed cursor exposes internal state"),
+    ],
+)
+def test_expected_sqlite_failures_use_safe_request_id_error_envelopes(
+    data_dir: Path, database_error: sqlite3.Error
+) -> None:
+    settings = Settings(data_dir=data_dir, secure_cookies=False)
+    app = create_app(settings)
+
+    @app.get("/api/v2/test/database-failure")
+    def fail_database_probe():
+        raise database_error
+
+    client = TestClient(
+        app,
+        base_url="https://testserver",
+        raise_server_exceptions=False,
+    )
+    with client:
+        response = client.get(
+            "/api/v2/test/database-failure",
+            headers={"X-Request-ID": REQUEST_ID},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "DATABASE_UNAVAILABLE",
+        "message": "데이터베이스 작업을 완료할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+        "request_id": REQUEST_ID,
+        "fields": [],
+    }
 
 
 def test_candidate_lock_is_audited_once_with_actor_and_before_after(
@@ -1121,6 +1590,99 @@ def test_v1_admin_routes_require_local_confirmation_and_configured_path_roots(
     assert v1_candidate["status"] == "ACTIVATED"
     assert v1_candidate["catalog_version_id"]
     assert active_catalogs == 1
+
+
+def test_v1_pending_candidates_and_legacy_history_are_tenant_scoped_and_paginated(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    own_candidate_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    other_candidate_id = str(uuid.uuid4())
+    with connect(settings.database_path) as connection:
+        for index, candidate_id in enumerate((*own_candidate_ids, other_candidate_id)):
+            school_id = SCHOOL_ID if index < 2 else OTHER_SCHOOL_ID
+            connection.execute(
+                """
+                INSERT INTO v1_catalog_candidates (
+                    id, school_id, source_copy_path, sha256, row_count, created_at
+                ) VALUES (?, ?, ?, ?, 1, ?)
+                """,
+                (
+                    candidate_id,
+                    school_id,
+                    str(settings.v1_destination_root / f"candidate-{index}.xlsx"),
+                    f"{index + 1:x}" * 64,
+                    f"2026-08-2{index + 1}T00:00:00.000000Z",
+                ),
+            )
+        for index, school_id in enumerate((SCHOOL_ID, OTHER_SCHOOL_ID)):
+            connection.execute(
+                """
+                INSERT INTO legacy_v1_workspaces (
+                    id, school_id, display_name, source_copy_path, sha256, imported_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    school_id,
+                    f"이전 작업 {index}",
+                    str(settings.v1_destination_root / f"legacy-{index}.xlsx"),
+                    f"{index + 7:x}" * 64,
+                    f"2026-08-2{index + 1}T00:00:00.000000Z",
+                ),
+            )
+        connection.commit()
+    confirmation = client.app.state.local_admin_confirmation_token
+    with client:
+        first = client.get(
+            "/api/v2/v1/catalog-candidates",
+            params={"status": "PENDING_CONFIRMATION", "limit": 1},
+        )
+        cursor = first.json().get("next_cursor")
+        second = (
+            client.get(
+                "/api/v2/v1/catalog-candidates",
+                params={
+                    "status": "PENDING_CONFIRMATION",
+                    "limit": 1,
+                    "cursor": cursor,
+                },
+            )
+            if cursor
+            else first
+        )
+        history = client.get("/api/v2/v1/legacy-workspaces", params={"limit": 10})
+        cross_tenant_activation = client.post(
+            f"/api/v2/admin/v1-migration/catalog-candidates/{other_candidate_id}/activate",
+            headers={
+                **_headers(csrf, "cross-tenant-v1-candidate"),
+                "X-Local-Admin-Confirmation": confirmation,
+            },
+            json={"confirmed_row_count": 1},
+        )
+
+    assert first.status_code == second.status_code == history.status_code == 200
+    visible_candidates = {
+        first.json()["items"][0]["id"],
+        second.json()["items"][0]["id"],
+    }
+    assert visible_candidates == set(own_candidate_ids)
+    assert first.json()["next_cursor"]
+    assert history.json()["items"] == [
+        {
+            "id": history.json()["items"][0]["id"],
+            "display_name": "이전 작업 0",
+            "source_copy_path": str(settings.v1_destination_root / "legacy-0.xlsx"),
+            "sha256": "7" * 64,
+            "is_read_only": True,
+            "imported_at": "2026-08-21T00:00:00.000000Z",
+        }
+    ]
+    assert cross_tenant_activation.status_code == 404
+    assert (
+        cross_tenant_activation.json()["detail"]["code"]
+        == "V1_CATALOG_CANDIDATE_NOT_FOUND"
+    )
 
 
 def test_receiving_differences_have_independent_filtered_stable_cursor_pages(
