@@ -22,6 +22,9 @@ class ExportArtifactRuleError(WorkflowDomainError):
     pass
 
 
+_DLS_EXPORT_STATES = {"CANDIDATE_REVIEW", "CHANGES_REQUESTED"}
+
+
 class ExportArtifactService:
     def __init__(self, connection: sqlite3.Connection, artifact_root: Path) -> None:
         self.connection = connection
@@ -125,6 +128,8 @@ class ExportArtifactService:
             ).fetchone()
             if workspace is None:
                 raise ExportArtifactRuleError("WORKSPACE_NOT_FOUND")
+            if workspace["status"] not in _DLS_EXPORT_STATES:
+                raise ExportArtifactRuleError("DLS_EXPORT_STATE_INVALID")
             stored = store(self.artifact_root / school_id / workspace_id)
             created_path = stored.path
             now = format_utc(utc_now())

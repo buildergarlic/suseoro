@@ -1804,6 +1804,7 @@ def test_forward_migration_expands_formats_without_losing_b5fc8_rows(tmp_path) -
             "0004b_catalog_hardening",
             "0005_workflow",
             "0005a_workflow_contract",
+            "0005b_analysis_completion_guard",
         ):
             shutil.copy2(source, old_dir / source.name)
     connection = connect(tmp_path / "upgrade.sqlite3")
@@ -1869,7 +1870,7 @@ def test_forward_migration_expands_formats_without_losing_b5fc8_rows(tmp_path) -
         "XLSX",
     )
     assert foreign_keys == []
-    assert latest == "0005a_workflow_contract"
+    assert latest == "0005b_analysis_completion_guard"
 
 
 def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
@@ -1884,6 +1885,7 @@ def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
             "0004b_catalog_hardening",
             "0005_workflow",
             "0005a_workflow_contract",
+            "0005b_analysis_completion_guard",
         ):
             shutil.copy2(source, old_dir / source.name)
     connection = connect(tmp_path / "0731aa1-upgrade.sqlite3")
@@ -1915,7 +1917,7 @@ def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
     connection.close()
 
     assert preserved == 2
-    assert latest == "0005a_workflow_contract"
+    assert latest == "0005b_analysis_completion_guard"
     assert {
         "requested_start_local_date",
         "requested_through_local_date",

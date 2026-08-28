@@ -4,6 +4,7 @@ import hashlib
 import uuid
 from io import BytesIO
 
+import pytest
 from openpyxl import load_workbook
 from workflow_fixtures import make_workflow_fixture
 
@@ -237,4 +238,63 @@ def test_versioned_export_artifact_service_is_the_scoped_production_entrypoint(
             "SELECT COUNT(*) FROM audit_events WHERE action = 'EXPORT_ARTIFACT_CREATED'"
         ).fetchone()[0]
         == 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "allowed"),
+    [
+        ("DRAFT", False),
+        ("ANALYZING", False),
+        ("CANDIDATE_REVIEW", True),
+        ("APPROVAL_PENDING", False),
+        ("CHANGES_REQUESTED", True),
+        ("APPROVED", False),
+        ("QUOTE_REVIEW", False),
+        ("ORDER_READY", False),
+        ("ORDER_SENT", False),
+        ("RECEIVING", False),
+        ("COMPLETED", False),
+    ],
+)
+def test_dls_artifact_creation_obeys_candidate_review_state_boundary(
+    tmp_path, state: str, allowed: bool
+) -> None:
+    from suseoro.exports.service import ExportArtifactRuleError, ExportArtifactService
+
+    fixture = make_workflow_fixture(tmp_path, state=state)
+    service = ExportArtifactService(fixture.connection, tmp_path / "exports")
+    arguments = {
+        "school_id": fixture.school_id,
+        "workspace_id": fixture.workspace_id,
+        "actor_id": fixture.operator_id,
+        "actor_roles": ("OPERATOR",),
+        "workspace_version": 1,
+        "values": ["9788937464010"],
+        "reason": "DLS 복본조사",
+        "idempotency_key": f"dls-state-{state}",
+        "request_id": str(uuid.uuid4()),
+    }
+    if allowed:
+        result = service.create_dls_isbn(**arguments)
+        assert result["state"] == state
+        assert result["row_version"] == 2
+        assert result["path"].exists()
+        return
+
+    with pytest.raises(ExportArtifactRuleError) as rejected:
+        service.create_dls_isbn(**arguments)
+    assert rejected.value.code == "DLS_EXPORT_STATE_INVALID"
+    assert fixture.workspace_version() == 1
+    assert (
+        fixture.connection.execute(
+            "SELECT COUNT(*) FROM generated_artifacts"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        fixture.connection.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'EXPORT_ARTIFACT_CREATED'"
+        ).fetchone()[0]
+        == 0
     )

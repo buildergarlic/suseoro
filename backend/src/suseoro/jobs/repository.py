@@ -255,6 +255,9 @@ class JobRepository:
         )
         if updated.rowcount != 1:
             raise RuntimeError("job claim cannot transition to succeeded")
+        from suseoro.workflow.states import complete_analysis_for_succeeded_job
+
+        complete_analysis_for_succeeded_job(self.connection, job_id=job_id)
         return self.get(job_id)
 
     def mark_failed(

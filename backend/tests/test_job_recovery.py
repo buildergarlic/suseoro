@@ -383,6 +383,10 @@ def test_real_compare_handler_batches_rows_and_resumes_persisted_results(
     comparison = _comparison_api()
     now = datetime(2026, 8, 28, 7, 0, tzinfo=UTC)
     with _database(tmp_path) as connection:
+        connection.execute(
+            "UPDATE acquisition_workspaces SET status = 'ANALYZING' WHERE id = ?",
+            (WORKSPACE_ID,),
+        )
         document_id, row_ids = _source_document(connection, sha_digit="a", row_count=3)
         # Simulate the durable result left by a prior worker's completed batch.
         comparison.ComparisonService(connection).compare_documents(
@@ -428,9 +432,30 @@ def test_real_compare_handler_batches_rows_and_resumes_persisted_results(
         stages = connection.execute(
             "SELECT stage, current FROM observed_job_stages ORDER BY rowid"
         ).fetchall()
+        workspace = connection.execute(
+            "SELECT status, row_version FROM acquisition_workspaces WHERE id = ?",
+            (WORKSPACE_ID,),
+        ).fetchone()
+        audit = connection.execute(
+            """
+            SELECT actor_id, request_id, before_json, after_json
+            FROM audit_events WHERE action = 'ANALYSIS_COMPLETED'
+            """
+        ).fetchone()
 
     assert completed.status == "SUCCEEDED"
     assert stored.progress_current == stored.progress_total == 3
+    assert (workspace["status"], workspace["row_version"]) == (
+        "CANDIDATE_REVIEW",
+        2,
+    )
+    assert audit["actor_id"] is None
+    assert audit["request_id"] == job.id
+    assert json.loads(audit["before_json"]) == {
+        "row_version": 1,
+        "state": "ANALYZING",
+    }
+    assert json.loads(audit["after_json"])["state"] == "CANDIDATE_REVIEW"
     assert {row["source_row_id"] for row in results} == set(row_ids)
     assert [row["stage"] for row in stages] == [
         "STARTING",

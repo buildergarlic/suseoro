@@ -6,7 +6,7 @@ import sqlite3
 from enum import Enum
 
 from suseoro.security.sessions import format_utc, utc_now
-from suseoro.services.audit import record_audit_event
+from suseoro.services.audit import record_audit_event, record_system_audit_event
 from suseoro.services.concurrency import update_with_version
 from suseoro.workflow._common import (
     WorkflowDomainError,
@@ -55,7 +55,6 @@ _ALLOWED = frozenset(
 _BOOTSTRAP_EDGES = frozenset(
     {
         (WorkflowState.DRAFT, WorkflowState.ANALYZING),
-        (WorkflowState.ANALYZING, WorkflowState.CANDIDATE_REVIEW),
     }
 )
 
@@ -166,3 +165,79 @@ def transition_workspace(
         request_body=request_body,
         operation=mutate,
     )
+
+
+def complete_analysis_for_succeeded_job(
+    connection: sqlite3.Connection, *, job_id: str
+) -> bool:
+    """Advance an analysis only when the completed COMPARE job has durable results."""
+    completed = connection.execute(
+        """
+        SELECT j.school_id, j.workspace_id, j.updated_at,
+               w.status, w.row_version
+        FROM durable_jobs j
+        JOIN acquisition_workspaces w
+          ON w.id = j.workspace_id AND w.school_id = j.school_id
+        WHERE j.id = ?
+          AND j.job_type = 'COMPARE'
+          AND j.status = 'SUCCEEDED'
+          AND j.stage = 'COMPLETED'
+          AND j.progress_total IS NOT NULL
+          AND j.progress_current = j.progress_total
+          AND w.status = 'ANALYZING'
+          AND json_type(j.payload_json, '$.source_document_ids') = 'array'
+          AND json_array_length(j.payload_json, '$.source_document_ids') > 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM json_each(j.payload_json, '$.source_document_ids') source
+              WHERE NOT EXISTS (
+                  SELECT 1
+                  FROM comparison_file_results result
+                  WHERE result.school_id = j.school_id
+                    AND result.workspace_id = j.workspace_id
+                    AND result.source_document_id = source.value
+                    AND result.status IN ('SUCCESS', 'PARTIAL')
+              )
+          )
+        """,
+        (job_id,),
+    ).fetchone()
+    if completed is None:
+        return False
+    updated = connection.execute(
+        """
+        UPDATE acquisition_workspaces
+        SET status = 'CANDIDATE_REVIEW', row_version = row_version + 1,
+            updated_at = ?
+        WHERE id = ? AND school_id = ? AND status = 'ANALYZING'
+          AND row_version = ?
+        """,
+        (
+            completed["updated_at"],
+            completed["workspace_id"],
+            completed["school_id"],
+            completed["row_version"],
+        ),
+    )
+    if updated.rowcount != 1:
+        return False
+    before = {
+        "state": completed["status"],
+        "row_version": completed["row_version"],
+    }
+    after = {
+        "state": WorkflowState.CANDIDATE_REVIEW.value,
+        "row_version": completed["row_version"] + 1,
+        "reason": "comparison job completed",
+    }
+    record_system_audit_event(
+        connection,
+        school_id=completed["school_id"],
+        action="ANALYSIS_COMPLETED",
+        entity_type="acquisition_workspace",
+        entity_id=completed["workspace_id"],
+        before=before,
+        after=after,
+        request_id=job_id,
+    )
+    return True

@@ -237,7 +237,10 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
     old_dir = tmp_path / "c714348-migrations"
     old_dir.mkdir()
     for source in current_dir.glob("*.sql"):
-        if source.stem != "0005a_workflow_contract":
+        if source.stem not in {
+            "0005a_workflow_contract",
+            "0005b_analysis_completion_guard",
+        }:
             shutil.copy2(source, old_dir / source.name)
     fixture = make_workflow_fixture(
         tmp_path / "upgrade",
@@ -497,7 +500,7 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
         fixture.connection.execute(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
         ).fetchone()[0]
-        == "0005a_workflow_contract"
+        == "0005b_analysis_completion_guard"
     )
 
 

@@ -1016,3 +1016,62 @@ def test_order_honors_current_downward_scope_after_approval(tmp_path) -> None:
     )
     assert current_scope["status"] == "INVALID"
     assert current_scope["diagnostics"]["unmapped_quote_row_ids"]
+
+
+@pytest.mark.parametrize(
+    ("state", "allowed"),
+    [
+        ("DRAFT", False),
+        ("ANALYZING", False),
+        ("CANDIDATE_REVIEW", False),
+        ("APPROVAL_PENDING", False),
+        ("CHANGES_REQUESTED", False),
+        ("APPROVED", False),
+        ("QUOTE_REVIEW", True),
+        ("ORDER_READY", True),
+        ("ORDER_SENT", True),
+        ("RECEIVING", True),
+        ("COMPLETED", False),
+    ],
+)
+def test_order_template_save_obeys_order_preparation_state_boundary(
+    tmp_path, state: str, allowed: bool
+) -> None:
+    from suseoro.workflow.orders import OrderRuleError, OrderTemplateService
+
+    fixture = make_workflow_fixture(tmp_path, state=state)
+    service = OrderTemplateService(fixture.connection)
+    arguments = {
+        "school_id": fixture.school_id,
+        "workspace_id": fixture.workspace_id,
+        "vendor_name": "업체",
+        "columns": (("title", "도서명"), ("quantity", "수량")),
+        "actor_id": fixture.operator_id,
+        "actor_roles": ("OPERATOR",),
+        "workspace_version": 1,
+        "reason": "업체 양식 저장",
+        "idempotency_key": f"template-state-{state}",
+        "request_id": str(uuid.uuid4()),
+    }
+    if allowed:
+        result = service.save(**arguments)
+        assert result["state"] == state
+        assert result["row_version"] == 2
+        return
+
+    with pytest.raises(OrderRuleError) as rejected:
+        service.save(**arguments)
+    assert rejected.value.code == "ORDER_TEMPLATE_STATE_INVALID"
+    assert fixture.workspace_version() == 1
+    assert (
+        fixture.connection.execute(
+            "SELECT COUNT(*) FROM workflow_order_templates"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        fixture.connection.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'ORDER_TEMPLATE_SAVED'"
+        ).fetchone()[0]
+        == 0
+    )

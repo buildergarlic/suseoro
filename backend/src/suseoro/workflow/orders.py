@@ -26,6 +26,7 @@ class OrderRuleError(WorkflowDomainError):
 
 
 _ORDER_FIELDS = {field for field, _ in DEFAULT_ORDER_COLUMNS}
+_ORDER_TEMPLATE_STATES = {"QUOTE_REVIEW", "ORDER_READY", "ORDER_SENT", "RECEIVING"}
 
 
 class OrderTemplateService:
@@ -86,6 +87,8 @@ class OrderTemplateService:
             ).fetchone()
             if workspace is None:
                 raise OrderRuleError("WORKSPACE_NOT_FOUND")
+            if workspace["status"] not in _ORDER_TEMPLATE_STATES:
+                raise OrderRuleError("ORDER_TEMPLATE_STATE_INVALID")
             template_version = self.connection.execute(
                 """
                 SELECT COALESCE(MAX(template_version), 0) + 1

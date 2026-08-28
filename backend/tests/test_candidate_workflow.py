@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
 
 import pytest
@@ -119,6 +120,46 @@ def test_transition_uses_role_school_if_match_idempotency_and_audit(tmp_path) ->
             reason="타교 변경",
         )
     assert wrong_school.value.code == "WORKSPACE_NOT_FOUND"
+
+
+def test_operator_cannot_finish_system_owned_analysis(tmp_path) -> None:
+    from suseoro.workflow.states import WorkflowRuleError, transition_workspace
+
+    fixture = make_workflow_fixture(tmp_path, state="ANALYZING")
+    with pytest.raises(WorkflowRuleError) as denied:
+        transition_workspace(
+            fixture.connection,
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            actor_id=fixture.operator_id,
+            actor_roles=("OPERATOR",),
+            target="CANDIDATE_REVIEW",
+            submitted_version=1,
+            idempotency_key="operator-finish-analysis",
+            request_id=str(uuid.uuid4()),
+            reason="분석 완료 처리",
+        )
+    assert denied.value.code == "DOMAIN_TRANSITION_REQUIRED"
+    assert (
+        fixture.connection.execute(
+            "SELECT status FROM acquisition_workspaces WHERE id = ?",
+            (fixture.workspace_id,),
+        ).fetchone()["status"]
+        == "ANALYZING"
+    )
+    assert fixture.workspace_version() == 1
+
+
+def test_database_requires_successful_comparison_before_candidate_review(
+    tmp_path,
+) -> None:
+    fixture = make_workflow_fixture(tmp_path, state="ANALYZING")
+    with pytest.raises(sqlite3.IntegrityError, match="analysis completion required"):
+        fixture.connection.execute(
+            "UPDATE acquisition_workspaces SET status = 'CANDIDATE_REVIEW' WHERE id = ?",
+            (fixture.workspace_id,),
+        )
+    fixture.connection.rollback()
 
 
 def test_generic_transition_cannot_walk_business_stages_without_domain_records(
@@ -478,4 +519,76 @@ def test_bulk_candidate_decision_keeps_valid_items_when_other_targets_are_invali
             request_id=str(uuid.uuid4()),
         )
         == result
+    )
+
+
+def test_bulk_reports_malformed_items_then_applies_later_valid_target(tmp_path) -> None:
+    from suseoro.workflow.candidates import CandidateService
+
+    fixture = make_workflow_fixture(tmp_path)
+    candidate_id = fixture.add_candidate(
+        title="정상 대상",
+        author="저자",
+        isbn="9788937464010",
+        outcome="NEEDS_REVIEW",
+    )
+    service = CandidateService(fixture.connection)
+    items = [
+        None,
+        {"outcome": "CANDIDATE", "submitted_version": 1, "reason": "식별자 없음"},
+        {
+            "id": candidate_id,
+            "outcome": "CANDIDATE",
+            "submitted_version": 1,
+            "reason": "복본 아님",
+        },
+    ]
+    result = service.bulk_decide(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        items=items,
+        idempotency_key="bulk-malformed-isolation",
+        request_id=str(uuid.uuid4()),
+    )
+    assert result == [
+        {
+            "id": None,
+            "status": "INVALID",
+            "code": "INVALID_BULK_ITEM",
+            "outcome": None,
+            "row_version": None,
+        },
+        {
+            "id": None,
+            "status": "INVALID",
+            "code": "CANDIDATE_ID_REQUIRED",
+            "outcome": None,
+            "row_version": None,
+        },
+        {
+            "id": candidate_id,
+            "status": "APPLIED",
+            "outcome": "CANDIDATE",
+            "row_version": 2,
+        },
+    ]
+    assert (
+        service.bulk_decide(
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            actor_id=fixture.operator_id,
+            actor_roles=("OPERATOR",),
+            items=items,
+            idempotency_key="bulk-malformed-isolation",
+            request_id=str(uuid.uuid4()),
+        )
+        == result
+    )
+    assert (
+        fixture.connection.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'CANDIDATE_BULK_DECISION'"
+        ).fetchone()[0]
+        == 1
     )

@@ -31,7 +31,11 @@ def _is_sensitive(key: object) -> bool:
 
 def _scrub(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return {str(key): _scrub(item) for key, item in value.items() if not _is_sensitive(key)}
+        return {
+            str(key): _scrub(item)
+            for key, item in value.items()
+            if not _is_sensitive(key)
+        }
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [_scrub(item) for item in value]
     return value
@@ -40,7 +44,9 @@ def _scrub(value: Any) -> Any:
 def _json(value: Any | None) -> str | None:
     if value is None:
         return None
-    return json.dumps(_scrub(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        _scrub(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
 
 
 def record_audit_event(
@@ -75,6 +81,44 @@ def record_audit_event(
             event_id,
             school_id,
             actor_id,
+            action,
+            entity_type,
+            entity_id,
+            _json(before),
+            _json(after),
+            request_id,
+            format_utc(utc_now()),
+        ),
+    )
+    return event_id
+
+
+def record_system_audit_event(
+    connection: sqlite3.Connection,
+    *,
+    school_id: str,
+    action: str,
+    entity_type: str,
+    entity_id: str | None,
+    before: Any | None,
+    after: Any | None,
+    request_id: str,
+) -> str:
+    """Record an automatic domain mutation with a deliberately null actor."""
+    for field_name, value in (("school_id", school_id), ("request_id", request_id)):
+        if not value:
+            raise ValueError(f"{field_name} is required for an audit event")
+    event_id = str(uuid.uuid4())
+    connection.execute(
+        """
+        INSERT INTO audit_events (
+            id, school_id, actor_id, action, entity_type, entity_id,
+            before_json, after_json, request_id, occurred_at
+        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event_id,
+            school_id,
             action,
             entity_type,
             entity_id,

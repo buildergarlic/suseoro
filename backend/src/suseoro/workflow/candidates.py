@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from typing import Any
 
 from suseoro.security.sessions import format_utc, utc_now
@@ -155,7 +156,7 @@ class CandidateService:
         workspace_id: str,
         actor_id: str,
         actor_roles: tuple[str, ...],
-        items: list[dict[str, Any]],
+        items: list[object],
         idempotency_key: str,
         request_id: str,
     ) -> list[dict[str, object]]:
@@ -176,8 +177,34 @@ class CandidateService:
                 raise CandidateWorkflowError("CANDIDATE_EDIT_STATE_INVALID")
             results: list[dict[str, object]] = []
             for item in items:
-                candidate_id = str(item["id"])
-                reason = str(item.get("reason") or "").strip()
+                if not isinstance(item, Mapping):
+                    results.append(
+                        {
+                            "id": None,
+                            "status": "INVALID",
+                            "code": "INVALID_BULK_ITEM",
+                            "outcome": None,
+                            "row_version": None,
+                        }
+                    )
+                    continue
+                raw_candidate_id = item.get("id")
+                candidate_id = (
+                    str(raw_candidate_id).strip()
+                    if raw_candidate_id is not None
+                    else ""
+                )
+                if not candidate_id:
+                    results.append(
+                        {
+                            "id": None,
+                            "status": "INVALID",
+                            "code": "CANDIDATE_ID_REQUIRED",
+                            "outcome": None,
+                            "row_version": None,
+                        }
+                    )
+                    continue
                 before = self.connection.execute(
                     """
                     SELECT * FROM candidate_decisions
@@ -196,6 +223,7 @@ class CandidateService:
                     )
                     continue
                 try:
+                    reason = str(item.get("reason") or "").strip()
                     if not reason:
                         raise CandidateWorkflowError("MODIFICATION_REASON_REQUIRED")
                     changes = _validated_changes({"outcome": item.get("outcome")})
