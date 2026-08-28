@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import Response as BinaryResponse
@@ -31,10 +30,22 @@ class OrderDownloadResponse(BinaryResponse):
     media_type = ORDER_MEDIA_TYPE
 
 
+class QuoteRowInput(BaseModel):
+    isbn: str | None = None
+    title: str = ""
+    author: str = ""
+    publisher: str | None = None
+    edition: str | None = None
+    quantity: int = 1
+    unit_price: int | None = None
+    list_price: int | None = None
+    out_of_stock: bool = False
+
+
 class QuoteCreate(BaseModel):
     approval_revision_id: str
     vendor_name: str = Field(min_length=1, max_length=200)
-    rows: list[dict[str, Any]] = Field(min_length=1, max_length=5000)
+    rows: list[QuoteRowInput] = Field(min_length=1, max_length=5000)
     reason: str = Field(min_length=1, max_length=500)
 
 
@@ -45,11 +56,19 @@ class QuoteMatch(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class OrderAllocationInput(BaseModel):
+    quote_id: str
+    quote_row_id: str
+    quantity: int
+
+
 class OrderCreate(BaseModel):
     approval_revision_id: str
     quote_id: str
     reason: str = Field(min_length=1, max_length=500)
-    allocations: list[dict[str, Any]] | None = Field(default=None, max_length=5000)
+    allocations: list[OrderAllocationInput] | None = Field(
+        default=None, max_length=5000
+    )
     advanced_split_enabled: bool = False
 
 
@@ -123,7 +142,7 @@ def create_quote(
         actor_roles=user.roles,
         workspace_version=workspace_version,
         vendor_name=payload.vendor_name,
-        rows=payload.rows,
+        rows=[row.model_dump() for row in payload.rows],
         reason=payload.reason,
         idempotency_key=idempotency_key,
         request_id=request_id,
@@ -190,7 +209,11 @@ def create_order(
         reason=payload.reason,
         idempotency_key=idempotency_key,
         request_id=request_id,
-        allocations=payload.allocations,
+        allocations=(
+            [allocation.model_dump() for allocation in payload.allocations]
+            if payload.allocations is not None
+            else None
+        ),
         advanced_split_enabled=payload.advanced_split_enabled,
     )
     response.headers["ETag"] = f'"{result["row_version"]}"'

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -80,7 +81,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             version=app.version,
             routes=app.routes,
         )
-        components = schema.setdefault("components", {}).setdefault("schemas", {})
+        component_root = schema.setdefault("components", {})
+        components = component_root.setdefault("schemas", {})
+        component_root["securitySchemes"] = {
+            "SessionCookie": {
+                "type": "apiKey",
+                "in": "cookie",
+                "name": SESSION_COOKIE_NAME,
+            },
+            "CsrfCookie": {
+                "type": "apiKey",
+                "in": "cookie",
+                "name": CSRF_COOKIE_NAME,
+            },
+            "CsrfHeader": {
+                "type": "apiKey",
+                "in": "header",
+                "name": CSRF_HEADER_NAME,
+            },
+        }
 
         def install_model(model) -> None:
             generated = model.model_json_schema(
@@ -99,6 +118,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if method not in methods:
                     continue
                 operation_id = operation["operationId"]
+                if operation_id in {"getHealth", "login"}:
+                    operation["security"] = []
+                elif method in {"post", "put", "patch", "delete"}:
+                    operation["security"] = [
+                        {
+                            "SessionCookie": [],
+                            "CsrfCookie": [],
+                            "CsrfHeader": [],
+                        }
+                    ]
+                else:
+                    operation["security"] = [{"SessionCookie": []}]
                 if operation_id == "streamEvents":
                     for item in operation.get("parameters", []):
                         if item.get("name") == "Last-Event-ID":
@@ -150,6 +181,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             and item.get("name") == "If-Match"
                         ):
                             item["required"] = True
+                            item["schema"] = {"type": "string"}
                     existing = {
                         (item.get("in"), item.get("name")): item for item in parameters
                     }
@@ -171,6 +203,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             )
                         else:
                             item["required"] = True
+                            item["schema"] = {"type": "string"}
                 if (
                     path.startswith("/api/v2/admin/v1-migration")
                     or path == "/api/v2/admin/restores"
@@ -196,6 +229,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         )
                     else:
                         confirmation["required"] = True
+                        confirmation["schema"] = {"type": "string"}
+                for item in operation.get("parameters", []):
+                    if (
+                        item.get("in") == "header"
+                        and item.get("required") is True
+                        and item.get("name")
+                        in {
+                            "If-Match",
+                            "Idempotency-Key",
+                            "X-CSRF-Token",
+                            "X-Request-ID",
+                            "X-Local-Admin-Confirmation",
+                        }
+                    ):
+                        item["schema"] = {"type": "string"}
         app.openapi_schema = schema
         return schema
 
@@ -204,36 +252,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.middleware("http")
     async def csrf_boundary(request: Request, call_next):
         request_id_for(request)
-        if (
-            request.method not in {"GET", "HEAD", "OPTIONS", "TRACE"}
-            and request.url.path != "/api/v2/auth/login"
-        ):
-            session_token = request.cookies.get(SESSION_COOKIE_NAME)
-            if not session_token:
-                return error_response(
-                    request, status_code=401, code="AUTHENTICATION_REQUIRED"
-                )
-            connection = connect(application_settings.database_path)
-            try:
-                record = find_session(
-                    connection,
-                    session_token,
-                    include_revoked=request.url.path == "/api/v2/auth/logout",
-                )
-            finally:
-                connection.close()
-            if record is None:
-                return error_response(request, status_code=401, code="INVALID_SESSION")
-            if not validate_csrf_token(
-                request.cookies.get(CSRF_COOKIE_NAME),
-                request.headers.get(CSRF_HEADER_NAME),
-                record.csrf_token_digest,
+        try:
+            if (
+                request.method not in {"GET", "HEAD", "OPTIONS", "TRACE"}
+                and request.url.path != "/api/v2/auth/login"
             ):
-                return error_response(
-                    request, status_code=403, code="CSRF_VALIDATION_FAILED"
+                session_token = request.cookies.get(SESSION_COOKIE_NAME)
+                if not session_token:
+                    return error_response(
+                        request, status_code=401, code="AUTHENTICATION_REQUIRED"
+                    )
+                connection = connect(application_settings.database_path)
+                try:
+                    record = find_session(
+                        connection,
+                        session_token,
+                        include_revoked=request.url.path == "/api/v2/auth/logout",
+                    )
+                finally:
+                    connection.close()
+                if record is None:
+                    return error_response(
+                        request, status_code=401, code="INVALID_SESSION"
+                    )
+                if not validate_csrf_token(
+                    request.cookies.get(CSRF_COOKIE_NAME),
+                    request.headers.get(CSRF_HEADER_NAME),
+                    record.csrf_token_digest,
+                ):
+                    return error_response(
+                        request, status_code=403, code="CSRF_VALIDATION_FAILED"
+                    )
+                request.state.authenticated_user = authenticated_user_from_session(
+                    record
                 )
-            request.state.authenticated_user = authenticated_user_from_session(record)
-        return await call_next(request)
+            return await call_next(request)
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            return error_response(
+                request,
+                status_code=503,
+                code="DATABASE_UNAVAILABLE",
+            )
 
     @app.get(
         "/api/v2/health",

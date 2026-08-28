@@ -319,6 +319,148 @@ exit 0
 build 산출물은 검증 후 명시 경로에서 제거했다. OpenAPI 두 번 생성의 SHA256이 동일해
 generator stability도 확인했다.
 
+## 독립 검토 수정 라운드 3 (2026-08-29, 기준 `b49ad13`)
+
+### focused RED/GREEN 증거
+
+이번 라운드의 다섯 OPEN Important finding을 고정하는 회귀 테스트를 제품 코드보다 먼저
+추가했다. 증분 두 파일의 unsafe parse, OpenAPI security/nested schema/runtime nullability,
+restore의 post-swap crash, rejected upload tail aggregate, middleware DB failure를 각각 실제
+boundary에서 검증했다.
+
+```text
+uv run pytest tests/test_api_contract.py tests/test_sse_jobs.py tests/test_v1_migration.py tests/test_backup_restore.py -q --tb=short
+10 failed, 54 passed in 30.36s
+```
+
+RED 실패는 다음 열 건이었다.
+
+- `test_candidate_patch_returns_etag_and_structured_412_conflict`
+- `test_multipart_upload_streams_each_file_and_keeps_partial_success`
+- `test_delta_batch_records_partial_without_applying_or_advancing_watermark` 세 parameter case
+  (`ROW_ERROR` document, empty parse, partial rows)
+- `test_openapi_security_and_every_reachable_nested_json_schema_are_concrete`
+- `test_upload_drains_rejected_file_tails_before_deciding_aggregate_result`
+- `test_middleware_session_database_failures_use_the_request_id_json_envelope` 두 parameter case
+- `test_restore_recovers_post_swap_crash_without_second_swap_or_prebackup`
+
+TypeScript declaration 생성 검증 중 required header가 property는 required지만 nullable인 추가
+contract 결함을 발견해 assertion을 먼저 추가했고, 다음 별도 RED를 확인한 뒤 schema를 고쳤다.
+
+```text
+uv run pytest tests/test_api_contract.py::test_openapi_security_and_every_reachable_nested_json_schema_are_concrete -q --tb=short
+1 failed in 3.46s
+(If-Match schema was string | null instead of non-nullable string)
+```
+
+partial batch의 source row accounting까지 적용 여부와 일치시키는 assertion을 추가했을 때도
+네 parameter case가 모두 `APPLIED` row를 발견하는 별도 RED를 확인했다. 성공 parse row라도
+두 파일 batch가 partial이면 `ROW_ERROR/BATCH_NOT_APPLIED`로 기록하도록 수정한 뒤 direct
+service/API narrow 회귀는 `5 passed in 3.46s`였다.
+
+```text
+uv run pytest tests/test_api_contract.py::test_delta_batch_records_partial_without_applying_or_advancing_watermark -q --tb=short
+4 failed in 3.58s
+```
+
+첫 backend 전체 실행은 기존 catalog unit test가 `ROW_ERROR` document를 성공 적용하는 이전
+기대를 유지하고 있어 `1 failed, 369 passed in 68.13s`였다. 검토 ruling에 맞게 해당 direct
+service contract를 `FAILED` input/`PARTIAL_FAILURE` accounting/no watermark advance로 갱신했다.
+최종 fresh GREEN은 다음과 같다.
+
+```text
+uv run pytest tests/test_api_contract.py tests/test_sse_jobs.py tests/test_v1_migration.py tests/test_backup_restore.py -q --tb=short
+................................................................         [100%]
+64 passed in 28.04s
+
+uv run pytest -q --tb=short
+........................................................................ [ 19%]
+........................................................................ [ 38%]
+........................................................................ [ 58%]
+........................................................................ [ 77%]
+........................................................................ [ 97%]
+..........                                                               [100%]
+370 passed in 63.58s (0:01:03)
+```
+
+### 수정 결정과 제품 동작
+
+- delta source는 document `SUCCESS`, `activation_allowed`, non-empty row set, 모든 row
+  `SUCCESS`를 동시에 만족해야만 `ParserStatus.SUCCESS`와 records를 제공한다. `ROW_ERROR`,
+  empty, partial, activation-blocked 중 하나라도 있으면 두 파일 batch 전체가
+  `PARTIAL_FAILURE`로 영속화되고 active holdings/version/watermark는 바뀌지 않는다. 동일
+  idempotency key retry는 같은 partial 결과와 단일 batch를 돌려준다.
+- OpenAPI에 `SessionCookie`, `CsrfCookie`, `CsrfHeader` security scheme을 추가했다. health/login은
+  public exception이고, 보호된 read는 session cookie, mutation은 session + CSRF cookie + CSRF
+  header를 AND security로 요구한다. candidate/quote/order/delivery request와 job/approval/quote/
+  order/receiving/audit response의 arbitrary `Any` object를 concrete nested Pydantic model로
+  교체했다. accepted/rejected upload item은 `source_id`와 `error`를 항상 명시하며 nullable
+  경계가 runtime과 schema에서 같다. `ApiErrorField.message/value`는 실제 envelope처럼 optional이다.
+  모든 required contract header는 non-nullable string으로 정규화했다.
+- restore sidecar journal은 `PRAGMA synchronous=FULL`과 `RUNNING -> SWAP_READY -> SWAPPED ->
+  SUCCEEDED` phase를 사용한다. prebackup manifest, restore manifest, upgraded target SHA-256를
+  active DB swap 전에 commit한다. `os.replace` 직후 process crash가 나도 재시작은 active DB hash를
+  committed target과 비교해 성공을 확정하며 두 번째 prebackup이나 swap을 실행하지 않는다.
+- per-file limit로 거부된 upload도 남은 stream을 같은 aggregate counter로 끝까지 drain한다.
+  따라서 100 KiB 두 파일/파일 제한 1 KiB/aggregate 150 KiB 조합은 207 partial이 아니라 경계를
+  넘는 즉시 413이며 DB/idempotency/artifact orphan을 남기지 않는다.
+- CSRF/session middleware 내부의 `sqlite3.OperationalError`와 `ProgrammingError`도 endpoint error
+  handler와 같은 503 `DATABASE_UNAVAILABLE`, stable Korean message, request-ID JSON envelope로
+  반환하며 SQLite 내부 메시지나 경로를 노출하지 않는다.
+
+주요 변경 파일은 `api/{app,schemas}.py`,
+`api/routes/{audit,candidates,deliveries,procurement,sources}.py`, `backup/service.py`,
+`catalog/sync.py`, generated `backend/openapi.json`과 회귀 테스트 세 파일이다.
+
+### migration/checksum 및 최종 gate 증거
+
+이 라운드는 schema migration을 추가하지 않았다. 기준 `b49ad13` 대비 migrations diff가 없고
+기존 migration 전부를 byte-for-byte 보존했다.
+
+```text
+git diff --exit-code b49ad13 -- backend/src/suseoro/db/migrations
+exit 0
+
+0006_api_operations.sql
+CE06C0866F14A1E2932CC21CE18C80F239B97E927AC14FB6C9E32E7CB1797EBF
+
+0006a_api_hardening.sql
+4E18920AA31AA5129CC23E123681062CDDE79E9329EB7B90307C27C80A021F86
+
+uv run --with ruff ruff format --check src tests
+102 files already formatted
+
+uv run --with ruff ruff check src tests
+All checks passed!
+
+uv run python -m compileall -q src tests
+exit 0
+
+uv lock --check
+Resolved 36 packages in 2ms
+
+uv build --out-dir .task7-round3-build
+Successfully built .task7-round3-build\suseoro_v2-0.1.0.tar.gz
+Successfully built .task7-round3-build\suseoro_v2-0.1.0-py3-none-any.whl
+
+uv run python -m suseoro.api.export_openapi  # twice
+first=0F800B973F1DEED03B938E12C13C37580C1BDDF06535F892FFB9D9F7F73E0186
+second=0F800B973F1DEED03B938E12C13C37580C1BDDF06535F892FFB9D9F7F73E0186
+
+npx --yes openapi-typescript openapi.json -o .task7-round3-ts/schema.d.ts
+npx --yes --package typescript tsc --noEmit --skipLibCheck .task7-round3-ts/schema.d.ts
+openapi-typescript 7.13.0; exit 0
+required mutation header types are non-nullable
+
+dangerous execution scan: no matches
+embedded secret scan: no matches
+
+git diff --check
+exit 0
+```
+
+build와 TypeScript 임시 산출물은 검증 후 resolved backend 하위 명시 경로에서 제거했다.
+
 ## 독립 검토 수정 라운드 2 (2026-08-29, 기준 `2484a6f`)
 
 ### focused RED/GREEN 증거

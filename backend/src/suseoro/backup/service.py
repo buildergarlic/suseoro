@@ -11,7 +11,7 @@ import sqlite3
 import tempfile
 import threading
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -313,17 +313,32 @@ class BackupService:
             timeout=60,
         )
         journal.row_factory = sqlite3.Row
+        journal.execute("PRAGMA synchronous=FULL")
         journal.execute(
             """
             CREATE TABLE IF NOT EXISTS restore_operations (
                 operation_key TEXT PRIMARY KEY,
                 request_fingerprint TEXT NOT NULL,
                 status TEXT NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED')),
+                phase TEXT NOT NULL DEFAULT 'RUNNING',
                 result_json TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
             """
+        )
+        columns = {
+            str(row[1])
+            for row in journal.execute("PRAGMA table_info(restore_operations)")
+        }
+        if "phase" not in columns:
+            journal.execute(
+                "ALTER TABLE restore_operations "
+                "ADD COLUMN phase TEXT NOT NULL DEFAULT 'RUNNING'"
+            )
+        journal.execute(
+            "UPDATE restore_operations SET phase = 'SUCCEEDED' "
+            "WHERE status = 'SUCCEEDED' AND phase <> 'SUCCEEDED'"
         )
         journal.commit()
         return journal
@@ -338,8 +353,57 @@ class BackupService:
         )
         return RestoreResult(restored, pre_restore, replayed=True)
 
+    @staticmethod
+    def _encoded_restore_result(result: RestoreResult, target_sha256: str) -> str:
+        return json.dumps(
+            {
+                "restored_manifest_file": result.restored_manifest.manifest_path.name,
+                "pre_restore_manifest_file": result.pre_restore_backup.manifest_path.name,
+                "target_sha256": target_sha256,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _write_restore_phase(
+        journal: sqlite3.Connection,
+        *,
+        operation_key: str,
+        fingerprint: str,
+        phase: str,
+        result_json: str | None = None,
+        succeeded: bool = False,
+    ) -> None:
+        timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        updated = journal.execute(
+            """
+            UPDATE restore_operations
+            SET status = ?, phase = ?, result_json = COALESCE(?, result_json),
+                updated_at = ?
+            WHERE operation_key = ? AND request_fingerprint = ?
+            """,
+            (
+                "SUCCEEDED" if succeeded else "RUNNING",
+                phase,
+                result_json,
+                timestamp,
+                operation_key,
+                fingerprint,
+            ),
+        )
+        if updated.rowcount != 1:
+            journal.rollback()
+            raise RestoreReplayConflict("restore journal reservation was lost")
+        journal.commit()
+
     def _perform_restore(
-        self, manifest_path: Path, *, now: datetime | None = None
+        self,
+        manifest_path: Path,
+        *,
+        now: datetime | None = None,
+        before_swap: Callable[[RestoreResult, str], None] | None = None,
+        after_swap: Callable[[], None] | None = None,
     ) -> RestoreResult:
         manifest = self._load_manifest(manifest_path)
         if not manifest.verified:
@@ -364,6 +428,7 @@ class BackupService:
             finally:
                 upgrade.close()
             _verify_database(temporary, self._bundled_schema())
+            target_sha256 = _sha256(temporary)
             with quiesce_database(self.database_path):
                 pre_restore = self.create(kind="pre_restore", now=now)
                 checkpoint = sqlite3.connect(str(self.database_path))
@@ -371,10 +436,15 @@ class BackupService:
                     checkpoint.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 finally:
                     checkpoint.close()
+                result = RestoreResult(manifest, pre_restore)
+                if before_swap is not None:
+                    before_swap(result, target_sha256)
                 os.replace(temporary, self.database_path)
                 for suffix in ("-wal", "-shm"):
                     Path(f"{self.database_path}{suffix}").unlink(missing_ok=True)
-            return RestoreResult(manifest, pre_restore)
+                if after_swap is not None:
+                    after_swap()
+            return result
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -419,37 +489,94 @@ class BackupService:
                         result = self._result_from_journal(existing["result_json"])
                         journal.commit()
                         return result
+                    if (
+                        existing["phase"] in {"SWAP_READY", "SWAPPED"}
+                        and existing["result_json"]
+                    ):
+                        encoded = str(existing["result_json"])
+                        data = json.loads(encoded)
+                        if existing["phase"] == "SWAP_READY":
+                            expected_digest = str(data["target_sha256"])
+                            if (
+                                not self.database_path.is_file()
+                                or not hmac.compare_digest(
+                                    _sha256(self.database_path), expected_digest
+                                )
+                            ):
+                                raise RestoreVerificationError(
+                                    "restore swap state cannot be recovered safely"
+                                )
+                            self._write_restore_phase(
+                                journal,
+                                operation_key=operation_key,
+                                fingerprint=fingerprint,
+                                phase="SWAPPED",
+                                result_json=encoded,
+                            )
+                        result = self._result_from_journal(encoded)
+                        self._write_restore_phase(
+                            journal,
+                            operation_key=operation_key,
+                            fingerprint=fingerprint,
+                            phase="SUCCEEDED",
+                            result_json=encoded,
+                            succeeded=True,
+                        )
+                        return result
                 timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
                 journal.execute(
                     """
                     INSERT INTO restore_operations (
-                        operation_key, request_fingerprint, status,
+                        operation_key, request_fingerprint, status, phase,
                         result_json, created_at, updated_at
-                    ) VALUES (?, ?, 'RUNNING', NULL, ?, ?)
+                    ) VALUES (?, ?, 'RUNNING', 'RUNNING', NULL, ?, ?)
                     ON CONFLICT (operation_key) DO UPDATE SET
-                        status = 'RUNNING', result_json = NULL,
+                        status = 'RUNNING', phase = 'RUNNING', result_json = NULL,
                         updated_at = excluded.updated_at
                     """,
                     (operation_key, fingerprint, timestamp, timestamp),
                 )
-                result = self._perform_restore(manifest_path, now=now)
-                encoded = json.dumps(
-                    {
-                        "restored_manifest_file": result.restored_manifest.manifest_path.name,
-                        "pre_restore_manifest_file": result.pre_restore_backup.manifest_path.name,
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                journal.execute(
-                    """
-                    UPDATE restore_operations
-                    SET status = 'SUCCEEDED', result_json = ?, updated_at = ?
-                    WHERE operation_key = ? AND request_fingerprint = ?
-                    """,
-                    (encoded, timestamp, operation_key, fingerprint),
-                )
                 journal.commit()
+                encoded: str | None = None
+
+                def record_swap_ready(
+                    pending: RestoreResult, target_sha256: str
+                ) -> None:
+                    nonlocal encoded
+                    encoded = self._encoded_restore_result(pending, target_sha256)
+                    self._write_restore_phase(
+                        journal,
+                        operation_key=operation_key,
+                        fingerprint=fingerprint,
+                        phase="SWAP_READY",
+                        result_json=encoded,
+                    )
+
+                def record_swapped() -> None:
+                    self._write_restore_phase(
+                        journal,
+                        operation_key=operation_key,
+                        fingerprint=fingerprint,
+                        phase="SWAPPED",
+                        result_json=encoded,
+                    )
+
+                result = self._perform_restore(
+                    manifest_path,
+                    now=now,
+                    before_swap=record_swap_ready,
+                    after_swap=record_swapped,
+                )
+                if encoded is None:
+                    raise RestoreVerificationError("restore journal result is missing")
+                self._write_restore_phase(
+                    journal,
+                    operation_key=operation_key,
+                    fingerprint=fingerprint,
+                    phase="SUCCEEDED",
+                    result_json=encoded,
+                    succeeded=True,
+                )
                 return result
             except BaseException:
                 journal.rollback()

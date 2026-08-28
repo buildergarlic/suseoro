@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
@@ -24,9 +23,18 @@ from suseoro.workflow.receiving import ReceivingService
 router = APIRouter(prefix="/api/v2", tags=["deliveries"])
 
 
+class DeliveryRowInput(BaseModel):
+    isbn: str | None = None
+    title: str = ""
+    author: str | None = None
+    edition: str | None = None
+    quantity: int = 1
+    unit_price: int | None = None
+
+
 class DeliveryCreate(BaseModel):
     order_revision_id: str
-    rows: list[dict[str, Any]] = Field(min_length=1, max_length=5000)
+    rows: list[DeliveryRowInput] = Field(min_length=1, max_length=5000)
     reason: str = Field(min_length=1, max_length=500)
 
 
@@ -181,7 +189,7 @@ def create_delivery(
         actor_id=user.id,
         actor_roles=user.roles,
         workspace_version=workspace_version,
-        rows=payload.rows,
+        rows=[row.model_dump() for row in payload.rows],
         reason=payload.reason,
         idempotency_key=idempotency_key,
         request_id=request_id,

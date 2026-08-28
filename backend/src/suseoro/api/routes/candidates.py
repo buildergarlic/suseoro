@@ -7,7 +7,7 @@ import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from suseoro.api.common import decode_cursor, page
 from suseoro.api.dependencies import (
@@ -32,14 +32,31 @@ from suseoro.workflow.candidates import CandidateService
 router = APIRouter(prefix="/api/v2", tags=["candidates"])
 
 
+class CandidateChanges(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: str | None = None
+    quantity: int | None = None
+    unit_price: int | None = None
+
+
 class CandidateUpdate(BaseModel):
     workspace_id: str
-    changes: dict[str, Any]
+    changes: CandidateChanges
     reason: str = Field(min_length=1, max_length=500)
 
 
+class CandidateBulkDecision(BaseModel):
+    id: str | None = None
+    outcome: str | None = None
+    submitted_version: int | None = None
+    reason: str | None = None
+
+
 class CandidateBulkUpdate(BaseModel):
-    items: list[Any] = Field(min_length=1, max_length=1000)
+    items: list[CandidateBulkDecision | str | int | float | bool | None] = Field(
+        min_length=1, max_length=1000
+    )
 
 
 class CandidateLock(BaseModel):
@@ -128,7 +145,7 @@ def update_candidate(
         actor_id=user.id,
         actor_roles=user.roles,
         submitted_version=submitted_version,
-        changes=payload.changes,
+        changes=payload.changes.model_dump(exclude_unset=True),
         reason=payload.reason,
         idempotency_key=idempotency_key,
         request_id=request_id,
@@ -156,7 +173,12 @@ def bulk_decide(
             workspace_id=workspace_id,
             actor_id=user.id,
             actor_roles=user.roles,
-            items=payload.items,
+            items=[
+                item.model_dump(exclude_unset=True)
+                if isinstance(item, CandidateBulkDecision)
+                else item
+                for item in payload.items
+            ],
             idempotency_key=idempotency_key,
             request_id=request_id,
         )

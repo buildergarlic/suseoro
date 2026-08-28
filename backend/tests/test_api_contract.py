@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from suseoro.api.app import create_app
+from suseoro.api.schemas import ApiErrorResponse, UploadResponse
 from suseoro.backup.service import BackupService
 from suseoro.catalog.contracts import CatalogRecord, SourceType
 from suseoro.catalog.sync import CatalogSyncService
@@ -540,6 +541,7 @@ def test_candidate_patch_returns_etag_and_structured_412_conflict(
             {"field": "submitted", "value": 1},
         ],
     }
+    ApiErrorResponse.model_validate(stale.json())
 
 
 def test_multipart_upload_streams_each_file_and_keeps_partial_success(
@@ -563,6 +565,11 @@ def test_multipart_upload_streams_each_file_and_keeps_partial_success(
 
     assert response.status_code == 207
     body = response.json()
+    assert set(body["items"][0]) == {"filename", "status", "source_id", "error"}
+    assert set(body["items"][1]) == {"filename", "status", "source_id", "error"}
+    assert body["items"][0]["error"] is None
+    assert body["items"][1]["source_id"] is None
+    UploadResponse.model_validate(body)
     assert uuid.UUID(body["job_id"])
     assert [item["status"] for item in body["items"]] == ["ACCEPTED", "FAILED"]
     assert body["items"][0]["source_id"]
@@ -938,6 +945,149 @@ def test_catalog_delta_api_applies_distinct_inclusive_registration_and_update_fi
     assert active_titles == {"갱신 장서", "신규 장서"}
 
 
+@pytest.mark.parametrize(
+    ("document_status", "activation_allowed", "rows"),
+    [
+        (
+            "ROW_ERROR",
+            True,
+            (
+                {"registration_number": "NEW-1", "title": "신규 장서"},
+                {
+                    "registration_number": "BROKEN-1",
+                    "title": "오류 장서",
+                    "status": "ROW_ERROR",
+                    "error_code": "INVALID_ROW",
+                },
+            ),
+        ),
+        ("SUCCESS", True, ()),
+        (
+            "SUCCESS",
+            True,
+            (
+                {"registration_number": "NEW-1", "title": "신규 장서"},
+                {
+                    "registration_number": "BROKEN-1",
+                    "title": "오류 장서",
+                    "status": "ROW_ERROR",
+                    "error_code": "INVALID_ROW",
+                },
+            ),
+        ),
+        (
+            "SUCCESS",
+            False,
+            ({"registration_number": "NEW-1", "title": "차단 장서"},),
+        ),
+    ],
+    ids=("row-error-document", "empty", "partial-rows", "activation-blocked"),
+)
+def test_delta_batch_records_partial_without_applying_or_advancing_watermark(
+    data_dir: Path,
+    document_status: str,
+    activation_allowed: bool,
+    rows: tuple[dict[str, object], ...],
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    with connect(settings.database_path) as connection:
+        CatalogSyncService(
+            connection, _allow_unbound_sources=True
+        ).import_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=SourceType.DLS_MARC,
+            records=(CatalogRecord(source_item_id="BASE-1", title="기준 장서"),),
+            confirm_anomaly=True,
+            as_of_date=date(2026, 8, 20),
+            _allow_unbound_source=True,
+        )
+        connection.commit()
+    registration_id = _catalog_source_document(
+        settings,
+        role="CATALOG_DELTA_REGISTRATION",
+        sha_digit="7",
+        rows=rows,
+        status=document_status,
+        activation_allowed=activation_allowed,
+        window_start="2026-08-18",
+        window_end="2026-08-28",
+    )
+    update_id = _catalog_source_document(
+        settings,
+        role="CATALOG_DELTA_UPDATE",
+        sha_digit="8",
+        rows=({"registration_number": "BASE-1", "title": "갱신 금지"},),
+        window_start="2026-08-18",
+        window_end="2026-08-28",
+    )
+    request = {
+        "source_type": "DLS_MARC",
+        "registration_source_id": registration_id,
+        "update_source_id": update_id,
+        "requested_start_local_date": "2026-08-18",
+        "requested_through_local_date": "2026-08-28",
+    }
+
+    with client:
+        first = client.post(
+            "/api/v2/catalog/deltas",
+            headers=_headers(csrf, "reject-unsafe-delta"),
+            json=request,
+        )
+        replay = client.post(
+            "/api/v2/catalog/deltas",
+            headers=_headers(csrf, "reject-unsafe-delta"),
+            json=request,
+        )
+
+    assert first.status_code == replay.status_code == 200
+    assert first.json() == replay.json()
+    assert first.json()["applied"] is False
+    assert first.json()["status"] == "PARTIAL_FAILURE"
+    assert first.json()["watermark_local_date"] == "2026-08-20"
+    with connect(settings.database_path) as connection:
+        state = connection.execute(
+            "SELECT watermark_local_date FROM catalog_source_state WHERE school_id = ?",
+            (SCHOOL_ID,),
+        ).fetchone()
+        batches = connection.execute(
+            "SELECT status FROM catalog_delta_batches WHERE school_id = ?",
+            (SCHOOL_ID,),
+        ).fetchall()
+        active_titles = {
+            row["original_title"]
+            for row in connection.execute(
+                """
+                SELECT holding.original_title
+                FROM holdings holding JOIN catalog_versions version
+                  ON version.id = holding.catalog_version_id
+                WHERE version.school_id = ? AND version.status = 'ACTIVE'
+                """,
+                (SCHOOL_ID,),
+            )
+        }
+        delta_versions = connection.execute(
+            """
+            SELECT COUNT(*) FROM catalog_versions
+            WHERE school_id = ? AND import_mode = 'DELTA'
+            """,
+            (SCHOOL_ID,),
+        ).fetchone()[0]
+        applied_row_results = connection.execute(
+            """
+            SELECT COUNT(*) FROM catalog_delta_row_results result
+            JOIN catalog_delta_batches batch ON batch.id = result.batch_id
+            WHERE batch.school_id = ? AND result.outcome = 'APPLIED'
+            """,
+            (SCHOOL_ID,),
+        ).fetchone()[0]
+    assert state["watermark_local_date"] == "2026-08-20"
+    assert [row["status"] for row in batches] == ["PARTIAL_FAILURE"]
+    assert active_titles == {"기준 장서"}
+    assert delta_versions == 0
+    assert applied_row_results == 0
+
+
 def test_saved_mapping_template_and_parser_cache_are_used_by_durable_retries(
     data_dir: Path,
 ) -> None:
@@ -1289,6 +1439,107 @@ def test_openapi_has_typed_json_responses_errors_and_required_mutation_headers(
     } <= set(delta_request["required"])
 
 
+def test_openapi_security_and_every_reachable_nested_json_schema_are_concrete(
+    data_dir: Path,
+) -> None:
+    client, _, _ = _client(data_dir)
+    with client:
+        schema = client.get("/openapi.json").json()
+
+    schemes = schema["components"]["securitySchemes"]
+    assert schemes == {
+        "SessionCookie": {
+            "type": "apiKey",
+            "in": "cookie",
+            "name": "suseoro_session",
+        },
+        "CsrfCookie": {
+            "type": "apiKey",
+            "in": "cookie",
+            "name": "suseoro_csrf",
+        },
+        "CsrfHeader": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-CSRF-Token",
+        },
+    }
+    assert schema["paths"]["/api/v2/health"]["get"]["security"] == []
+    assert schema["paths"]["/api/v2/auth/login"]["post"]["security"] == []
+    assert schema["paths"]["/api/v2/workspaces"]["get"]["security"] == [
+        {"SessionCookie": []}
+    ]
+    assert schema["paths"]["/api/v2/workspaces"]["post"]["security"] == [
+        {"SessionCookie": [], "CsrfCookie": [], "CsrfHeader": []}
+    ]
+    mutation_parameters = {
+        item["name"]: item
+        for item in schema["paths"]["/api/v2/candidates/{candidate_id}"]["patch"][
+            "parameters"
+        ]
+        if item["in"] == "header"
+    }
+    for header in ("If-Match", "Idempotency-Key", "X-CSRF-Token", "X-Request-ID"):
+        assert mutation_parameters[header]["required"] is True
+        assert mutation_parameters[header]["schema"] == {"type": "string"}
+
+    components = schema["components"]["schemas"]
+    visited: set[str] = set()
+
+    def assert_concrete(node: object, location: str) -> None:
+        assert isinstance(node, dict), location
+        reference = node.get("$ref")
+        if reference is not None:
+            assert reference.startswith("#/components/schemas/"), location
+            name = reference.rsplit("/", 1)[-1]
+            if name not in visited:
+                visited.add(name)
+                assert_concrete(components[name], f"component:{name}")
+            return
+        assert node, f"untyped schema at {location}"
+        assert node.get("additionalProperties") is not True, location
+        for keyword in ("properties",):
+            for name, child in node.get(keyword, {}).items():
+                assert_concrete(child, f"{location}.{name}")
+        for keyword in ("items", "additionalProperties"):
+            child = node.get(keyword)
+            if isinstance(child, dict):
+                assert_concrete(child, f"{location}.{keyword}")
+        for keyword in ("anyOf", "oneOf", "allOf", "prefixItems"):
+            for index, child in enumerate(node.get(keyword, [])):
+                assert_concrete(child, f"{location}.{keyword}[{index}]")
+
+    for path, path_item in schema["paths"].items():
+        for method, operation in path_item.items():
+            if method not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            for parameter in operation.get("parameters", []):
+                assert_concrete(
+                    parameter["schema"],
+                    f"{method.upper()} {path} parameter {parameter['name']}",
+                )
+            for content_type, media in (
+                operation.get("requestBody", {}).get("content", {}).items()
+            ):
+                assert_concrete(
+                    media["schema"], f"{method.upper()} {path} request {content_type}"
+                )
+            for status, response in operation["responses"].items():
+                for content_type, media in response.get("content", {}).items():
+                    if operation["operationId"] == "streamEvents" and status.startswith(
+                        "2"
+                    ):
+                        continue
+                    assert_concrete(
+                        media["schema"],
+                        f"{method.upper()} {path} response {status} {content_type}",
+                    )
+
+    error_field = components["ApiErrorField"]
+    assert set(error_field["required"]) == {"field"}
+    assert {"message", "value"} <= set(error_field["properties"])
+
+
 def test_job_runtime_and_domain_role_errors_keep_structured_status_codes(
     data_dir: Path,
 ) -> None:
@@ -1431,6 +1682,46 @@ def test_upload_aggregate_limit_counts_bytes_from_per_file_rejections(
     assert not [path for path in settings.sources_dir.rglob("*") if path.is_file()]
 
 
+def test_upload_drains_rejected_file_tails_before_deciding_aggregate_result(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(
+        data_dir,
+        settings_kwargs={
+            "upload_max_file_bytes": 1_000,
+            "upload_max_batch_bytes": 150_000,
+        },
+    )
+    first = b"a" * 100_000
+    second = b"b" * 100_000
+
+    with client:
+        response = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "aggregate-rejected-tails"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                ("files", ("first.csv", first, "text/csv")),
+                ("files", ("second.csv", second, "text/csv")),
+            ],
+        )
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "UPLOAD_BATCH_LIMIT_EXCEEDED"
+    with connect(settings.database_path) as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM source_files").fetchone()[0] == 0
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM durable_jobs").fetchone()[0] == 0
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM idempotency_keys").fetchone()[0]
+            == 0
+        )
+    assert not [path for path in settings.sources_dir.rglob("*") if path.is_file()]
+
+
 @pytest.mark.parametrize(
     "database_error",
     [
@@ -1466,6 +1757,42 @@ def test_expected_sqlite_failures_use_safe_request_id_error_envelopes(
         "request_id": REQUEST_ID,
         "fields": [],
     }
+
+
+@pytest.mark.parametrize(
+    "database_error",
+    [
+        sqlite3.OperationalError("middleware database is locked: secret path"),
+        sqlite3.ProgrammingError("middleware connection was closed"),
+    ],
+)
+def test_middleware_session_database_failures_use_the_request_id_json_envelope(
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    database_error: sqlite3.Error,
+) -> None:
+    client, _, csrf = _client(data_dir)
+
+    def fail_session_connection(_path: Path):
+        raise database_error
+
+    with client:
+        monkeypatch.setattr("suseoro.api.app.connect", fail_session_connection)
+        response = client.post(
+            "/api/v2/workspaces",
+            headers=_headers(csrf, "middleware-database-failure"),
+            json={"name": "실패하면 안 되는 평문 경계"},
+        )
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json()["detail"] == {
+        "code": "DATABASE_UNAVAILABLE",
+        "message": "데이터베이스 작업을 완료할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+        "request_id": REQUEST_ID,
+        "fields": [],
+    }
+    assert "secret path" not in response.text
 
 
 def test_candidate_lock_is_audited_once_with_actor_and_before_after(

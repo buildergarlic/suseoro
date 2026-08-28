@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, ConfigDict
 
 
@@ -15,8 +13,10 @@ class PublicSchema(BaseModel):
 
 class ApiErrorField(PublicSchema):
     field: str | None
-    message: str
-    value: Any | None
+    message: str | None = None
+    value: str | int | float | bool | list[str | int | float | bool | None] | None = (
+        None
+    )
 
 
 class ApiErrorDetail(PublicSchema):
@@ -137,7 +137,13 @@ class JobFileResult(PublicSchema):
     status: str
     total_rows: int
     processed_rows: int
-    error: dict[str, Any] | None
+    error: JobError | None
+
+
+class JobError(PublicSchema):
+    type: str | None = None
+    code: str | None = None
+    message: str | None = None
 
 
 class JobResponse(PublicSchema):
@@ -148,7 +154,7 @@ class JobResponse(PublicSchema):
     stage: str
     progress_current: int
     progress_total: int
-    error: dict[str, Any] | None
+    error: JobError | None
     retry_count: int
     items: list[JobFileResult]
 
@@ -161,7 +167,7 @@ class JobCommandResponse(PublicSchema):
     stage: str
     progress_current: int
     progress_total: int
-    error: dict[str, Any] | None
+    error: JobError | None
     retry_count: int
 
 
@@ -194,10 +200,11 @@ class CandidateMutationResponse(PublicSchema):
 
 
 class CandidateBulkItem(PublicSchema):
-    id: str
+    id: str | None
     status: str
-    outcome: str
-    row_version: int
+    code: str | None = None
+    outcome: str | None
+    row_version: int | None
 
 
 class CandidateBulkResponse(PublicSchema):
@@ -224,11 +231,26 @@ class ApprovalPage(PublicSchema):
     next_cursor: str | None
 
 
+class ApprovalCandidatePayload(PublicSchema):
+    author: str
+    candidate_id: str
+    isbn13: str | None
+    quantity: int
+    title: str
+    unit_price: int
+
+
+class ApprovalPayload(PublicSchema):
+    budget_won: int
+    candidates: list[ApprovalCandidatePayload]
+    expected_total_won: int
+
+
 class ApprovalDetailResponse(PublicSchema):
     revision_id: str
     revision_number: int
     sha256: str
-    payload: dict[str, Any]
+    payload: ApprovalPayload
 
 
 class ApprovalRequestResponse(PublicSchema):
@@ -263,13 +285,34 @@ class ApprovalCommentResponse(PublicSchema):
     row_version: int
 
 
+class QuoteReconciliation(PublicSchema):
+    duplicate_isbns: list[str]
+    price_conflicts: list[str]
+
+
+class QuoteRowResponse(PublicSchema):
+    quote_row_id: str
+    approval_row_id: str | None
+    match_status: str
+    isbn13: str | None
+    title: str
+    author: str
+    publisher: str | None
+    edition: str | None
+    quantity: int
+    unit_price: int | None
+    list_price: int | None
+    out_of_stock: bool
+    line_total_won: int
+
+
 class QuoteSummary(PublicSchema):
     id: str
     vendor_name: str
     total_won: int
     budget_overrun_won: int
     requires_reapproval: bool
-    reconciliation: dict[str, Any]
+    reconciliation: QuoteReconciliation
     created_at: str
 
 
@@ -293,7 +336,8 @@ class QuoteResponse(PublicSchema):
     needs_review_count: int
     unmatched_count: int
     requires_reapproval: bool
-    reconciliation: dict[str, Any]
+    reconciliation: QuoteReconciliation
+    rows: list[QuoteRowResponse]
 
 
 class QuoteMatchResponse(PublicSchema):
@@ -302,7 +346,39 @@ class QuoteMatchResponse(PublicSchema):
     revision_number: int
     state: str
     row_version: int
-    rows: list[dict[str, Any]]
+    rows: list[QuoteRowResponse]
+
+
+class OrderArtifact(PublicSchema):
+    vendor_name: str
+    quote_id: str
+    artifact_id: str
+    path: str
+    sha256: str
+    size_bytes: int
+
+
+class OrderAllocation(PublicSchema):
+    candidate_id: str
+    quote_id: str
+    quote_row_id: str
+    vendor_name: str
+    quantity: int
+    unit_price: int
+
+
+class OrderOverAllocation(PublicSchema):
+    candidate_id: str
+    expected: int
+    allocated: int
+
+
+class OrderDiagnostics(PublicSchema):
+    missing_candidate_ids: list[str]
+    duplicate_candidate_ids: list[str]
+    over_allocations: list[OrderOverAllocation]
+    price_conflict_candidate_ids: list[str]
+    unmapped_quote_row_ids: list[str]
 
 
 class OrderResponse(PublicSchema):
@@ -315,10 +391,11 @@ class OrderResponse(PublicSchema):
     path: str | None = None
     sha256: str | None = None
     size_bytes: int | None = None
-    artifacts: list[dict[str, Any]] | None = None
-    allocations: list[dict[str, Any]] | None = None
+    artifacts: list[OrderArtifact] | None = None
+    allocations: list[OrderAllocation] | None = None
     validation_id: str | None = None
-    diagnostics: list[dict[str, Any]] | None = None
+    diagnostics: OrderDiagnostics | None = None
+    external_send_performed: bool | None = None
 
 
 class OrderSentResponse(PublicSchema):
@@ -336,6 +413,15 @@ class DeliverySummary(PublicSchema):
     sealed_at: str | None
 
 
+class ReceivingDifferenceDetails(PublicSchema):
+    expected: str | int | None = None
+    received: str | int | None = None
+    isbn13: str | None = None
+    title: str | None = None
+    scanned: int | None = None
+    scanned_quantity: int | None = None
+
+
 class ReceivingDifference(PublicSchema):
     id: str
     kind: str
@@ -343,15 +429,30 @@ class ReceivingDifference(PublicSchema):
     disposition: str | None
     active: bool
     row_version: int
-    details: dict[str, Any]
+    details: ReceivingDifferenceDetails
     created_at: str
     updated_at: str
+
+
+class DeliveryDifferenceSummary(PublicSchema):
+    id: str
+    kind: str
+    reference_key: str
+    disposition: str | None
+    row_version: int
+    details_json: str
+
+
+class DeliveryDifferenceResult(PublicSchema):
+    id: str
+    kind: str
+    details: ReceivingDifferenceDetails
 
 
 class DeliveryPage(PublicSchema):
     items: list[DeliverySummary]
     next_cursor: str | None
-    differences: list[dict[str, Any]]
+    differences: list[DeliveryDifferenceSummary]
     differences_truncated: bool
 
 
@@ -364,7 +465,7 @@ class DeliveryResponse(PublicSchema):
     delivery_batch_id: str
     delivery_number: int
     received_quantity: int
-    differences: list[dict[str, Any]]
+    differences: list[DeliveryDifferenceResult]
     state: str
     row_version: int
 
@@ -389,6 +490,10 @@ class DifferenceDispositionResponse(PublicSchema):
     row_version: int
 
 
+class AuditSnapshot(PublicSchema):
+    serialized_json: str
+
+
 class AuditEvent(PublicSchema):
     id: str
     actor_id: str | None
@@ -396,8 +501,8 @@ class AuditEvent(PublicSchema):
     action: str
     entity_type: str
     entity_id: str
-    before: dict[str, Any] | None
-    after: dict[str, Any] | None
+    before: AuditSnapshot | None
+    after: AuditSnapshot | None
     request_id: str
     occurred_at: str
 

@@ -128,8 +128,12 @@ def list_audit_events(
             "action": row["action"],
             "entity_type": row["entity_type"],
             "entity_id": row["entity_id"],
-            "before": json.loads(row["before_json"]) if row["before_json"] else None,
-            "after": json.loads(row["after_json"]) if row["after_json"] else None,
+            "before": (
+                {"serialized_json": row["before_json"]} if row["before_json"] else None
+            ),
+            "after": (
+                {"serialized_json": row["after_json"]} if row["after_json"] else None
+            ),
             "request_id": row["request_id"],
             "occurred_at": row["occurred_at"],
         }

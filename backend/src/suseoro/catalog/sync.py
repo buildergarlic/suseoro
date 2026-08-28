@@ -483,8 +483,18 @@ class CatalogSyncService:
             raise CatalogValidationError("delta parser version mismatch")
         if bool(document["activation_allowed"]) != delta_file.activation_allowed:
             raise CatalogValidationError("delta activation_allowed mismatch")
-        parser_succeeded = document["status"] in ("SUCCESS", "ROW_ERROR") and bool(
-            document["activation_allowed"]
+        rows = self.connection.execute(
+            """
+            SELECT id, status, error_code, error_message
+            FROM source_rows WHERE source_document_id = ? ORDER BY source_row, id
+            """,
+            (delta_file.source_document_id,),
+        ).fetchall()
+        parser_succeeded = (
+            document["status"] == "SUCCESS"
+            and bool(document["activation_allowed"])
+            and bool(rows)
+            and all(row["status"] == "SUCCESS" for row in rows)
         )
         expected_status = (
             ParserStatus.SUCCESS if parser_succeeded else ParserStatus.FAILED
@@ -493,13 +503,6 @@ class CatalogSyncService:
             raise CatalogValidationError(
                 "delta parser status does not match source document"
             )
-        rows = self.connection.execute(
-            """
-            SELECT id, status, error_code, error_message
-            FROM source_rows WHERE source_document_id = ? ORDER BY source_row, id
-            """,
-            (delta_file.source_document_id,),
-        ).fetchall()
         successful_ids = {row["id"] for row in rows if row["status"] == "SUCCESS"}
         record_row_ids = tuple(record.source_row_id for record in delta_file.records)
         record_ids = set(record_row_ids)
@@ -525,14 +528,30 @@ class CatalogSyncService:
         }
 
     def _persist_delta_row_accounting(
-        self, *, batch_id: str, school_id: str, role: str, binding: dict, now: datetime
+        self,
+        *,
+        batch_id: str,
+        school_id: str,
+        role: str,
+        binding: dict,
+        now: datetime,
+        apply_successes: bool = True,
     ) -> None:
         for row in binding["rows"]:
-            outcome = "APPLIED" if row["status"] == "SUCCESS" else "ROW_ERROR"
+            outcome = (
+                "APPLIED"
+                if row["status"] == "SUCCESS" and apply_successes
+                else "ROW_ERROR"
+            )
             reason = (
                 None
                 if outcome == "APPLIED"
-                else row["error_code"] or "SOURCE_ROW_ERROR"
+                else row["error_code"]
+                or (
+                    "BATCH_NOT_APPLIED"
+                    if row["status"] == "SUCCESS"
+                    else "SOURCE_ROW_ERROR"
+                )
             )
             self.connection.execute(
                 """
@@ -643,6 +662,7 @@ class CatalogSyncService:
                 role="REGISTRATION",
                 binding=registration_binding,
                 now=now,
+                apply_successes=False,
             )
             self._persist_delta_row_accounting(
                 batch_id=batch_id,
@@ -650,6 +670,7 @@ class CatalogSyncService:
                 role="UPDATE",
                 binding=update_binding,
                 now=now,
+                apply_successes=False,
             )
         state = self.repository.source_state(school_id)
         return DeltaApplyResult(

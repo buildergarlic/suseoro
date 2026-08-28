@@ -169,19 +169,27 @@ def _delta_file_for_source(
             f"delta source document role must be {expected_role.value}"
         )
     activation_allowed = bool(source["activation_allowed"])
-    parser_succeeded = source["status"] in {"SUCCESS", "ROW_ERROR"}
+    rows = connection.execute(
+        """
+        SELECT status FROM source_rows
+        WHERE source_document_id = ? ORDER BY source_row, id
+        """,
+        (source_id,),
+    ).fetchall()
+    parser_succeeded = (
+        source["status"] == "SUCCESS"
+        and activation_allowed
+        and bool(rows)
+        and all(row["status"] == "SUCCESS" for row in rows)
+    )
     return DeltaFile(
         source_document_id=source_id,
         source_file_sha256=source["sha256"],
         parser_version=source["parser_version"],
-        status=(
-            ParserStatus.SUCCESS
-            if parser_succeeded and activation_allowed
-            else ParserStatus.FAILED
-        ),
+        status=(ParserStatus.SUCCESS if parser_succeeded else ParserStatus.FAILED),
         records=(
             _catalog_records_for_source(connection, source_id, require_stable_id=True)
-            if parser_succeeded and activation_allowed
+            if parser_succeeded
             else ()
         ),
         activation_allowed=activation_allowed,
@@ -377,7 +385,12 @@ def upload_sources(
             )
             accepted_ids.append(source_id)
             items.append(
-                {"filename": filename, "status": "ACCEPTED", "source_id": source_id}
+                {
+                    "filename": filename,
+                    "status": "ACCEPTED",
+                    "source_id": source_id,
+                    "error": None,
+                }
             )
         except HTTPException:
             connection.rollback()
@@ -385,6 +398,15 @@ def upload_sources(
                 path.unlink(missing_ok=True)
             raise
         except (FileTooLarge, UnsupportedFileType, ValueError) as error:
+            if isinstance(error, FileTooLarge):
+                try:
+                    for _ in counted_chunks(upload):
+                        pass
+                except HTTPException:
+                    connection.rollback()
+                    for path in newly_published:
+                        path.unlink(missing_ok=True)
+                    raise
             code = (
                 "FILE_TOO_LARGE"
                 if isinstance(error, FileTooLarge)
@@ -395,6 +417,7 @@ def upload_sources(
                 {
                     "filename": filename,
                     "status": "FAILED",
+                    "source_id": None,
                     "error": {"code": code, "message": str(error)},
                 }
             )

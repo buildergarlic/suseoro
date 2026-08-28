@@ -48,23 +48,63 @@
             "title": "Field"
           },
           "message": {
-            "title": "Message",
-            "type": "string"
-          },
-          "value": {
             "anyOf": [
-              {},
+              {
+                "type": "string"
+              },
               {
                 "type": "null"
               }
             ],
+            "default": null,
+            "title": "Message"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
             "title": "Value"
           }
         },
         "required": [
-          "field",
-          "message",
-          "value"
+          "field"
         ],
         "title": "ApiErrorField",
         "type": "object"
@@ -129,6 +169,52 @@
           "row_version"
         ],
         "title": "ApprovalCancellationResponse",
+        "type": "object"
+      },
+      "ApprovalCandidatePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "title": "Author",
+            "type": "string"
+          },
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "isbn13": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn13"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_price": {
+            "title": "Unit Price",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "author",
+          "candidate_id",
+          "isbn13",
+          "quantity",
+          "title",
+          "unit_price"
+        ],
+        "title": "ApprovalCandidatePayload",
         "type": "object"
       },
       "ApprovalComment": {
@@ -225,9 +311,7 @@
         "additionalProperties": false,
         "properties": {
           "payload": {
-            "additionalProperties": true,
-            "title": "Payload",
-            "type": "object"
+            "$ref": "#/components/schemas/ApprovalPayload"
           },
           "revision_id": {
             "title": "Revision Id",
@@ -278,6 +362,33 @@
           "next_cursor"
         ],
         "title": "ApprovalPage",
+        "type": "object"
+      },
+      "ApprovalPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "budget_won": {
+            "title": "Budget Won",
+            "type": "integer"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalCandidatePayload"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "expected_total_won": {
+            "title": "Expected Total Won",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "budget_won",
+          "candidates",
+          "expected_total_won"
+        ],
+        "title": "ApprovalPayload",
         "type": "object"
       },
       "ApprovalRequest": {
@@ -416,26 +527,22 @@
           "after": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/AuditSnapshot"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "After"
+            ]
           },
           "before": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/AuditSnapshot"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Before"
+            ]
           },
           "entity_id": {
             "title": "Entity Id",
@@ -500,6 +607,20 @@
           "next_cursor"
         ],
         "title": "AuditEventPage",
+        "type": "object"
+      },
+      "AuditSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "serialized_json": {
+            "title": "Serialized Json",
+            "type": "string"
+          }
+        },
+        "required": [
+          "serialized_json"
+        ],
+        "title": "AuditSnapshot",
         "type": "object"
       },
       "BackupCreateRequest": {
@@ -654,20 +775,103 @@
         "title": "Body_uploadSources",
         "type": "object"
       },
+      "CandidateBulkDecision": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "submitted_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted Version"
+          }
+        },
+        "title": "CandidateBulkDecision",
+        "type": "object"
+      },
       "CandidateBulkItem": {
         "additionalProperties": false,
         "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
           "id": {
-            "title": "Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
           },
           "outcome": {
-            "title": "Outcome",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
           },
           "row_version": {
-            "title": "Row Version",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Version"
           },
           "status": {
             "title": "Status",
@@ -703,7 +907,28 @@
       "CandidateBulkUpdate": {
         "properties": {
           "items": {
-            "items": {},
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CandidateBulkDecision"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "maxItems": 1000,
             "minItems": 1,
             "title": "Items",
@@ -714,6 +939,46 @@
           "items"
         ],
         "title": "CandidateBulkUpdate",
+        "type": "object"
+      },
+      "CandidateChanges": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Price"
+          }
+        },
+        "title": "CandidateChanges",
         "type": "object"
       },
       "CandidateLock": {
@@ -926,9 +1191,7 @@
       "CandidateUpdate": {
         "properties": {
           "changes": {
-            "additionalProperties": true,
-            "title": "Changes",
-            "type": "object"
+            "$ref": "#/components/schemas/CandidateChanges"
           },
           "reason": {
             "maxLength": 500,
@@ -1190,8 +1453,7 @@
           },
           "rows": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/DeliveryRowInput"
             },
             "maxItems": 5000,
             "minItems": 1,
@@ -1207,13 +1469,81 @@
         "title": "DeliveryCreate",
         "type": "object"
       },
+      "DeliveryDifferenceResult": {
+        "additionalProperties": false,
+        "properties": {
+          "details": {
+            "$ref": "#/components/schemas/ReceivingDifferenceDetails"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "details"
+        ],
+        "title": "DeliveryDifferenceResult",
+        "type": "object"
+      },
+      "DeliveryDifferenceSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "details_json": {
+            "title": "Details Json",
+            "type": "string"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reference_key": {
+            "title": "Reference Key",
+            "type": "string"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "reference_key",
+          "disposition",
+          "row_version",
+          "details_json"
+        ],
+        "title": "DeliveryDifferenceSummary",
+        "type": "object"
+      },
       "DeliveryPage": {
         "additionalProperties": false,
         "properties": {
           "differences": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/DeliveryDifferenceSummary"
             },
             "title": "Differences",
             "type": "array"
@@ -1263,8 +1593,7 @@
           },
           "differences": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/DeliveryDifferenceResult"
             },
             "title": "Differences",
             "type": "array"
@@ -1291,6 +1620,66 @@
           "row_version"
         ],
         "title": "DeliveryResponse",
+        "type": "object"
+      },
+      "DeliveryRowInput": {
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "edition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edition"
+          },
+          "isbn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn"
+          },
+          "quantity": {
+            "default": 1,
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Price"
+          }
+        },
+        "title": "DeliveryRowInput",
         "type": "object"
       },
       "DeliverySummary": {
@@ -1439,14 +1828,12 @@
           "error": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/JobError"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Error"
+            ]
           },
           "id": {
             "title": "Id",
@@ -1502,20 +1889,61 @@
         "title": "JobCommandResponse",
         "type": "object"
       },
+      "JobError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Type"
+          }
+        },
+        "title": "JobError",
+        "type": "object"
+      },
       "JobFileResult": {
         "additionalProperties": false,
         "properties": {
           "error": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/JobError"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Error"
+            ]
           },
           "filename": {
             "title": "Filename",
@@ -1555,14 +1983,12 @@
           "error": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/JobError"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Error"
+            ]
           },
           "id": {
             "title": "Id",
@@ -1717,6 +2143,107 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "OrderAllocation": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "quote_id": {
+            "title": "Quote Id",
+            "type": "string"
+          },
+          "quote_row_id": {
+            "title": "Quote Row Id",
+            "type": "string"
+          },
+          "unit_price": {
+            "title": "Unit Price",
+            "type": "integer"
+          },
+          "vendor_name": {
+            "title": "Vendor Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "quote_id",
+          "quote_row_id",
+          "vendor_name",
+          "quantity",
+          "unit_price"
+        ],
+        "title": "OrderAllocation",
+        "type": "object"
+      },
+      "OrderAllocationInput": {
+        "properties": {
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "quote_id": {
+            "title": "Quote Id",
+            "type": "string"
+          },
+          "quote_row_id": {
+            "title": "Quote Row Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "quote_id",
+          "quote_row_id",
+          "quantity"
+        ],
+        "title": "OrderAllocationInput",
+        "type": "object"
+      },
+      "OrderArtifact": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "quote_id": {
+            "title": "Quote Id",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "vendor_name": {
+            "title": "Vendor Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vendor_name",
+          "quote_id",
+          "artifact_id",
+          "path",
+          "sha256",
+          "size_bytes"
+        ],
+        "title": "OrderArtifact",
+        "type": "object"
+      },
       "OrderCreate": {
         "properties": {
           "advanced_split_enabled": {
@@ -1728,8 +2255,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/OrderAllocationInput"
                 },
                 "maxItems": 5000,
                 "type": "array"
@@ -1763,6 +2289,79 @@
         "title": "OrderCreate",
         "type": "object"
       },
+      "OrderDiagnostics": {
+        "additionalProperties": false,
+        "properties": {
+          "duplicate_candidate_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Duplicate Candidate Ids",
+            "type": "array"
+          },
+          "missing_candidate_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Candidate Ids",
+            "type": "array"
+          },
+          "over_allocations": {
+            "items": {
+              "$ref": "#/components/schemas/OrderOverAllocation"
+            },
+            "title": "Over Allocations",
+            "type": "array"
+          },
+          "price_conflict_candidate_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Price Conflict Candidate Ids",
+            "type": "array"
+          },
+          "unmapped_quote_row_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unmapped Quote Row Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "missing_candidate_ids",
+          "duplicate_candidate_ids",
+          "over_allocations",
+          "price_conflict_candidate_ids",
+          "unmapped_quote_row_ids"
+        ],
+        "title": "OrderDiagnostics",
+        "type": "object"
+      },
+      "OrderOverAllocation": {
+        "additionalProperties": false,
+        "properties": {
+          "allocated": {
+            "title": "Allocated",
+            "type": "integer"
+          },
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "expected": {
+            "title": "Expected",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "expected",
+          "allocated"
+        ],
+        "title": "OrderOverAllocation",
+        "type": "object"
+      },
       "OrderResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1770,8 +2369,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/OrderAllocation"
                 },
                 "type": "array"
               },
@@ -1798,8 +2396,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/OrderArtifact"
                 },
                 "type": "array"
               },
@@ -1813,18 +2410,25 @@
           "diagnostics": {
             "anyOf": [
               {
-                "items": {
-                  "additionalProperties": true,
-                  "type": "object"
-                },
-                "type": "array"
+                "$ref": "#/components/schemas/OrderDiagnostics"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "external_send_performed": {
+            "anyOf": [
+              {
+                "type": "boolean"
               },
               {
                 "type": "null"
               }
             ],
             "default": null,
-            "title": "Diagnostics"
+            "title": "External Send Performed"
           },
           "path": {
             "anyOf": [
@@ -2001,8 +2605,7 @@
           },
           "rows": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/QuoteRowInput"
             },
             "maxItems": 5000,
             "minItems": 1,
@@ -2076,8 +2679,7 @@
           },
           "rows": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/QuoteRowResponse"
             },
             "title": "Rows",
             "type": "array"
@@ -2127,6 +2729,31 @@
         "title": "QuotePage",
         "type": "object"
       },
+      "QuoteReconciliation": {
+        "additionalProperties": false,
+        "properties": {
+          "duplicate_isbns": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Duplicate Isbns",
+            "type": "array"
+          },
+          "price_conflicts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Price Conflicts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "duplicate_isbns",
+          "price_conflicts"
+        ],
+        "title": "QuoteReconciliation",
+        "type": "object"
+      },
       "QuoteResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2163,9 +2790,7 @@
             "type": "string"
           },
           "reconciliation": {
-            "additionalProperties": true,
-            "title": "Reconciliation",
-            "type": "object"
+            "$ref": "#/components/schemas/QuoteReconciliation"
           },
           "requires_reapproval": {
             "title": "Requires Reapproval",
@@ -2178,6 +2803,13 @@
           "row_version": {
             "title": "Row Version",
             "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/QuoteRowResponse"
+            },
+            "title": "Rows",
+            "type": "array"
           },
           "state": {
             "title": "State",
@@ -2207,9 +2839,207 @@
           "needs_review_count",
           "unmatched_count",
           "requires_reapproval",
-          "reconciliation"
+          "reconciliation",
+          "rows"
         ],
         "title": "QuoteResponse",
+        "type": "object"
+      },
+      "QuoteRowInput": {
+        "properties": {
+          "author": {
+            "default": "",
+            "title": "Author",
+            "type": "string"
+          },
+          "edition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edition"
+          },
+          "isbn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn"
+          },
+          "list_price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "List Price"
+          },
+          "out_of_stock": {
+            "default": false,
+            "title": "Out Of Stock",
+            "type": "boolean"
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
+          },
+          "quantity": {
+            "default": 1,
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Price"
+          }
+        },
+        "title": "QuoteRowInput",
+        "type": "object"
+      },
+      "QuoteRowResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_row_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Row Id"
+          },
+          "author": {
+            "title": "Author",
+            "type": "string"
+          },
+          "edition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edition"
+          },
+          "isbn13": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn13"
+          },
+          "line_total_won": {
+            "title": "Line Total Won",
+            "type": "integer"
+          },
+          "list_price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "List Price"
+          },
+          "match_status": {
+            "title": "Match Status",
+            "type": "string"
+          },
+          "out_of_stock": {
+            "title": "Out Of Stock",
+            "type": "boolean"
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "quote_row_id": {
+            "title": "Quote Row Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Price"
+          }
+        },
+        "required": [
+          "quote_row_id",
+          "approval_row_id",
+          "match_status",
+          "isbn13",
+          "title",
+          "author",
+          "publisher",
+          "edition",
+          "quantity",
+          "unit_price",
+          "list_price",
+          "out_of_stock",
+          "line_total_won"
+        ],
+        "title": "QuoteRowResponse",
         "type": "object"
       },
       "QuoteSummary": {
@@ -2228,9 +3058,7 @@
             "type": "string"
           },
           "reconciliation": {
-            "additionalProperties": true,
-            "title": "Reconciliation",
-            "type": "object"
+            "$ref": "#/components/schemas/QuoteReconciliation"
           },
           "requires_reapproval": {
             "title": "Requires Reapproval",
@@ -2284,9 +3112,7 @@
             "type": "string"
           },
           "details": {
-            "additionalProperties": true,
-            "title": "Details",
-            "type": "object"
+            "$ref": "#/components/schemas/ReceivingDifferenceDetails"
           },
           "disposition": {
             "anyOf": [
@@ -2332,6 +3158,91 @@
           "updated_at"
         ],
         "title": "ReceivingDifference",
+        "type": "object"
+      },
+      "ReceivingDifferenceDetails": {
+        "additionalProperties": false,
+        "properties": {
+          "expected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected"
+          },
+          "isbn13": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Isbn13"
+          },
+          "received": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Received"
+          },
+          "scanned": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scanned"
+          },
+          "scanned_quantity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scanned Quantity"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          }
+        },
+        "title": "ReceivingDifferenceDetails",
         "type": "object"
       },
       "ReceivingDifferencePage": {
@@ -3266,6 +4177,23 @@
         "title": "WorkspaceTransition",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "CsrfCookie": {
+        "in": "cookie",
+        "name": "suseoro_csrf",
+        "type": "apiKey"
+      },
+      "CsrfHeader": {
+        "in": "header",
+        "name": "X-CSRF-Token",
+        "type": "apiKey"
+      },
+      "SessionCookie": {
+        "in": "cookie",
+        "name": "suseoro_session",
+        "type": "apiKey"
+      }
     }
   },
   "info": {
@@ -3435,6 +4363,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "데이터베이스 백업 목록 보기",
         "tags": [
           "operations"
@@ -3448,15 +4381,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -3464,15 +4389,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -3623,6 +4540,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "데이터베이스 백업 만들기",
         "tags": [
           "operations"
@@ -3638,15 +4562,7 @@
             "name": "X-Local-Admin-Confirmation",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Local-Admin-Confirmation"
+              "type": "string"
             }
           },
           {
@@ -3654,15 +4570,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -3670,15 +4578,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -3813,6 +4713,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "검증된 데이터베이스 백업 복원하기",
         "tags": [
           "operations"
@@ -3837,15 +4744,7 @@
             "name": "X-Local-Admin-Confirmation",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Local-Admin-Confirmation"
+              "type": "string"
             }
           },
           {
@@ -3853,15 +4752,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -3869,15 +4760,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -4028,6 +4911,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "이전 장서 후보 건수 확인 후 활성화하기",
         "tags": [
           "operations"
@@ -4043,15 +4933,7 @@
             "name": "X-Local-Admin-Confirmation",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Local-Admin-Confirmation"
+              "type": "string"
             }
           },
           {
@@ -4220,6 +5102,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "이전 버전 자료 점검하기",
         "tags": [
           "operations"
@@ -4235,15 +5124,7 @@
             "name": "X-Local-Admin-Confirmation",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Local-Admin-Confirmation"
+              "type": "string"
             }
           },
           {
@@ -4251,15 +5132,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -4267,15 +5140,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -4426,6 +5291,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "이전 버전 자료 복사하기",
         "tags": [
           "operations"
@@ -4574,6 +5446,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "승인 버전 자세히 보기",
         "tags": [
           "approvals"
@@ -4598,15 +5475,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -4614,15 +5483,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -4630,15 +5491,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -4789,6 +5642,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "승인 요청 승인하기",
         "tags": [
           "approvals"
@@ -4813,15 +5673,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -4829,15 +5681,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -4845,15 +5689,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -5004,6 +5840,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "승인 요청 취소하기",
         "tags": [
           "approvals"
@@ -5028,15 +5871,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -5044,15 +5879,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -5060,15 +5887,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -5219,6 +6038,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "승인 요청에 수정 요청 보내기",
         "tags": [
           "approvals"
@@ -5243,15 +6069,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -5259,15 +6077,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -5275,15 +6085,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -5434,6 +6236,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "승인 버전에 의견 남기기",
         "tags": [
           "approvals"
@@ -5633,6 +6442,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "변경 이력 보기",
         "tags": [
           "operations"
@@ -5798,6 +6612,7 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [],
         "summary": "로그인하기",
         "tags": [
           "authentication"
@@ -5813,15 +6628,7 @@
             "name": "X-CSRF-Token",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
+              "type": "string"
             }
           },
           {
@@ -5829,15 +6636,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -5845,15 +6644,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -5994,6 +6785,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "로그아웃하기",
         "tags": [
           "authentication"
@@ -6133,6 +6931,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "현재 사용자 확인하기",
         "tags": [
           "authentication"
@@ -6157,15 +6960,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -6173,15 +6968,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -6189,15 +6976,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -6348,6 +7127,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "수서 후보 자동 저장하기",
         "tags": [
           "candidates"
@@ -6372,15 +7158,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -6388,15 +7166,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -6547,6 +7317,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "수서 후보 편집 잠금 잡기",
         "tags": [
           "candidates"
@@ -6562,15 +7339,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -6578,15 +7347,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -6737,6 +7498,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "DLS 장서 증분 두 파일 적용하기",
         "tags": [
           "sources"
@@ -6761,15 +7529,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -6777,15 +7537,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -6936,6 +7688,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "검증된 장서 버전 활성화하기",
         "tags": [
           "sources"
@@ -7098,6 +7857,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "실시간 작업 알림 받기",
         "tags": [
           "events"
@@ -7219,6 +7983,7 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [],
         "summary": "서버 상태 확인하기"
       }
     },
@@ -7364,6 +8129,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "자료 처리 진행률 보기",
         "tags": [
           "sources"
@@ -7388,15 +8158,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -7404,15 +8166,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -7553,6 +8307,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "자료 처리 취소 요청하기",
         "tags": [
           "sources"
@@ -7577,15 +8338,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -7593,15 +8346,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -7742,6 +8487,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "실패한 자료 처리 다시 시도하기",
         "tags": [
           "sources"
@@ -7890,6 +8642,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "발주 파일 내려받기",
         "tags": [
           "procurement"
@@ -7914,15 +8671,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -7930,15 +8679,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -7946,15 +8687,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -8105,6 +8838,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "발주 파일 전달 확인하기",
         "tags": [
           "procurement"
@@ -8129,15 +8869,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -8145,15 +8877,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -8161,15 +8885,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -8320,6 +9036,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "견적 행 직접 연결하기",
         "tags": [
           "procurement"
@@ -8344,15 +9067,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -8360,15 +9075,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -8376,15 +9083,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -8535,6 +9234,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "납품 차이 처리 방침 정하기",
         "tags": [
           "deliveries"
@@ -8559,15 +9265,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -8575,15 +9273,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -8734,6 +9424,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "ISBN 바코드 검수 기록하기",
         "tags": [
           "deliveries"
@@ -8882,6 +9579,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "원본 자료 상태 보기",
         "tags": [
           "sources"
@@ -8906,15 +9608,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -8922,15 +9616,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -9081,6 +9767,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "장서 후보 버전 검증하기",
         "tags": [
           "sources"
@@ -9105,15 +9798,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -9121,15 +9806,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -9137,15 +9814,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -9296,6 +9965,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "자료 역할과 열 연결 저장하기",
         "tags": [
           "sources"
@@ -9320,15 +9996,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -9336,15 +10004,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -9485,6 +10145,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "자료 분석 시작하기",
         "tags": [
           "sources"
@@ -9673,6 +10340,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "이전 장서 활성화 후보 보기",
         "tags": [
           "operations"
@@ -9840,6 +10512,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "읽기 전용 이전 작업 보기",
         "tags": [
           "operations"
@@ -10023,6 +10700,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "수서 작업 목록 보기",
         "tags": [
           "workspaces"
@@ -10036,15 +10718,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -10052,15 +10726,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -10211,6 +10877,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "수서 작업 만들기",
         "tags": [
           "workspaces"
@@ -10359,6 +11032,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "수서 작업 자세히 보기",
         "tags": [
           "workspaces"
@@ -10535,6 +11213,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "승인 버전 목록 보기",
         "tags": [
           "approvals"
@@ -10559,15 +11242,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -10575,15 +11250,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -10591,15 +11258,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -10750,6 +11409,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "후보 목록 승인 요청하기",
         "tags": [
           "approvals"
@@ -10959,6 +11625,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "수서 후보 목록 보기",
         "tags": [
           "candidates"
@@ -10983,15 +11654,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -10999,15 +11662,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -11158,6 +11813,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "여러 수서 후보 한꺼번에 결정하기",
         "tags": [
           "candidates"
@@ -11182,15 +11844,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -11198,15 +11852,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -11214,15 +11860,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -11373,6 +12011,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "장서와 추천 자료 비교 시작하기",
         "tags": [
           "workspaces"
@@ -11549,6 +12194,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "납품과 차이 목록 보기",
         "tags": [
           "deliveries"
@@ -11571,15 +12221,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -11587,15 +12229,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -11603,15 +12237,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -11762,6 +12388,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "납품명세서 비교하기",
         "tags": [
           "deliveries"
@@ -11786,15 +12419,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -11802,15 +12427,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -11818,15 +12435,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -11977,6 +12586,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "발주 파일 만들기",
         "tags": [
           "procurement"
@@ -12153,6 +12769,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "견적 비교 목록 보기",
         "tags": [
           "procurement"
@@ -12175,15 +12796,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -12191,15 +12804,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -12207,15 +12812,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -12366,6 +12963,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "업체 견적 비교하기",
         "tags": [
           "procurement"
@@ -12390,15 +12994,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -12406,15 +13002,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -12422,15 +13010,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -12581,6 +13161,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "납품 검수 완료하기",
         "tags": [
           "deliveries"
@@ -12806,6 +13393,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "납품 차이 목록을 조건별로 보기",
         "tags": [
           "deliveries"
@@ -12830,15 +13422,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -12846,15 +13430,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -12862,15 +13438,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -13021,6 +13589,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "바코드 검수 시작하기",
         "tags": [
           "deliveries"
@@ -13213,6 +13788,11 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "원본 자료 목록 보기",
         "tags": [
           "sources"
@@ -13235,15 +13815,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -13251,15 +13823,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -13410,6 +13974,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "원본 자료 올리기",
         "tags": [
           "sources"
@@ -13434,15 +14005,7 @@
             "name": "If-Match",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "If-Match"
+              "type": "string"
             }
           },
           {
@@ -13450,15 +14013,7 @@
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
+              "type": "string"
             }
           },
           {
@@ -13466,15 +14021,7 @@
             "name": "X-Request-ID",
             "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Request-Id"
+              "type": "string"
             }
           },
           {
@@ -13625,6 +14172,13 @@
             "description": "구조화된 오류"
           }
         },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
         "summary": "수서 작업 단계 바꾸기",
         "tags": [
           "workspaces"

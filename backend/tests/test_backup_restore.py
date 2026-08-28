@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
@@ -472,6 +473,77 @@ def test_concurrent_restore_operation_replays_once_and_makes_one_prebackup(
 
     assert first == second
     assert len([item for item in service.list() if item.kind == "pre_restore"]) == 1
+
+
+def test_restore_recovers_post_swap_crash_without_second_swap_or_prebackup(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _database(data_dir)
+    service = BackupService(settings.database_path, settings.backups_dir)
+    manifest = service.create(kind="daily")
+    with connect(settings.database_path) as connection:
+        connection.execute("UPDATE schools SET name = '교체 전 학교'")
+        connection.commit()
+
+    real_replace = os.replace
+
+    class SimulatedProcessCrash(BaseException):
+        pass
+
+    def replace_then_crash(source, destination):
+        real_replace(source, destination)
+        if Path(destination).resolve() == settings.database_path.resolve():
+            raise SimulatedProcessCrash
+
+    monkeypatch.setattr(os, "replace", replace_then_crash)
+    with pytest.raises(SimulatedProcessCrash):
+        service.restore(
+            manifest.manifest_path,
+            confirmation_token="secret",
+            expected_confirmation_token="secret",
+            local_request=True,
+            operation_key="post-swap-crash",
+            request_fingerprint="manifest-a",
+        )
+
+    assert _school_name(settings) == "백업 학교"
+    assert len([item for item in service.list() if item.kind == "pre_restore"]) == 1
+    journal_path = settings.backups_dir / "restore-operations.sqlite3"
+    with sqlite3.connect(journal_path) as journal:
+        journal.row_factory = sqlite3.Row
+        pending = journal.execute(
+            "SELECT status, phase, result_json FROM restore_operations WHERE operation_key = ?",
+            ("post-swap-crash",),
+        ).fetchone()
+    assert pending is not None
+    assert pending["status"] == "RUNNING"
+    assert pending["phase"] in {"SWAP_READY", "SWAPPED"}
+    assert pending["result_json"] is not None
+
+    def forbid_second_database_swap(source, destination):
+        if Path(destination).resolve() == settings.database_path.resolve():
+            raise AssertionError("restored database must not be swapped twice")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", forbid_second_database_swap)
+    replay = BackupService(settings.database_path, settings.backups_dir).restore(
+        manifest.manifest_path,
+        confirmation_token="secret",
+        expected_confirmation_token="secret",
+        local_request=True,
+        operation_key="post-swap-crash",
+        request_fingerprint="manifest-a",
+    )
+
+    assert replay.replayed is True
+    assert replay.restored_manifest.id == manifest.id
+    assert len([item for item in service.list() if item.kind == "pre_restore"]) == 1
+    with sqlite3.connect(journal_path) as journal:
+        completed = journal.execute(
+            "SELECT status, phase FROM restore_operations WHERE operation_key = ?",
+            ("post-swap-crash",),
+        ).fetchone()
+    assert completed == ("SUCCEEDED", "SUCCEEDED")
 
 
 def test_backup_kind_is_constrained_and_retention_is_enforced_on_create(

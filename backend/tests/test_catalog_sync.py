@@ -1395,7 +1395,7 @@ def test_full_snapshot_requires_a_valid_bound_source_document(tmp_path) -> None:
     assert active.source_type == api.SourceType.DLS_MARC
 
 
-def test_marc_delta_binds_distinct_roles_and_persists_window_and_row_accounting(
+def test_marc_delta_row_error_records_partial_without_advancing_catalog(
     tmp_path,
 ) -> None:
     """Caller-provided hashes without role-bound documents cannot prove delta lineage."""
@@ -1422,7 +1422,7 @@ def test_marc_delta_binds_distinct_roles_and_persists_window_and_row_accounting(
             confirm_anomaly=True,
             as_of_date=date(2026, 8, 20),
         )
-        registration_doc, registration_rows = _marc_document(
+        registration_doc, _registration_rows = _marc_document(
             connection,
             role="CATALOG_DELTA_REGISTRATION",
             sha_digit="3",
@@ -1446,14 +1446,8 @@ def test_marc_delta_binds_distinct_roles_and_persists_window_and_row_accounting(
             source_document_id=registration_doc,
             source_file_sha256="3" * 64,
             parser_version="marc-v1",
-            status=api.ParserStatus.SUCCESS,
-            records=(
-                api.CatalogRecord(
-                    source_item_id="NEW-001",
-                    source_row_id=registration_rows[0],
-                    title="신규",
-                ),
-            ),
+            status=api.ParserStatus.FAILED,
+            records=(),
             window=api.DeltaWindow(date(2026, 8, 18), date(2026, 8, 28)),
         )
         update = api.DeltaFile(
@@ -1479,8 +1473,8 @@ def test_marc_delta_binds_distinct_roles_and_persists_window_and_row_accounting(
             through_date=date(2026, 8, 28),
         )
         batch = connection.execute(
-            "SELECT * FROM catalog_delta_batches WHERE catalog_version_id = ?",
-            (result.catalog_version_id,),
+            "SELECT * FROM catalog_delta_batches WHERE registration_source_document_id = ?",
+            (registration_doc,),
         ).fetchone()
         row_results = connection.execute(
             """
@@ -1491,13 +1485,19 @@ def test_marc_delta_binds_distinct_roles_and_persists_window_and_row_accounting(
             (batch["id"],),
         ).fetchall()
 
+    assert result.applied is False
+    assert result.status == "PARTIAL_FAILURE"
+    assert result.watermark_local_date == date(2026, 8, 20)
+    assert batch["status"] == "PARTIAL_FAILURE"
+    assert batch["catalog_version_id"] is None
     assert batch["registration_source_document_id"] == registration_doc
     assert batch["update_source_document_id"] == update_doc
     assert batch["requested_start_local_date"] == "2026-08-18"
     assert batch["through_local_date"] == "2026-08-28"
     assert len(row_results) == 3
-    assert {row["outcome"] for row in row_results} == {"APPLIED", "ROW_ERROR"}
+    assert {row["outcome"] for row in row_results} == {"ROW_ERROR"}
     assert any(row["reason"] == "MARC_RECORD_DAMAGED" for row in row_results)
+    assert any(row["reason"] == "BATCH_NOT_APPLIED" for row in row_results)
 
 
 def test_bound_delta_documents_and_contracts_must_agree_with_inclusive_window(
