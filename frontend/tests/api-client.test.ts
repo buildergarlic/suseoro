@@ -203,6 +203,40 @@ describe("생성 계약을 쓰는 API client", () => {
     expect(current.data.quantity).toBe(5);
   });
 
+  test("수정 파일 업로드는 교체할 source identity와 원래 역할을 multipart 계약에 보존한다", async () => {
+    let outgoing: FormData | undefined;
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      outgoing = init?.body as FormData;
+      return new Response(
+        JSON.stringify({
+          job_id: "job-replacement",
+          items: [
+            {
+              filename: "corrected.csv",
+              status: "ACCEPTED",
+              source_id: "source-corrected",
+              error: null,
+              repair_obligation_id: null,
+              repair_generation: null,
+            },
+          ],
+        }),
+        { status: 202, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const client = createApiClient();
+
+    await client.uploadSources("workspace-1", {
+      files: [new File(["제목\n수정한 책\n"], "corrected.csv", { type: "text/csv" })],
+      role: "PURCHASE_REQUEST",
+      replacementSourceId: "source-original",
+    });
+
+    expect(outgoing?.get("role")).toBe("PURCHASE_REQUEST");
+    expect(outgoing?.get("replacement_source_document_id")).toBe("source-original");
+    expect((outgoing?.get("files") as File).name).toBe("corrected.csv");
+  });
+
   const retryableActions: Array<{
     name: string;
     run: (client: SuseoroApi) => Promise<unknown>;
@@ -425,5 +459,67 @@ describe("생성 계약을 쓰는 API client", () => {
 
     expect(keys[0]).toBeTruthy();
     expect(keys[1]).toBe(keys[0]);
+  });
+
+  test("동시 요청의 읽을 수 없는 응답은 뒤늦은 성공이 와도 해당 caller 재시도 key를 보존한다", async () => {
+    const keys: string[] = [];
+    let malformed!: (response: Response) => void;
+    let success!: (response: Response) => void;
+    let call = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(
+        typeof input === "string" ? new URL(input, window.location.href) : input,
+        init,
+      );
+      keys.push(request.headers.get("Idempotency-Key") ?? "");
+      call += 1;
+      if (call === 1) return await new Promise<Response>((resolve) => (malformed = resolve));
+      if (call === 2) return await new Promise<Response>((resolve) => (success = resolve));
+      return new Response(
+        JSON.stringify({
+          id: "candidate-1",
+          outcome: "CANDIDATE",
+          quantity: call === 4 ? 3 : 2,
+          unit_price: 12_000,
+          row_version: call === 4 ? 3 : 2,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const client = createApiClient();
+    const input = {
+      workspace_id: "workspace-1",
+      changes: { quantity: 2 },
+      reason: "동시 저장",
+    };
+    const first = client.updateCandidate("candidate-1", input, 1);
+    const second = client.updateCandidate("candidate-1", input, 1);
+    await vi.waitFor(() => expect(keys).toHaveLength(2));
+    malformed(new Response("truncated", { status: 200 }));
+    await expect(first).rejects.toThrow("서버 응답");
+    success(
+      new Response(
+        JSON.stringify({
+          id: "candidate-1",
+          outcome: "CANDIDATE",
+          quantity: 2,
+          unit_price: 12_000,
+          row_version: 2,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    await second;
+    await client.updateCandidate("candidate-1", input, 1);
+    await client.updateCandidate(
+      "candidate-1",
+      { ...input, changes: { quantity: 3 } },
+      2,
+    );
+
+    expect(keys[0]).toBeTruthy();
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).toBe(keys[0]);
+    expect(keys[3]).not.toBe(keys[2]);
   });
 });

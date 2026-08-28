@@ -275,7 +275,7 @@ def test_0007_adds_replay_metadata_without_rewriting_populated_claims(
     old_dir = tmp_path / "0006b-migrations"
     old_dir.mkdir()
     for source in current_dir.glob("*.sql"):
-        if source.stem != "0007_upload_replay_metadata":
+        if source.stem < "0007_upload_replay_metadata":
             shutil.copy2(source, old_dir / source.name)
 
     database_path = tmp_path / "0006b-upgrade.sqlite3"
@@ -317,7 +317,11 @@ def test_0007_adds_replay_metadata_without_rewriting_populated_claims(
         )
         connection.commit()
 
-        apply_migrations(connection, current_dir)
+        shutil.copy2(
+            current_dir / "0007_upload_replay_metadata.sql",
+            old_dir / "0007_upload_replay_metadata.sql",
+        )
+        apply_migrations(connection, old_dir)
         preserved = connection.execute(
             """
             SELECT id, request_fingerprint, generation, state, response_status,
@@ -342,6 +346,155 @@ def test_0007_adds_replay_metadata_without_rewriting_populated_claims(
     assert latest == "0007_upload_replay_metadata"
 
 
+def test_0008_preserves_populated_0007_claims_and_backfills_failed_items(
+    tmp_path: Path,
+) -> None:
+    """The repair migration must preserve claims and surface old unresolved failures."""
+    current_dir = Path(__file__).parents[1] / "src" / "suseoro" / "db" / "migrations"
+    old_dir = tmp_path / "0007-migrations"
+    old_dir.mkdir()
+    for source in current_dir.glob("*.sql"):
+        if source.stem < "0008_upload_repair_and_job_discovery":
+            shutil.copy2(source, old_dir / source.name)
+
+    database_path = tmp_path / "0007-upgrade.sqlite3"
+    school_id = VALID_UUID
+    actor_id = "550e8400-e29b-41d4-a716-446655440001"
+    workspace_id = "550e8400-e29b-41d4-a716-446655440002"
+    claim_id = "550e8400-e29b-41d4-a716-446655440003"
+    legacy_key_id = "550e8400-e29b-41d4-a716-446655440004"
+    route = f"POST /api/v2/workspaces/{workspace_id}/sources"
+    response_body = (
+        '{"items":[{"error":{"code":"UNSUPPORTED_FILE_TYPE",'
+        '"message":"unsupported"},"filename":"legacy.exe",'
+        '"source_id":null,"status":"FAILED"}],"job_id":null}'
+    )
+    metadata = '{"files":[{"filename":"legacy.exe","size_bytes":9}]}'
+    with connect(database_path) as connection:
+        apply_migrations(connection, old_dir)
+        connection.execute(
+            "INSERT INTO schools (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (school_id, "업그레이드 학교", VALID_TIMESTAMP, VALID_TIMESTAMP),
+        )
+        connection.execute(
+            """
+            INSERT INTO users (
+                id, school_id, username, password_hash, display_name,
+                created_at, updated_at
+            ) VALUES (?, ?, 'operator', 'hash', '담당자', ?, ?)
+            """,
+            (actor_id, school_id, VALID_TIMESTAMP, VALID_TIMESTAMP),
+        )
+        connection.execute(
+            """
+            INSERT INTO acquisition_workspaces (
+                id, school_id, name, status, created_by_user_id, created_at, updated_at
+            ) VALUES (?, ?, '이전 부분 접수', 'DRAFT', ?, ?, ?)
+            """,
+            (
+                workspace_id,
+                school_id,
+                actor_id,
+                VALID_TIMESTAMP,
+                VALID_TIMESTAMP,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO upload_idempotency_claims (
+                id, school_id, actor_id, route, key, request_fingerprint,
+                generation, state, response_status, response_body,
+                created_at, updated_at, request_metadata_json
+            ) VALUES (?, ?, ?, ?, 'legacy-partial', ?, 1, 'COMPLETED', 207,
+                      ?, ?, ?, ?)
+            """,
+            (
+                claim_id,
+                school_id,
+                actor_id,
+                route,
+                "a" * 64,
+                response_body,
+                VALID_TIMESTAMP,
+                VALID_TIMESTAMP,
+                metadata,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO idempotency_keys (
+                id, school_id, actor_id, route, key, request_hash,
+                response_status, response_body, created_at
+            ) VALUES (?, ?, ?, ?, 'pre-claim-partial', ?, 207, ?, ?)
+            """,
+            (
+                legacy_key_id,
+                school_id,
+                actor_id,
+                route,
+                "b" * 64,
+                response_body.replace("legacy.exe", "pre-claim.exe"),
+                VALID_TIMESTAMP,
+            ),
+        )
+        connection.commit()
+
+        apply_migrations(connection, current_dir)
+        preserved = connection.execute(
+            "SELECT response_status, response_body, request_metadata_json FROM upload_idempotency_claims WHERE id = ?",
+            (claim_id,),
+        ).fetchone()
+        obligation = connection.execute(
+            """
+            SELECT workspace_id, upload_claim_id, filename, content_sha256,
+                   size_bytes, role, status, error_code
+            FROM upload_repair_obligations WHERE upload_claim_id = ?
+            """,
+            (claim_id,),
+        ).fetchone()
+        legacy_obligation = connection.execute(
+            """
+            SELECT workspace_id, upload_claim_id, filename, role, status, error_code
+            FROM upload_repair_obligations WHERE filename = 'pre-claim.exe'
+            """
+        ).fetchone()
+        foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+        latest = connection.execute(
+            "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
+        ).fetchone()[0]
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "DELETE FROM upload_idempotency_claims WHERE id = ?", (claim_id,)
+            )
+        connection.rollback()
+
+    assert dict(preserved) == {
+        "response_status": 207,
+        "response_body": response_body,
+        "request_metadata_json": metadata,
+    }
+    assert dict(obligation) == {
+        "workspace_id": workspace_id,
+        "upload_claim_id": claim_id,
+        "filename": "legacy.exe",
+        "content_sha256": None,
+        "size_bytes": 9,
+        "role": "UNKNOWN",
+        "status": "UNRESOLVED",
+        "error_code": "UNSUPPORTED_FILE_TYPE",
+    }
+    assert dict(legacy_obligation) == {
+        "workspace_id": workspace_id,
+        "upload_claim_id": None,
+        "filename": "pre-claim.exe",
+        "role": "UNKNOWN",
+        "status": "UNRESOLVED",
+        "error_code": "UNSUPPORTED_FILE_TYPE",
+    }
+    assert foreign_keys == []
+    assert latest == "0010_source_correction_recovery"
+
+
 def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
     tmp_path: Path,
 ) -> None:
@@ -353,6 +506,9 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
             "0005a_workflow_contract",
             "0005b_analysis_completion_guard",
             "0006_api_operations",
+            "0008_upload_repair_and_job_discovery",
+            "0009_repair_recovery_transition",
+            "0010_source_correction_recovery",
         }:
             shutil.copy2(source, old_dir / source.name)
     fixture = make_workflow_fixture(
@@ -613,7 +769,7 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
         fixture.connection.execute(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
         ).fetchone()[0]
-        == "0007_upload_replay_metadata"
+        == "0010_source_correction_recovery"
     )
 
 

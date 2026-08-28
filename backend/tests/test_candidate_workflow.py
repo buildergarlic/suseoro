@@ -613,6 +613,72 @@ def test_bulk_candidate_decision_keeps_valid_items_when_other_targets_are_invali
     )
 
 
+def test_bulk_candidate_decision_isolates_edit_lock_failures_per_item(tmp_path) -> None:
+    """One leased row must not roll back valid decisions before or after it."""
+    from suseoro.services.concurrency import acquire_edit_lock
+    from suseoro.workflow.candidates import CandidateService
+
+    fixture = make_workflow_fixture(tmp_path)
+    first_id = fixture.add_candidate(
+        title="앞 행", author="저자", isbn=None, outcome="NEEDS_REVIEW"
+    )
+    locked_id = fixture.add_candidate(
+        title="잠긴 행", author="저자", isbn=None, outcome="NEEDS_REVIEW"
+    )
+    last_id = fixture.add_candidate(
+        title="뒤 행", author="저자", isbn=None, outcome="NEEDS_REVIEW"
+    )
+    _lock_candidates(fixture, first_id, last_id)
+    acquire_edit_lock(
+        fixture.connection,
+        school_id=fixture.school_id,
+        entity_type="candidate_decision",
+        entity_id=locked_id,
+        actor_id=fixture.dual_role_id,
+    )
+    fixture.connection.commit()
+
+    results = CandidateService(fixture.connection).bulk_decide(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        items=[
+            {
+                "id": first_id,
+                "submitted_version": 1,
+                "outcome": "CANDIDATE",
+                "reason": "정상",
+            },
+            {
+                "id": locked_id,
+                "submitted_version": 1,
+                "outcome": "EXCLUDED",
+                "reason": "잠김",
+            },
+            {
+                "id": last_id,
+                "submitted_version": 1,
+                "outcome": "CANDIDATE",
+                "reason": "정상",
+            },
+        ],
+        idempotency_key="bulk-lock-isolation",
+        request_id=str(uuid.uuid4()),
+    )
+
+    assert [item["status"] for item in results] == ["APPLIED", "LOCKED", "APPLIED"]
+    assert results[1]["code"] == "EDIT_LOCKED"
+    rows = fixture.connection.execute(
+        "SELECT id, outcome, row_version FROM candidate_decisions WHERE id IN (?, ?, ?) ORDER BY id",
+        (first_id, locked_id, last_id),
+    ).fetchall()
+    by_id = {row["id"]: (row["outcome"], row["row_version"]) for row in rows}
+    assert by_id[first_id] == ("CANDIDATE", 2)
+    assert by_id[locked_id] == ("NEEDS_REVIEW", 1)
+    assert by_id[last_id] == ("CANDIDATE", 2)
+
+
 def test_bulk_reports_malformed_items_then_applies_later_valid_target(tmp_path) -> None:
     from suseoro.workflow.candidates import CandidateService
 

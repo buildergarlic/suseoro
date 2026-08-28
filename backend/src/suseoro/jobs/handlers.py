@@ -32,6 +32,7 @@ from suseoro.ingestion.templates import MappingTemplateStore, ParserCache
 from suseoro.jobs.public_errors import parser_failure
 from suseoro.jobs.repository import JobRepository
 from suseoro.jobs.runner import DurableJobRunner, JobContext
+from suseoro.jobs.source_snapshot import source_rows_snapshot
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.comparison import ComparisonService
 
@@ -587,8 +588,8 @@ def build_ingestion_handler(
                     claim_generation=context.job.claim_generation,
                     source_document_id=document_id,
                     status="FAILED",
-                    total_rows=1,
-                    processed_rows=1,
+                    total_rows=0,
+                    processed_rows=0,
                     error=public_error,
                 )
                 connection.execute(
@@ -630,6 +631,83 @@ def build_comparison_handler(
         if not isinstance(raw_document_ids, list) or not raw_document_ids:
             raise ValueError("COMPARE payload requires source_document_ids")
         document_ids = tuple(dict.fromkeys(str(value) for value in raw_document_ids))
+        raw_snapshot = payload.get("source_snapshot")
+        if payload.get("source_snapshot_version") != 1 or not isinstance(
+            raw_snapshot, list
+        ):
+            raise RuntimeError("comparison source snapshot is required")
+        snapshot_by_id = {
+            str(item.get("id")): item
+            for item in raw_snapshot
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+
+        def validate_snapshot(document_id: str | None = None) -> None:
+            selected = (
+                (document_id,)
+                if document_id is not None
+                else tuple(snapshot_by_id.keys())
+            )
+            if set(snapshot_by_id) != set(document_ids):
+                raise RuntimeError("comparison source snapshot is incomplete")
+            for selected_id in selected:
+                current = connection.execute(
+                    """
+                    SELECT document.status, document.parser_version,
+                           document.completed_at, file.sha256,
+                           COALESCE(config.role, document.role) AS role,
+                           COALESCE(config.row_version, 1) AS config_version,
+                           COALESCE(config.mapping_json, '{}') AS mapping_json
+                    FROM source_documents document
+                    JOIN source_files file ON file.id = document.source_file_id
+                    JOIN workspace_sources link
+                      ON link.source_document_id = document.id
+                    LEFT JOIN source_configurations config
+                      ON config.source_document_id = document.id
+                    WHERE document.id = ? AND document.school_id = ?
+                      AND link.workspace_id = ? AND link.school_id = ?
+                    """,
+                    (
+                        selected_id,
+                        context.job.school_id,
+                        context.job.workspace_id,
+                        context.job.school_id,
+                    ),
+                ).fetchone()
+                expected = snapshot_by_id[selected_id]
+                if current is None:
+                    raise RuntimeError("comparison source snapshot changed")
+                row_count, row_digest = source_rows_snapshot(connection, selected_id)
+                if (
+                    any(
+                        current[name] != expected.get(name)
+                        for name in (
+                            "status",
+                            "sha256",
+                            "role",
+                            "config_version",
+                            "mapping_json",
+                            "parser_version",
+                            "completed_at",
+                        )
+                    )
+                    or row_count != expected.get("row_count")
+                    or row_digest != expected.get("row_digest")
+                ):
+                    raise RuntimeError("comparison source snapshot changed")
+            catalog_id = payload.get("catalog_version_id")
+            if catalog_id is not None:
+                active = connection.execute(
+                    """
+                    SELECT 1 FROM catalog_versions
+                    WHERE id = ? AND school_id = ? AND status = 'ACTIVE'
+                    """,
+                    (catalog_id, context.job.school_id),
+                ).fetchone()
+                if active is None:
+                    raise RuntimeError("comparison catalog snapshot changed")
+
+        validate_snapshot()
         placeholders = ",".join("?" for _ in document_ids)
         documents = connection.execute(
             f"""
@@ -659,6 +737,7 @@ def build_comparison_handler(
         for file_batch in _chunks(document_ids, file_batch_size):
             context.ensure_not_cancelled()
             for document_id in file_batch:
+                validate_snapshot(document_id)
                 processed_batch = False
                 while True:
                     rows = connection.execute(
@@ -679,6 +758,7 @@ def build_comparison_handler(
                     row_ids = tuple(row["id"] for row in rows)
                     if not row_ids:
                         if not processed_batch:
+                            validate_snapshot(document_id)
                             service.compare_documents(
                                 school_id=context.job.school_id,
                                 workspace_id=context.job.workspace_id,
@@ -693,6 +773,7 @@ def build_comparison_handler(
                             # concurrently requested cancellation.
                             connection.commit()
                         break
+                    validate_snapshot(document_id)
                     service.compare_documents(
                         school_id=context.job.school_id,
                         workspace_id=context.job.workspace_id,

@@ -22,6 +22,7 @@ _MESSAGES = {
     "IDEMPOTENCY_KEY_REUSED": "같은 중복 요청 방지 키가 다른 요청에 사용되었습니다.",
     "IDEMPOTENCY_REQUEST_IN_PROGRESS": "같은 요청이 처리 중입니다.",
     "UPLOAD_RESERVATION_BUSY": "다른 저장 작업이 진행 중입니다. 잠시 후 다시 시도해 주세요.",
+    "LEGACY_UPLOAD_IDENTITY_UNVERIFIABLE": "이전 업로드는 파일 내용을 안전하게 확인할 수 없습니다. 새 작업으로 다시 올려 주세요.",
     "REQUEST_ID_REQUIRED": "요청 식별자가 필요합니다.",
     "INVALID_REQUEST_ID": "요청 식별자가 올바르지 않습니다.",
     "IF_MATCH_REQUIRED": "현재 버전 정보가 필요합니다.",
@@ -33,6 +34,16 @@ _MESSAGES = {
     "ENTITY_NOT_FOUND": "요청한 항목을 찾을 수 없습니다.",
     "WORKSPACE_NOT_FOUND": "요청한 수서 작업을 찾을 수 없습니다.",
     "SOURCE_NOT_FOUND": "요청한 자료를 찾을 수 없습니다.",
+    "SOURCE_COMPARISON_IN_PROGRESS": "도서 비교가 진행 중이어서 자료를 바꿀 수 없습니다.",
+    "SOURCE_PROCESSING_IN_PROGRESS": "자료 읽기가 끝난 뒤 도서 비교를 시작해 주세요.",
+    "COMPARISON_SOURCE_SET_CHANGED": "추천자료 구성이 바뀌었습니다. 최신 자료를 다시 확인해 주세요.",
+    "UPLOAD_REPAIR_REQUIRED": "읽지 못한 파일을 다시 올린 뒤 계속해 주세요.",
+    "UPLOAD_REPAIR_SUPERSEDED": "더 최근에 선택한 교체 파일이 있어 이 요청을 반영하지 않았습니다.",
+    "UPLOAD_REPAIR_ROLE_MISMATCH": "교체 파일의 자료 역할이 원래 파일과 다릅니다.",
+    "UPLOAD_REPAIR_CONFIG_MISMATCH": "교체 파일의 자료 범위가 원래 파일과 다릅니다.",
+    "SOURCE_REPLACEMENT_SUPERSEDED": "이미 더 최근의 수정 파일이 반영되었습니다.",
+    "SOURCE_REPLACEMENT_SHARED": "여러 작업에서 함께 쓰는 자료는 이 화면에서 교체할 수 없습니다.",
+    "SOURCE_REPLACEMENT_FILE_REJECTED": "수정 파일을 읽을 수 없습니다. 다른 파일을 골라 주세요.",
     "JOB_NOT_FOUND": "요청한 작업을 찾을 수 없습니다.",
     "UNSUPPORTED_FILE_TYPE": "지원하지 않는 파일 형식입니다.",
     "FILE_TOO_LARGE": "파일 크기 제한을 초과했습니다.",
@@ -42,6 +53,11 @@ _MESSAGES = {
     "INTEGRITY_CONFLICT": "요청이 현재 데이터와 충돌합니다.",
     "DATABASE_UNAVAILABLE": "데이터베이스 작업을 완료할 수 없습니다. 잠시 후 다시 시도해 주세요.",
 }
+
+
+def public_error_message(code: str) -> str:
+    """Return a stable, non-technical message for a public error code."""
+    return _MESSAGES.get(code, "요청을 처리할 수 없습니다.")
 
 
 def request_id_for(request: Request) -> str:
@@ -66,7 +82,7 @@ def error_detail(
 ) -> dict[str, Any]:
     return {
         "code": code,
-        "message": message or _MESSAGES.get(code, "요청을 처리할 수 없습니다."),
+        "message": message or public_error_message(code),
         "request_id": request_id,
         "fields": fields or [],
     }

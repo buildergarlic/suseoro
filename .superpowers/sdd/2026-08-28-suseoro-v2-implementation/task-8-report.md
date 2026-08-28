@@ -304,3 +304,163 @@ frontend/src/api/types.ts SHA-256
 populated 0006b claim의 fingerprint/generation/terminal response를 그대로 보존하고 새 metadata를 NULL로
 올리는 forward upgrade test도 통과했다.
 plan/progress ledger는 수정하지 않았고, Task 10으로 미룬 ASGI pre-parser cap도 건드리지 않았다.
+
+## 검토 수정 라운드 2 (2026-08-29)
+
+검토 commit `4ccff0b`의 12개 Important 지적을 behavior-first RED로 재현한 뒤 닫았다. 기존
+`0001`~`0007` migration은 수정하지 않고, 거절 파일 복구 의무와 재시작 발견 계약만 추가하는
+forward-only `0008_upload_repair_and_job_discovery.sql`, terminal 분석 복구 전이를 추가하는
+`0009_repair_recovery_transition.sql`, source 교정 전이를 더 좁게 fence하는
+`0010_source_correction_recovery.sql`을 만들었다. 기존의 세 화면 구조와 한국어 주요 copy는 유지했으며
+새 화면이나 관리자 dashboard는 추가하지 않았다.
+
+### Backend: 복구 의무, 발견 계약, 실행 fence
+
+- 부분 업로드의 거절 항목은 workspace/logical upload claim/file ordinal 단위 복구 의무로 영속화한다.
+  요청자가 성공 source id만 골라도 미해결 의무가 있으면 비교를 시작하지 못한다. 교체 파일은 원래
+  role/config를 지키며 generation과 active claim으로 fence된다. 더 늦게 선택한 교체가 우선하고, 실패한
+  새 교체는 이전에 성공한 source를 지우지 않는다. 성공 시에만 source link와 의무를 원자적으로 바꾼다.
+- terminal FAILED/PARTIAL COMPARE에서 잘못 읽은 source를 고치면, 하나의 multipart command가 terminal
+  분석을 DRAFT로 되돌리고 새 source/INGEST job을 만들며 기존 source 역할을 `UNKNOWN`으로 내리는 과정을
+  같은 transaction에서 처리한다. 같은 key replay는 demotion 뒤에도 정확한 202를 재현하고, 다른 key의
+  stale completion은 409다. 여러 workspace가 공유하는 source는 전역 role을 바꾸지 못하도록 거절하며
+  다른 workspace의 `CANDIDATE_REVIEW` 상태와 결과를 그대로 보존한다.
+- migration에서 역할을 알 수 없었던 복구 의무는 첫 유효 generation에서 role/vendor/date 계약을 한 번만
+  bind한다. 그 전에 실패한 UNKNOWN generation이 있어도 다음 generation에서 bind할 수 있지만, 이후
+  scope 변경은 영구 거절한다.
+- source 목록은 최신 INGEST/PARSE job id와 typed `mapping_required`, server header, 최대 20 preview row를
+  함께 노출한다. 결과 row가 아직 없는 QUEUED/RUNNING job도 발견된다. workspace job 목록은 tenant scope,
+  cursor, job type/status filter를 제공해 reload 뒤 mapping과 COMPARE를 다시 찾는다.
+- FAILED/PARTIAL parser 결과는 성공 권수로 환산하지 않는다. 실패 row의 processed count는 0이고, public
+  source/job 응답에는 stable code와 자연어 문구만 남는다.
+- 비교 시작 전 선택 source에 active INGEST/PARSE가 있거나 미해결 복구 의무가 있으면 거절한다. COMPARE
+  payload에는 정확한 source id/role, file SHA-256, mapping/config row version, parser version/completed marker,
+  source-row count/digest와 catalog version을 snapshot한다. ANALYZING 동안 upload/repair/parse/mapping 변경을
+  막고 handler가 실행 직전과 각 file/batch 경계에서 snapshot을 재검증한다.
+- upload/mapping/parse/retry는 idempotency reservation 뒤 writer transaction 안에서 workspace/source 상태를
+  다시 읽는다. 따라서 reservation 직후 다른 actor가 비교를 시작하거나 job 상태가 RUNNING으로 바뀌면
+  stale request가 source/config/job을 바꾸지 못한다. PURCHASE_REQUEST 변경은 DRAFT에만 허용한다.
+- 비교 command가 보낸 source 일부만 신뢰하지 않는다. workspace에 현재 연결된 모든 `PURCHASE_REQUEST`
+  source 집합과 정확히 같아야 하며, concurrent 교체/업로드로 집합이 달라졌으면
+  `COMPARISON_SOURCE_SET_CHANGED`로 거절한다. client는 이 응답에서 source와 최신 parse job을 다시 찾아
+  모두 준비된 authoritative 집합으로 비교를 한 번만 다시 시작한다.
+- snapshot 계약 도입 전에 만들어진 COMPARE job은 실행 때 안전하게 실패한다. 사용자가 같은 job을 명시적으로
+  재시도하면 ANALYZING 및 tenant/source/role/parse/repair/catalog 상태를 다시 확인하고 versioned snapshot을
+  한 번 만든 뒤 같은 durable job을 재개한다. 따라서 안전한 fail-closed가 복구 불가능한 ANALYZING 상태를
+  만들지 않는다.
+- bulk decision의 lease/takeover 오류는 item별 savepoint 안에서 격리된다. 잠긴 한 항목 때문에 앞뒤의
+  유효한 항목이 rollback되지 않으며 partial 결과와 audit가 idempotent replay된다.
+- pre-0006b 거절 row에 digest/size가 없어 실제 body를 확인할 수 없으면 filename/error equivalence로
+  canonical claim을 만들지 않고 `LEGACY_UPLOAD_IDENTITY_UNVERIFIABLE` 경계를 반환한다. 복구 가능한 accepted
+  legacy digest의 exact replay는 유지한다.
+- comparison producer와 serializer 양쪽에서 예외 class, SQL/table/schema, DB/filesystem path를 제거한다.
+  과거에 저장된 raw 비교 오류도 API 경계에서는 `COMPARISON_FILE_FAILED`의 고정된 한국어 envelope로 보인다.
+
+### Frontend: reload, truthful recovery, race fence
+
+- 새로 연 작업실은 server source/job discovery로 mapping dialog와 진행 중 parser job을 복원한다. browser
+  storage나 client-side delimiter/file parsing을 사용하지 않는다. mapping 저장에는 발견된 source의 실제
+  role/version을 사용한다.
+- 파일별 표시를 durable source identity의 최신 terminal 결과로 합친다. FAILED는 `읽기 실패`와 0권,
+  PARTIAL은 읽은 권수와 확인 필요 권수를 분리해 표시하며 batch 취소와 file 교체 행동을 구분한다.
+- bounded poll이 끊기면 `상태 다시 확인`이 같은 job을 먼저 조회한다. RUNNING/SUCCEEDED를 retry하지 않고
+  terminal retryable 상태에만 같은 job retry를 허용한다. ANALYZING reload도 filtered COMPARE discovery로
+  실패 원인과 안전한 재확인/재시도를 복원한다.
+- reload 때 source별 최신 job id로 현재 INGEST/PARSE를 모두 모아 병렬로 확인하고, 모든 현재 작업이 끝난
+  뒤에만 한 번 비교한다. 이미 SUCCEEDED인 COMPARE를 발견하면 stale ANALYZING 화면에 머물지 않도록
+  workspace를 즉시 다시 읽는다. 실패 화면의 재시도도 click 시점의 job을 먼저 조회해 다른 client가 이미
+  재개하거나 완료한 작업을 다시 retry하지 않는다.
+- 여러 복원 parse poll이 각각 bounded retry를 소진하면 job id별 재확인 queue를 보존한다. 한 번의
+  `자료 읽기 상태 다시 확인`으로 빠진 job을 모두 먼저 조회하고, 모든 terminal 결과를 합친 뒤에만 한 번
+  비교한다. 견적서/보유장서 교체는 원래 role로 다시 올리고 화면 role도 갱신하되 비교 source에는 넣지 않는다.
+- 한 복구 의무에 대한 두 교체 선택이 겹치면 generation fence로 최신 선택만 화면/accepted source set에
+  남긴다. stale completion은 announcement와 source를 되돌리지 않고 comparison command는 한 번만 만든다.
+- terminal COMPARE의 PARTIAL source 행은 `수정한 파일로 교체`로 복구한다. 교체 input은 filename이 아니라
+  source/obligation identity로 key를 만들고 source별 single-flight를 적용한다. 사용자가 화면의 전체 역할
+  selector를 바꿔도 교체는 서버에서 발견한 원래 역할을 사용하며, 성공한 원자 교체 뒤 최신 workspace와
+  source 집합을 다시 읽고 비교를 정확히 한 번 실행한다.
+- candidate 검색/더 보기 요청은 query generation과 mutation epoch로 fence한다. 오래된 page/search 응답이
+  새 검색 결과나 autosave가 올린 authoritative row/version/summary/예상 금액을 되돌리지 못한다.
+- API client는 `(logical action, payload fingerprint)`별 key를 유지하고 active caller와 ambiguous caller를
+  따로 센다. 동시 요청에서 malformed 2xx가 먼저, success가 나중에 와도 ambiguous retry는 같은 key를
+  쓰고 payload가 바뀔 때만 새 key를 발급한다.
+
+### RED / GREEN 증거
+
+초기 backend reviewer probe는 6개 모두 실패했다. 확장 round-2 묶음은 처음 `5 failed, 2 passed`였고,
+이 중 한 건은 terminal row를 금지된 방식으로 직접 바꾸던 fixture여서 실제 historical row를 안전하게
+seed하도록 바로잡았다. legacy rejected identity 묶음은 `2 failed, 1 passed`였다. Frontend는 logical-action
+concurrency, fresh mapping reload, poll recheck, failed compare reload, terminal file truth, replacement generation
+fencing의 6개 behavior가 production 수정 전에 각각 RED였다. load-more/search 및 mutation race는 실제 deferred
+response 순서를 쓰는 regression test로 고정했다. 최종 read-only 재검토에서 legacy snapshot-less COMPARE의
+복구 probe는 `1 failed`, terminal comparison 발견/복수 parser job/재시도 preflight UI 묶음은 `3 failed`로
+추가 RED를 확인한 뒤 각각 `1 passed`, `3 passed`로 닫았다. 이어 과거 worker가 남긴 unfenced comparison
+row를 새 snapshot이 재사용하는 probe도 `1 failed`를 확인했고, 선택 source의 stale 결과를 원자적으로
+지운 뒤 새 catalog snapshot 아래 다시 만드는 동작으로 `1 passed`가 됐다. 실행 중 catalog 교체와 versioned
+COMPARE retry의 stale catalog probe는 `2 failed`에서 inner claim-batch fence와 retry snapshot refresh 후
+`2 passed`가 됐고, migrated `UNKNOWN` repair role probe도 `1 failed`에서 `1 passed`가 됐다. 마지막으로
+authoritative source-set, source-set client refresh, non-purchase repair role/filter, 복수 poll recovery 네 behavior는
+production 수정 전에 `4 failed`였고 수정 뒤 `4 passed`였다.
+
+마지막 state/race audit에서도 production 변경 전에 각각 실제 RED를 확인했다.
+
+```text
+reservation 뒤 retry/state 재검사                         2 failed -> 2 passed
+실패 UNKNOWN generation 뒤 최초 scope bind                1 failed -> 1 passed
+terminal PARTIAL source 원자 교체                         1 failed -> 1 passed
+rendered 교체의 원래 role + source별 single-flight          1 failed -> 1 passed
+공유 source의 다른 CANDIDATE_REVIEW workspace 보존         1 failed -> 1 passed
+```
+
+전체 backend 첫 실행에서 기존 API fixture가 빈 workspace를 `CANDIDATE_REVIEW`로 직접 만들고 upload하던
+모순이 드러나 `26 failed, 403 passed`였다. production fence를 약화하지 않고 빈 fixture는 DRAFT, 실제
+candidate fixture 다섯 개만 CANDIDATE_REVIEW로 seed하도록 고쳤고 API 계약 묶음이 `62 passed`, 전체가
+`429 passed`가 됐다. 독립 최종 diff 검토도 P1/P2 behavior, migration, tenant/state, idempotency, security,
+race blocker가 없다는 CLEAN 판정을 냈다.
+
+최종 결과는 다음과 같다.
+
+```text
+tests/test_task8_round2.py                           27 passed in 18.51s
+task8 round2 + API contract focused                  89 passed in 53.55s
+uv run pytest -q                                    429 passed in 97.69s
+npm ci                                               audited 265, 0 vulnerabilities
+npm test -- --run                                    3 files, 75 passed in 75.28s
+npm run typecheck                                    exit 0
+npm run lint                                         exit 0, warning 0
+npm run build                                        36 modules, exit 0
+dist JS                                              299.19 kB / 92.25 kB gzip
+uvx ruff@0.16.5 format --check src tests             106 files already formatted
+uvx ruff@0.16.5 check src tests                     All checks passed
+python -m compileall -q src tests                    exit 0
+uv lock --check                                      resolved 36 packages
+uv build --out-dir .build-check-round2-final         sdist + wheel built
+npm ls --all                                         exit 0
+dangerous-execution diff scan                        0 matches
+private-key/token signature diff scan                0 matches
+git diff --check                                     exit 0
+```
+
+OpenAPI와 생성 TypeScript type은 각각 연속 두 번 생성해 같은 SHA-256을 확인했다.
+
+```text
+backend/openapi.json
+5385C472B1B9278E57D2C8292B5A4E7BE1E203C81329EAB9CAD66FB860C0F78D
+
+frontend/src/api/types.ts
+D296F53AAB8FD5208F90F00A0011FE9E4A6123CDD29898BA0A399A094509A203
+```
+
+새 migration `0008_upload_repair_and_job_discovery.sql`의 SHA-256은
+`8CA289F58AE22F4B6AE325DA1A3CC971ECE9E08C8A5142CBC5C1A48D7A05849D`,
+`0009_repair_recovery_transition.sql`은
+`7D020CD41D6C7A3AB9FAC0F43DAA873336ACAC889FD5FA171E19A4459D6383`,
+`0010_source_correction_recovery.sql`은
+`53935B8765516454A85FF1E13253180139A4E36978F575D3E562EFD05FAF9C79`이다. `0001`~`0007`의 hash는
+기존 기준과 같고, 특히 `0006b_upload_idempotency_fencing.sql`은
+`5DF3A11F75D27E4BE6E490FBD93F574756D456D4AA225F743314FD285D492710`,
+`0007_upload_replay_metadata.sql`은
+`E882B0E68B302829CE4BAD50955CB93404A50163E434491182D46C55CF35B28B`로 보존됐다. populated 0007에서
+0008→0009→0010으로 올린 뒤 foreign-key/integrity, 복구 의무 backfill, transition trigger를 검증했다.
+세 새 migration만 제외한 `git diff --exit-code 4ccff0b -- backend/src/suseoro/db/migrations`는 exit 0이었다.
+plan/progress ledger와 Task 10의 ASGI pre-parser cap은 수정하지 않았다. 최종 blocker는 없다.

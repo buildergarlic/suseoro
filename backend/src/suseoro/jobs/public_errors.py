@@ -19,3 +19,10 @@ def parser_failure() -> dict[str, Any]:
         "code": "PARSER_FAILURE",
         "message": "파일 내용을 읽지 못했습니다. 다시 읽어 주세요.",
     }
+
+
+def comparison_file_failure() -> dict[str, Any]:
+    return {
+        "code": "COMPARISON_FILE_FAILED",
+        "message": "일부 책을 비교하지 못했습니다. 다시 시도해 주세요.",
+    }

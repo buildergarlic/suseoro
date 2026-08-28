@@ -24,11 +24,21 @@ export interface UploadInput {
   vendorScope?: string;
   requestedStartLocalDate?: string;
   requestedThroughLocalDate?: string;
+  repairObligationId?: string;
+  repairGeneration?: number;
+  replacementSourceId?: string;
 }
 
 export interface CandidateFilters {
   outcome: string;
   search?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface WorkspaceJobFilters {
+  type?: string;
+  status?: string;
   cursor?: string;
   limit?: number;
 }
@@ -40,6 +50,11 @@ export interface SuseoroApi {
   listWorkspaces(): Promise<Schemas["WorkspacePage"]>;
   getWorkspace(workspaceId: string): Promise<Versioned<Workspace>>;
   listSources(workspaceId: string): Promise<Schemas["SourcePage"]>;
+  listUploadRepairs(workspaceId: string): Promise<Schemas["UploadRepairPage"]>;
+  listWorkspaceJobs(
+    workspaceId: string,
+    filters?: WorkspaceJobFilters,
+  ): Promise<Schemas["JobPage"]>;
   uploadSources(
     workspaceId: string,
     input: UploadInput,
@@ -201,7 +216,7 @@ async function responseBody(
 export function createApiClient(baseUrl = ""): SuseoroApi {
   const logicalCommands = new Map<
     string,
-    { fingerprint: string; commandKey: string; active: number }
+    { commandKey: string; active: number; ambiguous: boolean }
   >();
   const fileDigests = new WeakMap<File, Promise<string>>();
 
@@ -227,7 +242,11 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
       throw new OfflineMutationError();
     }
     let logicalCommand:
-      | { scope: string; fingerprint: string; commandKey: string }
+      | {
+          scope: string;
+          commandKey: string;
+          resolvesAmbiguity: boolean;
+        }
       | undefined;
     if (
       options.mutation &&
@@ -235,15 +254,21 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
       options.logicalAction
     ) {
       const fingerprint = await payloadFingerprint(options.logicalPayload);
-      const current = logicalCommands.get(options.logicalAction);
-      const commandKey =
-        current?.fingerprint === fingerprint ? current.commandKey : commandId();
-      const active = current?.commandKey === commandKey ? current.active + 1 : 1;
-      logicalCommands.set(options.logicalAction, { fingerprint, commandKey, active });
-      logicalCommand = {
-        scope: options.logicalAction,
-        fingerprint,
+      const scope = `${options.logicalAction}:${fingerprint}`;
+      const current = logicalCommands.get(scope);
+      const commandKey = current?.commandKey ?? commandId();
+      const resolvesAmbiguity = Boolean(
+        current?.ambiguous && current.active === 0,
+      );
+      logicalCommands.set(scope, {
         commandKey,
+        active: (current?.active ?? 0) + 1,
+        ambiguous: current?.ambiguous ?? false,
+      });
+      logicalCommand = {
+        scope,
+        commandKey,
+        resolvesAmbiguity,
       };
     }
     const headers = new Headers({ Accept: "application/json" });
@@ -269,7 +294,11 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
       const current = logicalCommands.get(logicalCommand.scope);
       if (current?.commandKey !== logicalCommand.commandKey) return;
       current.active = Math.max(0, current.active - 1);
-      if (conclusive && current.active === 0) {
+      if (!conclusive) current.ambiguous = true;
+      if (conclusive && logicalCommand.resolvesAmbiguity) {
+        current.ambiguous = false;
+      }
+      if (conclusive && current.active === 0 && !current.ambiguous) {
         logicalCommands.delete(logicalCommand.scope);
       }
     };
@@ -287,7 +316,13 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
       settleLogicalCommand(false);
       throw error;
     }
-    const parsed = await responseBody(response);
+    let parsed: Awaited<ReturnType<typeof responseBody>>;
+    try {
+      parsed = await responseBody(response);
+    } catch (error) {
+      settleLogicalCommand(false);
+      throw error;
+    }
     const body = parsed.body;
     if (!response.ok) {
       const failure = new ApiClientError(
@@ -355,16 +390,44 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
           `/api/v2/workspaces/${workspaceId}/sources?limit=100`,
         )
       ).data,
+    listUploadRepairs: async (workspaceId) =>
+      (
+        await request<Schemas["UploadRepairPage"]>(
+          `/api/v2/workspaces/${workspaceId}/upload-repairs?limit=100`,
+        )
+      ).data,
+    listWorkspaceJobs: async (workspaceId, filters = {}) => {
+      const params = new URLSearchParams({
+        limit: String(filters.limit ?? 100),
+      });
+      if (filters.type) params.set("type", filters.type);
+      if (filters.status) params.set("status", filters.status);
+      if (filters.cursor) params.set("cursor", filters.cursor);
+      return (
+        await request<Schemas["JobPage"]>(
+          `/api/v2/workspaces/${workspaceId}/jobs?${params.toString()}`,
+        )
+      ).data;
+    },
     uploadSources: async (workspaceId, input) => {
       const form = new FormData();
       for (const file of input.files) form.append("files", file);
       form.set("role", input.role);
-      form.set("vendor_scope", input.vendorScope ?? "*");
+      if (input.vendorScope !== undefined || !input.repairObligationId) {
+        form.set("vendor_scope", input.vendorScope ?? "*");
+      }
       if (input.requestedStartLocalDate) {
         form.set("requested_start_local_date", input.requestedStartLocalDate);
       }
       if (input.requestedThroughLocalDate) {
         form.set("requested_through_local_date", input.requestedThroughLocalDate);
+      }
+      if (input.repairObligationId) {
+        form.set("repair_obligation_id", input.repairObligationId);
+        form.set("repair_generation", String(input.repairGeneration ?? 1));
+      }
+      if (input.replacementSourceId) {
+        form.set("replacement_source_document_id", input.replacementSourceId);
       }
       const files = await Promise.all(
         input.files.map(async (file) => ({
@@ -390,6 +453,9 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
               requested_start_local_date: input.requestedStartLocalDate ?? null,
               requested_through_local_date:
                 input.requestedThroughLocalDate ?? null,
+              repair_obligation_id: input.repairObligationId ?? null,
+              repair_generation: input.repairGeneration ?? null,
+              replacement_source_document_id: input.replacementSourceId ?? null,
             },
           },
         )

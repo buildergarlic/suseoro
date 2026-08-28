@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import type { SuseoroApi, User, Workspace } from "../../api/client";
+import type { Job, SuseoroApi, User, Workspace } from "../../api/client";
 import { CandidatePanel } from "../candidates/CandidatePanel";
 import { IngestionPanel } from "../ingestion/IngestionPanel";
 import { canOperate, workflowPolicy } from "./workflowPolicy";
@@ -12,6 +12,8 @@ interface WorkroomScreenProps {
 }
 
 const STAGE_TITLES = ["1. 후보 만들기", "2. 승인·발주", "3. 납품 검수"] as const;
+const ACTIVE_JOB_STATES = new Set(["QUEUED", "RUNNING", "CANCEL_REQUESTED"]);
+const RETRYABLE_JOB_STATES = new Set(["FAILED", "PARTIAL", "CANCELLED"]);
 
 function completedSummary(stage: number): string {
   return stage === 0
@@ -27,6 +29,10 @@ function CurrentStage({
   onWorkspaceChange,
   analysisPollError,
   onRetryAnalysis,
+  analysisJob,
+  onRetryComparison,
+  retryingComparison,
+  analysisCanCorrectSources,
 }: {
   api: SuseoroApi;
   user: User;
@@ -35,6 +41,10 @@ function CurrentStage({
   onWorkspaceChange: (workspace: Workspace) => void;
   analysisPollError: string;
   onRetryAnalysis: () => void;
+  analysisJob: Job | null;
+  onRetryComparison: () => void;
+  retryingComparison: boolean;
+  analysisCanCorrectSources: boolean;
 }) {
   if (stage === 0) {
     const mode = workflowPolicy(workspace.status).mode;
@@ -49,11 +59,41 @@ function CurrentStage({
       );
     }
     if (mode === "ANALYZING") {
+      if (analysisCanCorrectSources && canOperate(user)) {
+        return (
+          <IngestionPanel
+            api={api}
+            comparisonJob={analysisJob}
+            key={workspace.id}
+            onWorkspaceChange={onWorkspaceChange}
+            workspace={workspace}
+          />
+        );
+      }
       return (
         <div className="calm-placeholder" role="status">
           <h3>도서 비교 중</h3>
           <p>도서관 장서와 추천자료를 비교하고 있습니다.</p>
           <p>이 화면을 그대로 두어도 완료되면 후보가 열립니다.</p>
+          {analysisJob && RETRYABLE_JOB_STATES.has(analysisJob.status) ? (
+            <>
+              <p role="alert">
+                {analysisJob.error?.message ?? "도서 비교를 마치지 못했습니다. 다시 시도해 주세요."}
+              </p>
+              {canOperate(user) ? (
+                <button
+                  className="button button-secondary"
+                  disabled={retryingComparison}
+                  onClick={onRetryComparison}
+                  type="button"
+                >
+                  {retryingComparison
+                    ? "도서 비교를 다시 시작하는 중…"
+                    : "도서 비교 다시 시도"}
+                </button>
+              ) : null}
+            </>
+          ) : null}
           {analysisPollError ? (
             <>
               <p role="alert">{analysisPollError}</p>
@@ -103,12 +143,22 @@ function CurrentStage({
   );
 }
 
-export function WorkroomScreen({ api, user }: WorkroomScreenProps) {
-  const { workspaceId = "" } = useParams();
+interface WorkspaceWorkroomProps extends WorkroomScreenProps {
+  workspaceId: string;
+}
+
+function WorkspaceWorkroom({ api, user, workspaceId }: WorkspaceWorkroomProps) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [error, setError] = useState<{ workspaceId: string; message: string } | null>(null);
   const [analysisPollError, setAnalysisPollError] = useState("");
   const [analysisRefresh, setAnalysisRefresh] = useState(0);
+  const [analysisJob, setAnalysisJob] = useState<Job | null>(null);
+  const [retryingComparison, setRetryingComparison] = useState(false);
+  const [analysisCanCorrectSources, setAnalysisCanCorrectSources] = useState(false);
+  const scopedAnalysisJob =
+    analysisJob?.workspace_id === workspaceId ? analysisJob : null;
+  const analysisJobId = scopedAnalysisJob?.id;
+  const analysisJobStatus = scopedAnalysisJob?.status;
 
   useEffect(() => {
     let active = true;
@@ -138,6 +188,41 @@ export function WorkroomScreen({ api, user }: WorkroomScreenProps) {
   }, [api, workspaceId]);
 
   useEffect(() => {
+    if (workspace?.status !== "ANALYZING") return;
+    let active = true;
+    void api
+      .listWorkspaceJobs(workspaceId, { type: "COMPARE", limit: 100 })
+      .then(async (page) => {
+        if (!active) return;
+        const discovered = page.items.find((job) => job.type === "COMPARE") ?? null;
+        setAnalysisJob(discovered);
+        setAnalysisCanCorrectSources(
+          discovered !== null && RETRYABLE_JOB_STATES.has(discovered.status),
+        );
+        if (discovered && ["SUCCEEDED", "PARTIAL"].includes(discovered.status)) {
+          const refreshed = await api.getWorkspace(workspaceId);
+          if (active) {
+            setWorkspace(refreshed.data);
+            setAnalysisPollError("");
+          }
+        }
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setAnalysisPollError(
+            reason instanceof Error
+              ? reason.message
+              : "비교 작업 상태를 불러오지 못했습니다. 다시 확인해 주세요.",
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [analysisRefresh, api, workspace?.status, workspaceId]);
+
+  useEffect(() => {
+    if (analysisJobId) return;
     if (workspace?.status !== "ANALYZING") return;
     let active = true;
     let timer = 0;
@@ -172,7 +257,98 @@ export function WorkroomScreen({ api, user }: WorkroomScreenProps) {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [analysisRefresh, api, workspace?.status, workspaceId]);
+  }, [analysisJobId, analysisRefresh, api, workspace?.status, workspaceId]);
+
+  useEffect(() => {
+    if (workspace?.status !== "ANALYZING" || !analysisJobId || !analysisJobStatus) return;
+    if (!ACTIVE_JOB_STATES.has(analysisJobStatus)) return;
+    const jobId = analysisJobId;
+    let active = true;
+    let timer = 0;
+    let errors = 0;
+    const schedule = () => {
+      timer = window.setTimeout(poll, Math.min(250 * 2 ** errors, 2_000));
+    };
+    const poll = () => {
+      void api
+        .getJob(jobId)
+        .then(async (current) => {
+          if (!active) return;
+          errors = 0;
+          setAnalysisPollError("");
+          setAnalysisJob(current);
+          if (ACTIVE_JOB_STATES.has(current.status)) {
+            schedule();
+            return;
+          }
+          if (["SUCCEEDED", "PARTIAL"].includes(current.status)) {
+            try {
+              const refreshed = await api.getWorkspace(workspaceId);
+              if (active) setWorkspace(refreshed.data);
+            } catch (reason) {
+              if (active) {
+                setAnalysisPollError(
+                  reason instanceof Error
+                    ? reason.message
+                    : "후보 화면을 불러오지 못했습니다. 다시 확인해 주세요.",
+                );
+              }
+            }
+          }
+        })
+        .catch(() => {
+          if (!active) return;
+          errors += 1;
+          if (errors >= 5) {
+            setAnalysisPollError(
+              "비교 진행 상태를 계속 불러오지 못했습니다. 상태를 다시 확인해 주세요.",
+            );
+          } else {
+            schedule();
+          }
+        });
+    };
+    poll();
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [
+    analysisJobId,
+    analysisJobStatus,
+    analysisRefresh,
+    api,
+    workspace?.status,
+    workspaceId,
+  ]);
+
+  async function retryComparison() {
+    if (!scopedAnalysisJob || !RETRYABLE_JOB_STATES.has(scopedAnalysisJob.status)) return;
+    setRetryingComparison(true);
+    setAnalysisPollError("");
+    try {
+      const current = await api.getJob(scopedAnalysisJob.id);
+      setAnalysisJob(current);
+      if (ACTIVE_JOB_STATES.has(current.status)) return;
+      if (current.status === "SUCCEEDED") {
+        const refreshed = await api.getWorkspace(workspaceId);
+        setWorkspace(refreshed.data);
+        return;
+      }
+      if (!RETRYABLE_JOB_STATES.has(current.status)) {
+        setAnalysisPollError("현재 상태에서는 도서 비교를 다시 시작할 수 없습니다.");
+        return;
+      }
+      const queued = await api.retryJob(current.id);
+      setAnalysisJob({ ...current, ...queued, items: current.items });
+    } catch (reason) {
+      setAnalysisPollError(
+        reason instanceof Error ? reason.message : "도서 비교를 다시 시작하지 못했습니다.",
+      );
+    } finally {
+      setRetryingComparison(false);
+    }
+  }
 
   if (error?.workspaceId === workspaceId) {
     return (
@@ -228,6 +404,8 @@ export function WorkroomScreen({ api, user }: WorkroomScreenProps) {
               </div>
               {current ? (
                 <CurrentStage
+                  analysisJob={scopedAnalysisJob}
+            analysisCanCorrectSources={analysisCanCorrectSources}
                   analysisPollError={analysisPollError}
                   api={api}
                   onWorkspaceChange={setWorkspace}
@@ -235,6 +413,8 @@ export function WorkroomScreen({ api, user }: WorkroomScreenProps) {
                     setAnalysisPollError("");
                     setAnalysisRefresh((current) => current + 1);
                   }}
+                  onRetryComparison={() => void retryComparison()}
+                  retryingComparison={retryingComparison}
                   stage={index}
                   user={user}
                   workspace={workspace}
@@ -249,5 +429,17 @@ export function WorkroomScreen({ api, user }: WorkroomScreenProps) {
         })}
       </div>
     </section>
+  );
+}
+
+export function WorkroomScreen({ api, user }: WorkroomScreenProps) {
+  const { workspaceId = "" } = useParams();
+  return (
+    <WorkspaceWorkroom
+      api={api}
+      key={workspaceId}
+      user={user}
+      workspaceId={workspaceId}
+    />
   );
 }

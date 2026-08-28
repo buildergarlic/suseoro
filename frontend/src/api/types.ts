@@ -722,6 +722,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/workspaces/{workspace_id}/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 수서 작업의 자료 처리 이력 보기 */
+        get: operations["listWorkspaceJobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/workspaces/{workspace_id}/orders": {
         parameters: {
             query?: never;
@@ -841,6 +858,23 @@ export interface paths {
         head?: never;
         /** 수서 작업 단계 바꾸기 */
         patch: operations["transitionWorkspace"];
+        trace?: never;
+    };
+    "/api/v2/workspaces/{workspace_id}/upload-repairs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 다시 올려야 하는 파일 보기 */
+        get: operations["listUploadRepairs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
 }
@@ -1082,17 +1116,20 @@ export interface components {
         Body_uploadSources: {
             /** Files */
             files: string[];
+            /** Repair Generation */
+            repair_generation?: number | null;
+            /** Repair Obligation Id */
+            repair_obligation_id?: string | null;
+            /** Replacement Source Document Id */
+            replacement_source_document_id?: string | null;
             /** Requested Start Local Date */
             requested_start_local_date?: string | null;
             /** Requested Through Local Date */
             requested_through_local_date?: string | null;
             /** @default UNKNOWN */
             role: components["schemas"]["DocumentRole"];
-            /**
-             * Vendor Scope
-             * @default *
-             */
-            vendor_scope: string;
+            /** Vendor Scope */
+            vendor_scope?: string | null;
         };
         /** CandidateBulkDecision */
         CandidateBulkDecision: {
@@ -1488,6 +1525,13 @@ export interface components {
             status: string;
             /** Total Rows */
             total_rows: number;
+        };
+        /** JobPage */
+        JobPage: {
+            /** Items */
+            items: components["schemas"]["JobResponse"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** JobResponse */
         JobResponse: {
@@ -2042,6 +2086,13 @@ export interface components {
             filename: string;
             /** Id */
             id: string;
+            /**
+             * Latest Job Id
+             * @default null
+             */
+            latest_job_id: string | null;
+            /** @default null */
+            latest_result: components["schemas"]["JobFileResult"] | null;
             /** Mapping */
             mapping: {
                 [key: string]: string;
@@ -2067,6 +2118,16 @@ export interface components {
             error: components["schemas"]["UploadItemError"] | null;
             /** Filename */
             filename: string;
+            /**
+             * Repair Generation
+             * @default null
+             */
+            repair_generation: number | null;
+            /**
+             * Repair Obligation Id
+             * @default null
+             */
+            repair_obligation_id: string | null;
             /** Source Id */
             source_id: string | null;
             /** Status */
@@ -2078,6 +2139,33 @@ export interface components {
             code: string;
             /** Message */
             message: string;
+        };
+        /** UploadRepairObligation */
+        UploadRepairObligation: {
+            /** Created At */
+            created_at: string;
+            error: components["schemas"]["UploadItemError"];
+            /** Filename */
+            filename: string;
+            /** Generation */
+            generation: number;
+            /** Id */
+            id: string;
+            /** Resolved Source Id */
+            resolved_source_id: string | null;
+            /** Role */
+            role: string;
+            /** Status */
+            status: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** UploadRepairPage */
+        UploadRepairPage: {
+            /** Items */
+            items: components["schemas"]["UploadRepairObligation"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** UploadResponse */
         UploadResponse: {
@@ -6223,6 +6311,71 @@ export interface operations {
             };
         };
     };
+    listWorkspaceJobs: {
+        parameters: {
+            query?: {
+                type?: string | null;
+                status?: string | null;
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: {
+                suseoro_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobPage"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
     createOrder: {
         parameters: {
             query?: never;
@@ -7078,6 +7231,69 @@ export interface operations {
             };
             /** @description 구조화된 오류 */
             428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    listUploadRepairs: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: {
+                suseoro_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadRepairPage"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -14,6 +14,7 @@ from typing import Any
 from suseoro.catalog.contracts import CatalogRecord, ComparisonSummary
 from suseoro.catalog.normalization import normalize_book
 from suseoro.catalog.repository import CatalogRepository
+from suseoro.jobs.public_errors import comparison_file_failure
 from suseoro.jobs.repository import JobRepository
 from suseoro.matching.engine import MatchingEngine
 from suseoro.security.sessions import format_utc, utc_now
@@ -369,6 +370,29 @@ class ComparisonService:
                 job_id, claim_token, claim_generation
             )
             claim_generation = current_claim.claim_generation
+            raw_snapshot = job.payload.get("source_snapshot")
+            if job.payload.get("source_snapshot_version") != 1 or not isinstance(
+                raw_snapshot, list
+            ):
+                raise ValueError("COMPARE job requires a versioned source snapshot")
+            snapshot_ids = {
+                str(item.get("id"))
+                for item in raw_snapshot
+                if isinstance(item, dict) and item.get("id") is not None
+            }
+            if not set(source_document_ids).issubset(snapshot_ids):
+                raise ValueError("source document is outside the COMPARE job snapshot")
+            catalog_version_id = job.payload.get("catalog_version_id")
+            if catalog_version_id is not None:
+                catalog_snapshot = self.connection.execute(
+                    """
+                    SELECT 1 FROM catalog_versions
+                    WHERE id = ? AND school_id = ? AND status = 'ACTIVE'
+                    """,
+                    (catalog_version_id, school_id),
+                ).fetchone()
+                if catalog_snapshot is None:
+                    raise ValueError("catalog is outside the COMPARE job snapshot")
         requested_row_ids = (
             None if source_row_ids is None else frozenset(source_row_ids)
         )
@@ -453,14 +477,11 @@ class ComparisonService:
                     )
                     self.connection.execute(f"RELEASE {savepoint}")
                 # Per-row containment is required so every logical row is accounted.
-                except Exception as error:  # noqa: BLE001
+                except Exception:  # noqa: BLE001
                     self.connection.execute(f"ROLLBACK TO {savepoint}")
                     self.connection.execute(f"RELEASE {savepoint}")
                     outcome = "ROW_ERROR"
-                    file_error = {
-                        "type": type(error).__name__,
-                        "message": str(error),
-                    }
+                    file_error = comparison_file_failure()
                     self._insert_row_error(
                         school_id=school_id,
                         workspace_id=workspace_id,

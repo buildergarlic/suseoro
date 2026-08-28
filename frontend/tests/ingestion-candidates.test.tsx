@@ -1,7 +1,7 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { Link, MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { App } from "../src/app/App";
@@ -44,6 +44,1389 @@ function renderWorkroom(
 }
 
 describe("후보 만들기 자료 입력", () => {
+  test("새로 연 작업실도 서버의 열 연결 상태와 자료 역할을 찾아 그대로 이어간다", async () => {
+    const user = userEvent.setup();
+    const draft = workspace("workspace-reload-map", "다시 연 열 연결", "DRAFT");
+    const mappingRequired = {
+      headers: ["서점 제목", "쓴 이"],
+      preview_rows: [["다시 연 책", "글쓴이"]],
+      suggested_mapping: { "서점 제목": "title", "쓴 이": "author" },
+      required_fields: ["title"],
+      confidence: 0,
+      questions: ["제목 열을 확인해 주세요."],
+    };
+    const source = {
+      ...sourceFixture,
+      id: "source-reload-map",
+      filename: "vendor.xlsx",
+      role: "VENDOR_QUOTE" as const,
+      latest_job_id: "ingest-reload-map",
+      latest_result: {
+        source_document_id: "source-reload-map",
+        filename: "vendor.xlsx",
+        status: "PARTIAL",
+        total_rows: 1,
+        processed_rows: 0,
+        error: { code: "MAPPING_REQUIRED", message: "열 연결 확인", type: null },
+        mapping_required: mappingRequired,
+      },
+    };
+    const mappings: Array<{ role: string; version: number }> = [];
+    const api = createFixtureApi({
+      getWorkspace: async () => ({ data: draft, etag: '"1"' }),
+      listSources: async () => ({ items: [source], next_cursor: null }),
+      listWorkspaceJobs: async () => ({
+        items: [{ ...idleJob, id: "ingest-reload-map", status: "PARTIAL", items: [source.latest_result] }],
+        next_cursor: null,
+      }),
+      updateSourceMapping: async (_sourceId, input, version) => {
+        mappings.push({ role: input.role, version });
+        return { data: { ...source, role: input.role, row_version: 2 }, etag: '"2"' };
+      },
+      parseSource: async () => ({ job_id: "parse-reload-map", status: "QUEUED" }),
+      getJob: async () => ({
+        ...idleJob,
+        id: "parse-reload-map",
+        type: "PARSE",
+        items: [{ ...source.latest_result, status: "SUCCESS", processed_rows: 1, error: null, mapping_required: null }],
+      }),
+    });
+    renderWorkroom(api, draft.id);
+
+    const dialog = await screen.findByRole("dialog", { name: "열 연결 확인" });
+    expect(within(dialog).getByText("다시 연 책")).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "열 연결 적용" }));
+    await waitFor(() => expect(mappings).toEqual([{ role: "VENDOR_QUOTE", version: 1 }]));
+  });
+
+  test("새로 연 작업실의 종료된 여러 자료 결과를 합쳐 비교를 이어간다", async () => {
+    const draft = workspace("workspace-reload-ready", "다시 연 자료", "DRAFT");
+    const reviewed = { ...draft, status: "CANDIDATE_REVIEW", row_version: 3 };
+    const result = (sourceId: string, filename: string) => ({
+      source_document_id: sourceId,
+      filename,
+      status: "SUCCESS",
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    });
+    const firstResult = result("source-reload-first", "first.csv");
+    const secondResult = result("source-reload-second", "second.csv");
+    const comparisons: string[][] = [];
+    const changed: string[] = [];
+    const api = createFixtureApi({
+      listSources: async () => ({
+        items: [
+          {
+            ...sourceFixture,
+            id: "source-reload-first",
+            filename: "first.csv",
+            latest_job_id: "ingest-reload-ready",
+            latest_result: firstResult,
+          },
+          {
+            ...sourceFixture,
+            id: "source-reload-second",
+            filename: "second.csv",
+            latest_job_id: "parse-reload-second",
+            latest_result: secondResult,
+          },
+        ],
+        next_cursor: null,
+      }),
+      listWorkspaceJobs: async () => ({
+        items: [
+          {
+            ...idleJob,
+            id: "ingest-reload-ready",
+            status: "SUCCEEDED",
+            items: [firstResult],
+          },
+        ],
+        next_cursor: null,
+      }),
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        return {
+          job_id: "compare-reload-ready",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        };
+      },
+      getJob: async (jobId) => ({
+        ...idleJob,
+        id: jobId,
+        type: "COMPARE",
+        status: "SUCCEEDED",
+        items: [],
+      }),
+      getWorkspace: async () => ({ data: reviewed, etag: '"3"' }),
+    });
+
+    render(
+      <IngestionPanel
+        api={api}
+        onWorkspaceChange={(next) => changed.push(next.status)}
+        workspace={draft}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(comparisons).toEqual([
+        ["source-reload-first", "source-reload-second"],
+      ]),
+    );
+    expect(changed).toEqual(["CANDIDATE_REVIEW"]);
+    expect(screen.getByRole("listitem", { name: "second.csv 처리 상태" })).toHaveTextContent(
+      "읽기 완료",
+    );
+  });
+
+  test("비교 직전 자료 구성이 바뀌면 서버의 최신 추천자료를 다시 찾아 모두 비교한다", async () => {
+    const draft = workspace("workspace-source-set-refresh", "자료 구성 다시 확인", "DRAFT");
+    const reviewed = { ...draft, status: "CANDIDATE_REVIEW", row_version: 3 };
+    const result = (sourceId: string, filename: string) => ({
+      source_document_id: sourceId,
+      filename,
+      status: "SUCCESS" as const,
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    });
+    const olderResult = result("source-set-older", "older.csv");
+    const replacementResult = result("source-set-replacement", "replacement.csv");
+    let sourceReads = 0;
+    const comparisons: string[][] = [];
+    const changed: string[] = [];
+    const source = (id: string, filename: string, latestResult: typeof olderResult) => ({
+      ...sourceFixture,
+      id,
+      filename,
+      status: "SUCCESS" as const,
+      latest_job_id: "ingest-source-set",
+      latest_result: latestResult,
+    });
+    const api = createFixtureApi({
+      listSources: async () => {
+        sourceReads += 1;
+        return {
+          items:
+            sourceReads === 1
+              ? [source("source-set-older", "older.csv", olderResult)]
+              : [
+                  source("source-set-older", "older.csv", olderResult),
+                  source("source-set-replacement", "replacement.csv", replacementResult),
+                ],
+          next_cursor: null,
+        };
+      },
+      listWorkspaceJobs: async () => ({
+        items: [
+          {
+            ...idleJob,
+            id: "ingest-source-set",
+            status: "SUCCEEDED",
+            items: [olderResult],
+          },
+        ],
+        next_cursor: null,
+      }),
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        if (comparisons.length === 1) {
+          throw new FixtureApiError(
+            409,
+            "COMPARISON_SOURCE_SET_CHANGED",
+            "추천자료 구성이 바뀌었습니다.",
+          );
+        }
+        return {
+          job_id: "compare-source-set-refreshed",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        };
+      },
+      getJob: async (jobId) => ({
+        ...idleJob,
+        id: jobId,
+        type: "COMPARE",
+        status: "SUCCEEDED",
+        items: [],
+      }),
+      getWorkspace: async () => ({ data: reviewed, etag: '"3"' }),
+    });
+
+    render(
+      <IngestionPanel
+        api={api}
+        onWorkspaceChange={(next) => changed.push(next.status)}
+        workspace={draft}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(comparisons).toEqual([
+        ["source-set-older"],
+        ["source-set-older", "source-set-replacement"],
+      ]),
+    );
+    expect(changed).toEqual(["CANDIDATE_REVIEW"]);
+  });
+
+  test("최신 자료를 다시 찾는 동안 화면을 떠나면 이전 작업의 비교를 시작하지 않는다", async () => {
+    const draft = workspace("workspace-source-refresh-unmount", "떠난 자료 구성", "DRAFT");
+    const readyResult = {
+      source_document_id: "source-before-unmount",
+      filename: "before.csv",
+      status: "SUCCESS" as const,
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    };
+    type SourcePage = Awaited<
+      ReturnType<ReturnType<typeof createFixtureApi>["listSources"]>
+    >;
+    let resolveRefresh!: (page: SourcePage) => void;
+    const refreshedSources = new Promise<SourcePage>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    let sourceReads = 0;
+    const comparisons: string[][] = [];
+    const initialSource = {
+      ...sourceFixture,
+      id: "source-before-unmount",
+      filename: "before.csv",
+      status: "SUCCESS" as const,
+      latest_job_id: "ingest-before-unmount",
+      latest_result: readyResult,
+    };
+    const api = createFixtureApi({
+      listSources: async () => {
+        sourceReads += 1;
+        if (sourceReads === 1) {
+          return { items: [initialSource], next_cursor: null };
+        }
+        return await refreshedSources;
+      },
+      listWorkspaceJobs: async () => ({
+        items: [
+          {
+            ...idleJob,
+            id: "ingest-before-unmount",
+            status: "SUCCEEDED",
+            items: [readyResult],
+          },
+        ],
+        next_cursor: null,
+      }),
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        if (comparisons.length === 1) {
+          throw new FixtureApiError(
+            409,
+            "COMPARISON_SOURCE_SET_CHANGED",
+            "추천자료 구성이 바뀌었습니다.",
+          );
+        }
+        return {
+          job_id: "compare-after-unmount",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        };
+      },
+    });
+    const view = render(<IngestionPanel api={api} workspace={draft} />);
+    await waitFor(() => expect(sourceReads).toBe(2));
+    expect(comparisons).toEqual([["source-before-unmount"]]);
+
+    view.unmount();
+    await act(async () => {
+      resolveRefresh({ items: [initialSource], next_cursor: null });
+      await refreshedSources;
+    });
+
+    expect(comparisons).toEqual([["source-before-unmount"]]);
+  });
+
+  test("비교 직전에 다른 창이 만든 실패 파일을 다시 찾아 교체 행동을 보여준다", async () => {
+    const draft = workspace("workspace-concurrent-repair", "새 실패 파일 발견", "DRAFT");
+    const readyResult = {
+      source_document_id: "source-before-repair",
+      filename: "ready.csv",
+      status: "SUCCESS" as const,
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    };
+    let repairReads = 0;
+    const comparisons: string[][] = [];
+    const readySource = {
+      ...sourceFixture,
+      id: "source-before-repair",
+      filename: "ready.csv",
+      status: "SUCCESS" as const,
+      latest_job_id: "ingest-before-repair",
+      latest_result: readyResult,
+    };
+    const api = createFixtureApi({
+      listSources: async () => ({ items: [readySource], next_cursor: null }),
+      listUploadRepairs: async () => {
+        repairReads += 1;
+        return {
+          items:
+            repairReads === 1
+              ? []
+              : [
+                  {
+                    id: "repair-from-other-window",
+                    filename: "other-window.exe",
+                    error: {
+                      code: "UNSUPPORTED_FILE_TYPE",
+                      message: "지원하지 않는 파일 형식입니다.",
+                    },
+                    status: "UNRESOLVED" as const,
+                    generation: 0,
+                    role: "PURCHASE_REQUEST" as const,
+                    resolved_source_id: null,
+                    created_at: "2026-08-29T00:00:00Z",
+                    updated_at: "2026-08-29T00:00:00Z",
+                  },
+                ],
+          next_cursor: null,
+        };
+      },
+      listWorkspaceJobs: async () => ({
+        items: [
+          {
+            ...idleJob,
+            id: "ingest-before-repair",
+            status: "SUCCEEDED",
+            items: [readyResult],
+          },
+        ],
+        next_cursor: null,
+      }),
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        throw new FixtureApiError(
+          409,
+          "UPLOAD_REPAIR_REQUIRED",
+          "읽지 못한 파일을 다시 올린 뒤 계속해 주세요.",
+        );
+      },
+    });
+
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    const failed = await screen.findByRole("listitem", {
+      name: "other-window.exe 처리 상태",
+    });
+    expect(failed).toHaveTextContent("지원하지 않는 파일 형식입니다.");
+    expect(screen.getByLabelText("other-window.exe 수정한 파일 선택")).toBeInTheDocument();
+    expect(repairReads).toBe(2);
+    expect(comparisons).toEqual([["source-before-repair"]]);
+  });
+
+  test("새로 연 작업실의 실행 중인 여러 자료 작업을 모두 기다린 뒤 한 번만 비교한다", async () => {
+    const draft = workspace("workspace-reload-running", "진행 중인 여러 자료", "DRAFT");
+    const result = (sourceId: string, filename: string) => ({
+      source_document_id: sourceId,
+      filename,
+      status: "SUCCESS",
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    });
+    const firstResult = result("source-running-first", "first.csv");
+    const secondResult = result("source-running-second", "second.csv");
+    const comparisons: string[][] = [];
+    const api = createFixtureApi({
+      listSources: async () => ({
+        items: [
+          {
+            ...sourceFixture,
+            id: "source-running-first",
+            filename: "first.csv",
+            latest_job_id: "parse-running-first",
+            latest_result: null,
+          },
+          {
+            ...sourceFixture,
+            id: "source-running-second",
+            filename: "second.csv",
+            latest_job_id: "parse-running-second",
+            latest_result: null,
+          },
+        ],
+        next_cursor: null,
+      }),
+      listWorkspaceJobs: async () => ({
+        items: [
+          {
+            ...idleJob,
+            id: "parse-running-first",
+            type: "PARSE",
+            status: "RUNNING",
+            items: [],
+          },
+          {
+            ...idleJob,
+            id: "parse-running-second",
+            type: "PARSE",
+            status: "RUNNING",
+            items: [],
+          },
+        ],
+        next_cursor: null,
+      }),
+      getJob: async (jobId) => {
+        if (jobId === "parse-running-first") {
+          return {
+            ...idleJob,
+            id: jobId,
+            type: "PARSE",
+            status: "SUCCEEDED",
+            items: [firstResult],
+          };
+        }
+        if (jobId === "parse-running-second") {
+          return {
+            ...idleJob,
+            id: jobId,
+            type: "PARSE",
+            status: "SUCCEEDED",
+            items: [secondResult],
+          };
+        }
+        return { ...idleJob, id: jobId, type: "COMPARE", status: "SUCCEEDED", items: [] };
+      },
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        return {
+          job_id: "compare-after-running",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        };
+      },
+    });
+
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    await waitFor(() =>
+      expect(comparisons).toEqual([
+        ["source-running-first", "source-running-second"],
+      ]),
+    );
+  });
+
+  test("여러 자료 작업 중 결과 없는 실패 작업도 파일 실패와 올바른 재시도로 복원한다", async () => {
+    const user = userEvent.setup();
+    const draft = workspace("workspace-empty-failed-job", "결과 없는 실패 복구", "DRAFT");
+    const successResult = {
+      source_document_id: "source-job-success",
+      filename: "success.csv",
+      status: "SUCCESS" as const,
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    };
+    const recoveredResult = {
+      source_document_id: "source-job-failed",
+      filename: "failed.csv",
+      status: "SUCCESS" as const,
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    };
+    const failedJob = {
+      ...idleJob,
+      id: "parse-empty-failed",
+      type: "PARSE" as const,
+      status: "FAILED" as const,
+      error: {
+        code: "JOB_FAILED",
+        message: "작업을 처리하지 못했습니다. 다시 시도해 주세요.",
+        type: null,
+      },
+      items: [],
+    };
+    const retries: string[] = [];
+    const comparisons: string[][] = [];
+    const api = createFixtureApi({
+      listSources: async () => ({
+        items: [
+          {
+            ...sourceFixture,
+            id: "source-job-success",
+            filename: "success.csv",
+            status: "SUCCESS",
+            latest_job_id: "parse-job-success",
+            latest_result: successResult,
+          },
+          {
+            ...sourceFixture,
+            id: "source-job-failed",
+            filename: "failed.csv",
+            status: "FAILED",
+            latest_job_id: failedJob.id,
+            latest_result: null,
+          },
+        ],
+        next_cursor: null,
+      }),
+      listWorkspaceJobs: async () => ({
+        items: [
+          {
+            ...idleJob,
+            id: "parse-job-success",
+            type: "PARSE",
+            status: "SUCCEEDED",
+            items: [successResult],
+          },
+          failedJob,
+        ],
+        next_cursor: null,
+      }),
+      retryJob: async (jobId) => {
+        retries.push(jobId);
+        return { ...failedJob, id: jobId, status: "QUEUED", error: null };
+      },
+      getJob: async (jobId) => {
+        if (jobId === failedJob.id) {
+          return {
+            ...failedJob,
+            status: "SUCCEEDED",
+            error: null,
+            items: [recoveredResult],
+          };
+        }
+        return { ...idleJob, id: jobId, type: "COMPARE", status: "SUCCEEDED" };
+      },
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        return {
+          job_id: "compare-after-empty-failure",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        };
+      },
+    });
+
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    const failedFile = await screen.findByRole("listitem", {
+      name: "failed.csv 처리 상태",
+    });
+    expect(failedFile).toHaveTextContent("읽기 실패");
+    expect(failedFile).toHaveTextContent("0권 읽음");
+    await user.click(screen.getByRole("button", { name: "자료 읽기 전체 다시 시도" }));
+    await waitFor(() => expect(retries).toEqual([failedJob.id]));
+    await waitFor(() =>
+      expect(comparisons).toEqual([
+        ["source-job-success", "source-job-failed"],
+      ]),
+    );
+  });
+
+  test("새로 연 작업실도 다시 올릴 파일을 찾아 올바른 복구 세대로 이어간다", async () => {
+    const user = userEvent.setup();
+    const draft = workspace("workspace-repair-reload", "다시 올릴 파일", "DRAFT");
+    const repairInputs: Array<{ obligation?: string; generation?: number; role: string }> = [];
+    const comparisons: string[][] = [];
+    const api = createFixtureApi({
+      listUploadRepairs: async () => ({
+        items: [
+          {
+            id: "repair-reloaded",
+            filename: "broken.exe",
+            error: {
+              code: "UNSUPPORTED_FILE_TYPE",
+              message: "지원하지 않는 파일 형식입니다.",
+            },
+            status: "UNRESOLVED",
+            generation: 0,
+            role: "UNKNOWN",
+            resolved_source_id: null,
+            created_at: "2026-08-29T00:00:00Z",
+            updated_at: "2026-08-29T00:00:00Z",
+          },
+        ],
+        next_cursor: null,
+      }),
+      uploadSources: async (_workspaceId, input) => {
+        repairInputs.push({
+          obligation: input.repairObligationId,
+          generation: input.repairGeneration,
+          role: input.role,
+        });
+        return {
+          job_id: "parse-repaired-reload",
+          items: [
+            {
+              filename: "fixed.csv",
+              status: "ACCEPTED",
+              source_id: "source-repaired-reload",
+              error: null,
+              repair_obligation_id: "repair-reloaded",
+              repair_generation: 1,
+            },
+          ],
+        };
+      },
+      getJob: async (jobId) => ({
+        ...idleJob,
+        id: jobId,
+        status: "SUCCEEDED",
+        items: [
+          {
+            source_document_id: "source-repaired-reload",
+            filename: "fixed.csv",
+            status: "SUCCESS",
+            total_rows: 1,
+            processed_rows: 1,
+            error: null,
+            mapping_required: null,
+          },
+        ],
+      }),
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        return {
+          job_id: "compare-repaired-reload",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        };
+      },
+    });
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    const failed = await screen.findByRole("listitem", { name: "broken.exe 처리 상태" });
+    expect(failed).toHaveTextContent("지원하지 않는 파일 형식입니다.");
+    await user.upload(
+      screen.getByLabelText("broken.exe 수정한 파일 선택"),
+      new File(["title\nfixed\n"], "fixed.csv"),
+    );
+
+    await waitFor(() =>
+      expect(repairInputs).toEqual([
+        { obligation: "repair-reloaded", generation: 1, role: "PURCHASE_REQUEST" },
+      ]),
+    );
+    expect(comparisons).toEqual([["source-repaired-reload"]]);
+  });
+
+  test("견적서 교체 파일은 추천자료 역할로 바꾸지 않고 비교 대상에도 넣지 않는다", async () => {
+    const user = userEvent.setup();
+    const draft = workspace("workspace-vendor-repair", "견적서 교체", "DRAFT");
+    const purchaseResult = {
+      source_document_id: "source-purchase-ready",
+      filename: "request.csv",
+      status: "SUCCESS" as const,
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    };
+    const uploadedRoles: string[] = [];
+    const comparisons: string[][] = [];
+    const api = createFixtureApi({
+      listSources: async () => ({
+        items: [
+          {
+            ...sourceFixture,
+            id: "source-purchase-ready",
+            filename: "request.csv",
+            status: "SUCCESS",
+            latest_job_id: null,
+            latest_result: purchaseResult,
+          },
+        ],
+        next_cursor: null,
+      }),
+      listUploadRepairs: async () => ({
+        items: [
+          {
+            id: "repair-vendor",
+            filename: "quote-broken.xlsx",
+            error: { code: "PARSER_FAILURE", message: "파일 내용을 읽지 못했습니다." },
+            status: "UNRESOLVED",
+            generation: 0,
+            role: "VENDOR_QUOTE",
+            resolved_source_id: null,
+            created_at: "2026-08-29T00:00:00Z",
+            updated_at: "2026-08-29T00:00:00Z",
+          },
+        ],
+        next_cursor: null,
+      }),
+      uploadSources: async (_workspaceId, input) => {
+        uploadedRoles.push(input.role);
+        return {
+          job_id: "parse-vendor-repair",
+          items: [
+            {
+              filename: "quote-fixed.xlsx",
+              status: "ACCEPTED",
+              source_id: "source-vendor-repaired",
+              error: null,
+              repair_obligation_id: "repair-vendor",
+              repair_generation: 1,
+            },
+          ],
+        };
+      },
+      getJob: async (jobId) => ({
+        ...idleJob,
+        id: jobId,
+        type: "PARSE",
+        status: "SUCCEEDED",
+        items: [
+          {
+            source_document_id: "source-vendor-repaired",
+            filename: "quote-fixed.xlsx",
+            status: "SUCCESS",
+            total_rows: 1,
+            processed_rows: 1,
+            error: null,
+            mapping_required: null,
+          },
+        ],
+      }),
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        return {
+          job_id: "compare-after-vendor-repair",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        };
+      },
+    });
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    await user.upload(
+      await screen.findByLabelText("quote-broken.xlsx 수정한 파일 선택"),
+      new File(["binary"], "quote-fixed.xlsx"),
+    );
+
+    await waitFor(() => expect(uploadedRoles).toEqual(["VENDOR_QUOTE"]));
+    await waitFor(() => expect(comparisons).toEqual([["source-purchase-ready"]]));
+  });
+
+  test("다시 연 두 자료의 폴링이 모두 멈춰도 한 번의 상태 확인으로 둘 다 이어간다", async () => {
+    const user = userEvent.setup();
+    const draft = workspace("workspace-multi-recheck", "여러 자료 상태 재확인", "DRAFT");
+    const reads = new Map<string, number>();
+    const comparisons: string[][] = [];
+    const result = (sourceId: string, filename: string) => ({
+      source_document_id: sourceId,
+      filename,
+      status: "SUCCESS" as const,
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    });
+    const sources = [
+      {
+        ...sourceFixture,
+        id: "source-recheck-first",
+        filename: "first.csv",
+        latest_job_id: "parse-recheck-first",
+        latest_result: null,
+      },
+      {
+        ...sourceFixture,
+        id: "source-recheck-second",
+        filename: "second.csv",
+        latest_job_id: "parse-recheck-second",
+        latest_result: null,
+      },
+    ];
+    const runningJobs = sources.map((source) => ({
+      ...idleJob,
+      id: source.latest_job_id,
+      type: "PARSE" as const,
+      status: "RUNNING" as const,
+      items: [],
+    }));
+    const api = createFixtureApi({
+      listSources: async () => ({ items: sources, next_cursor: null }),
+      listWorkspaceJobs: async () => ({ items: runningJobs, next_cursor: null }),
+      getJob: async (jobId) => {
+        const count = (reads.get(jobId) ?? 0) + 1;
+        reads.set(jobId, count);
+        if (count <= 5) throw new TypeError(`temporary ${jobId} failure`);
+        const first = jobId.endsWith("first");
+        return {
+          ...idleJob,
+          id: jobId,
+          type: "PARSE",
+          status: "SUCCEEDED",
+          items: [
+            result(
+              first ? "source-recheck-first" : "source-recheck-second",
+              first ? "first.csv" : "second.csv",
+            ),
+          ],
+        };
+      },
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        return {
+          job_id: "compare-after-multi-recheck",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        };
+      },
+    });
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    const recheck = await screen.findByRole(
+      "button",
+      { name: "자료 읽기 상태 다시 확인" },
+      { timeout: 10_000 },
+    );
+    await waitFor(() => {
+      expect(reads.get("parse-recheck-first")).toBe(5);
+      expect(reads.get("parse-recheck-second")).toBe(5);
+    });
+    await user.click(recheck);
+
+    await waitFor(() =>
+      expect(comparisons).toEqual([
+        ["source-recheck-first", "source-recheck-second"],
+      ]),
+    );
+    expect(reads.get("parse-recheck-first")).toBe(6);
+    expect(reads.get("parse-recheck-second")).toBe(6);
+  }, 12_000);
+
+  test("여러 자료 재확인에서 결과가 비어 있는 실패 작업도 해당 파일에 남겨 다시 읽는다", async () => {
+    const user = userEvent.setup();
+    const draft = workspace("workspace-mixed-recheck", "혼합 자료 상태 재확인", "DRAFT");
+    const reads = new Map<string, number>();
+    const retries: string[] = [];
+    const comparisons: string[][] = [];
+    const successResult = (sourceId: string, filename: string) => ({
+      source_document_id: sourceId,
+      filename,
+      status: "SUCCESS" as const,
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    });
+    const sources = [
+      {
+        ...sourceFixture,
+        id: "source-mixed-first",
+        filename: "first.csv",
+        latest_job_id: "parse-mixed-first",
+        latest_result: null,
+      },
+      {
+        ...sourceFixture,
+        id: "source-mixed-second",
+        filename: "second.csv",
+        latest_job_id: "parse-mixed-second",
+        latest_result: null,
+      },
+    ];
+    const runningJobs = sources.map((source) => ({
+      ...idleJob,
+      id: source.latest_job_id,
+      type: "PARSE" as const,
+      status: "RUNNING" as const,
+      items: [],
+    }));
+    const api = createFixtureApi({
+      listSources: async () => ({ items: sources, next_cursor: null }),
+      listWorkspaceJobs: async () => ({ items: runningJobs, next_cursor: null }),
+      getJob: async (jobId) => {
+        const count = (reads.get(jobId) ?? 0) + 1;
+        reads.set(jobId, count);
+        if (count <= 5) throw new TypeError(`temporary ${jobId} failure`);
+        if (jobId === "parse-mixed-first") {
+          return {
+            ...idleJob,
+            id: jobId,
+            type: "PARSE",
+            status: "SUCCEEDED",
+            items: [successResult("source-mixed-first", "first.csv")],
+          };
+        }
+        if (count === 6) {
+          return {
+            ...idleJob,
+            id: jobId,
+            type: "PARSE",
+            status: "FAILED",
+            stage: "FAILED",
+            error: {
+              code: "JOB_FAILED",
+              message: "second.csv 파일 내용을 읽지 못했습니다.",
+              type: null,
+            },
+            items: [],
+          };
+        }
+        return {
+          ...idleJob,
+          id: jobId,
+          type: "PARSE",
+          status: "SUCCEEDED",
+          items: [successResult("source-mixed-second", "second.csv")],
+        };
+      },
+      retryJob: async (jobId) => {
+        retries.push(jobId);
+        return {
+          ...idleJob,
+          id: jobId,
+          type: "PARSE",
+          status: "QUEUED",
+          items: [],
+        };
+      },
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        return {
+          job_id: "compare-after-mixed-recheck",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        };
+      },
+    });
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    const recheck = await screen.findByRole(
+      "button",
+      { name: "자료 읽기 상태 다시 확인" },
+      { timeout: 10_000 },
+    );
+    await user.click(recheck);
+
+    const failedRow = await screen.findByRole("listitem", {
+      name: "second.csv 처리 상태",
+    });
+    expect(failedRow).toHaveTextContent("읽기 실패");
+    expect(failedRow).toHaveTextContent("0권 읽음");
+    expect(failedRow).toHaveTextContent("second.csv 파일 내용을 읽지 못했습니다.");
+    expect(comparisons).toEqual([]);
+    await user.click(
+      screen.getByRole("button", { name: "자료 읽기 전체 다시 시도" }),
+    );
+    await waitFor(() =>
+      expect(comparisons).toEqual([
+        ["source-mixed-first", "source-mixed-second"],
+      ]),
+    );
+    expect(retries).toEqual(["parse-mixed-second"]);
+  }, 15_000);
+
+  test("자료 상태를 다시 확인하는 동안 화면을 떠나면 이전 작업의 비교를 시작하지 않는다", async () => {
+    const user = userEvent.setup();
+    const draft = workspace("workspace-recheck-unmount", "떠난 상태 확인", "DRAFT");
+    const result = {
+      source_document_id: "source-recheck-unmount",
+      filename: "leaving.csv",
+      status: "SUCCESS" as const,
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    };
+    type JobResponse = Awaited<
+      ReturnType<ReturnType<typeof createFixtureApi>["getJob"]>
+    >;
+    let resolveRecheck!: (job: JobResponse) => void;
+    const recheckedJob = new Promise<JobResponse>((resolve) => {
+      resolveRecheck = resolve;
+    });
+    let reads = 0;
+    const comparisons: string[][] = [];
+    const running = {
+      ...idleJob,
+      id: "parse-recheck-unmount",
+      type: "PARSE" as const,
+      status: "RUNNING" as const,
+      items: [],
+    };
+    const api = createFixtureApi({
+      listSources: async () => ({
+        items: [
+          {
+            ...sourceFixture,
+            id: "source-recheck-unmount",
+            filename: "leaving.csv",
+            latest_job_id: running.id,
+            latest_result: null,
+          },
+        ],
+        next_cursor: null,
+      }),
+      listWorkspaceJobs: async () => ({ items: [running], next_cursor: null }),
+      getJob: async () => {
+        reads += 1;
+        if (reads <= 5) throw new TypeError("temporary poll failure");
+        return await recheckedJob;
+      },
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        return {
+          job_id: "compare-recheck-after-unmount",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        };
+      },
+    });
+    const view = render(<IngestionPanel api={api} workspace={draft} />);
+    const recheck = await screen.findByRole(
+      "button",
+      { name: "자료 읽기 상태 다시 확인" },
+      { timeout: 10_000 },
+    );
+    await user.click(recheck);
+    await waitFor(() => expect(reads).toBe(6));
+
+    view.unmount();
+    await act(async () => {
+      resolveRecheck({ ...running, status: "SUCCEEDED", items: [result] });
+      await recheckedJob;
+    });
+
+    expect(comparisons).toEqual([]);
+  }, 12_000);
+
+  test("느린 초기 발견 응답은 사용자가 시작한 업로드를 덮어쓰지 않는다", async () => {
+    const user = userEvent.setup();
+    const draft = workspace("workspace-hydration-race", "초기 발견 경쟁", "DRAFT");
+    type SourcePage = Awaited<ReturnType<ReturnType<typeof createFixtureApi>["listSources"]>>;
+    type JobPage = Awaited<ReturnType<ReturnType<typeof createFixtureApi>["listWorkspaceJobs"]>>;
+    type JobResponse = Awaited<ReturnType<ReturnType<typeof createFixtureApi>["getJob"]>>;
+    let resolveSources!: (page: SourcePage) => void;
+    let resolveJobs!: (page: JobPage) => void;
+    let resolveIngest!: (job: JobResponse) => void;
+    const comparisons: string[][] = [];
+    const sourcePage = new Promise<SourcePage>((resolve) => {
+      resolveSources = resolve;
+    });
+    const jobPage = new Promise<JobPage>((resolve) => {
+      resolveJobs = resolve;
+    });
+    const ingest = new Promise<JobResponse>((resolve) => {
+      resolveIngest = resolve;
+    });
+    const api = createFixtureApi({
+      listSources: async () => await sourcePage,
+      listWorkspaceJobs: async () => await jobPage,
+      uploadSources: async () => ({
+        job_id: "ingest-hydration-race",
+        items: [
+          {
+            filename: "new.csv",
+            status: "ACCEPTED",
+            source_id: "source-new",
+            error: null,
+            repair_obligation_id: null,
+            repair_generation: null,
+          },
+        ],
+      }),
+      getJob: async (jobId: string) =>
+        jobId === "ingest-hydration-race"
+          ? await ingest
+          : { ...idleJob, id: jobId, type: "COMPARE", status: "FAILED", items: [] },
+      createComparisonJob: async (_workspaceId, sourceIds) => {
+        comparisons.push(sourceIds);
+        return {
+          job_id: "compare-hydration-race",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        };
+      },
+    });
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    await user.upload(
+      screen.getByLabelText("추천자료 파일 선택"),
+      new File(["title\nnew\n"], "new.csv"),
+    );
+    await user.click(screen.getByRole("button", { name: "우리 도서관에 없는 책 찾기" }));
+    await waitFor(() => expect(screen.getByText("new.csv")).toBeVisible());
+    resolveSources({ items: [], next_cursor: null });
+    resolveJobs({ items: [], next_cursor: null });
+    await act(async () => undefined);
+    resolveIngest({
+      ...idleJob,
+      id: "ingest-hydration-race",
+      status: "SUCCEEDED",
+      items: [
+        {
+          source_document_id: "source-new",
+          filename: "new.csv",
+          status: "SUCCESS",
+          total_rows: 1,
+          processed_rows: 1,
+          error: null,
+          mapping_required: null,
+        },
+      ],
+    });
+
+    await waitFor(() => expect(comparisons).toEqual([["source-new"]]));
+  });
+
+  test("폴링이 멈춘 뒤에는 현재 작업부터 다시 확인하고 실행 중 작업을 재시도하지 않는다", async () => {
+    const user = userEvent.setup();
+    const draft = workspace("workspace-recheck", "상태 재확인", "DRAFT");
+    let jobReads = 0;
+    let retries = 0;
+    const running = { ...idleJob, id: "ingest-running", status: "RUNNING", stage: "PARSING" };
+    const api = createFixtureApi({
+      listWorkspaceJobs: async () => ({ items: [running], next_cursor: null }),
+      getJob: async () => {
+        jobReads += 1;
+        if (jobReads <= 5) throw new TypeError("temporary poll failure");
+        return { ...running, status: "SUCCEEDED", stage: "COMPLETED" };
+      },
+      retryJob: async () => {
+        retries += 1;
+        return running;
+      },
+    });
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    const recheck = await screen.findByRole(
+      "button",
+      { name: "자료 읽기 상태 다시 확인" },
+      { timeout: 10_000 },
+    );
+    expect(screen.queryByRole("button", { name: /전체 다시 시도/ })).not.toBeInTheDocument();
+    await user.click(recheck);
+    await waitFor(() => expect(jobReads).toBeGreaterThanOrEqual(6));
+    expect(retries).toBe(0);
+  }, 12_000);
+
+  test("비교 폴링이 멈추면 같은 비교 작업을 먼저 확인하고 실행 중에는 재시도하지 않는다", async () => {
+    const user = userEvent.setup();
+    const draft = workspace("workspace-compare-recheck", "비교 상태 재확인", "DRAFT");
+    const reviewed = { ...draft, status: "CANDIDATE_REVIEW", row_version: 3 };
+    let compareReads = 0;
+    let retries = 0;
+    const changes: string[] = [];
+    const api = createFixtureApi({
+      uploadSources: async () => ({
+        job_id: "ingest-for-compare-recheck",
+        items: [
+          {
+            filename: "ready.csv",
+            status: "ACCEPTED",
+            source_id: "source-ready-recheck",
+            error: null,
+            repair_obligation_id: null,
+            repair_generation: null,
+          },
+        ],
+      }),
+      getJob: async (jobId) => {
+        if (jobId === "ingest-for-compare-recheck") {
+          return {
+            ...idleJob,
+            id: jobId,
+            status: "SUCCEEDED",
+            items: [
+              {
+                source_document_id: "source-ready-recheck",
+                filename: "ready.csv",
+                status: "SUCCESS",
+                total_rows: 1,
+                processed_rows: 1,
+                error: null,
+                mapping_required: null,
+              },
+            ],
+          };
+        }
+        compareReads += 1;
+        if (compareReads <= 5) throw new TypeError("temporary compare poll failure");
+        return {
+          ...idleJob,
+          id: jobId,
+          type: "COMPARE",
+          status: compareReads === 6 ? "RUNNING" : "SUCCEEDED",
+          items: [],
+        };
+      },
+      createComparisonJob: async () => ({
+        job_id: "compare-recheck",
+        status: "QUEUED",
+        workspace_status: "ANALYZING",
+        row_version: 2,
+      }),
+      retryJob: async () => {
+        retries += 1;
+        return { ...idleJob, id: "compare-recheck", type: "COMPARE" };
+      },
+      getWorkspace: async () => ({ data: reviewed, etag: '"3"' }),
+    });
+    render(
+      <IngestionPanel
+        api={api}
+        onWorkspaceChange={(next) => changes.push(next.status)}
+        workspace={draft}
+      />,
+    );
+    await user.upload(
+      screen.getByLabelText("추천자료 파일 선택"),
+      new File(["title\nready\n"], "ready.csv"),
+    );
+    await user.click(screen.getByRole("button", { name: "우리 도서관에 없는 책 찾기" }));
+
+    const recheck = await screen.findByRole(
+      "button",
+      { name: "도서 비교 상태 다시 확인" },
+      { timeout: 10_000 },
+    );
+    expect(screen.queryByRole("button", { name: "도서 비교 다시 시도" })).not.toBeInTheDocument();
+    await user.click(recheck);
+    await waitFor(() => expect(changes).toEqual(["CANDIDATE_REVIEW"]));
+    expect(compareReads).toBe(7);
+    expect(retries).toBe(0);
+  }, 12_000);
+
+  test("종료된 파일 결과는 실패 행을 읽은 권수에 넣지 않고 부분 완료를 분명히 알린다", async () => {
+    const draft = workspace("workspace-truthful-files", "파일 결과", "DRAFT");
+    const failedResult = {
+      source_document_id: "source-failed",
+      filename: "failed.csv",
+      status: "FAILED",
+      total_rows: 1,
+      processed_rows: 1,
+      error: { code: "PARSER_FAILURE", message: "파일 내용을 읽지 못했습니다.", type: null },
+      mapping_required: null,
+    };
+    const partialResult = {
+      source_document_id: "source-partial",
+      filename: "partial.csv",
+      status: "PARTIAL",
+      total_rows: 3,
+      processed_rows: 2,
+      error: { code: "ROW_ERRORS", message: "한 행을 확인해 주세요.", type: null },
+      mapping_required: null,
+    };
+    const source = (id: string, filename: string, latestResult: typeof failedResult) => ({
+      ...sourceFixture,
+      id,
+      filename,
+      latest_job_id: "ingest-truth",
+      latest_result: latestResult,
+    });
+    const api = createFixtureApi({
+      listSources: async () => ({
+        items: [
+          source("source-failed", "failed.csv", failedResult),
+          source("source-partial", "partial.csv", partialResult),
+        ],
+        next_cursor: null,
+      }),
+      listWorkspaceJobs: async () => ({
+        items: [{ ...idleJob, id: "ingest-truth", status: "PARTIAL", items: [failedResult, partialResult] }],
+        next_cursor: null,
+      }),
+    });
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    const failed = await screen.findByRole("listitem", { name: "failed.csv 처리 상태" });
+    expect(within(failed).getByText("읽기 실패")).toBeVisible();
+    expect(within(failed).getByText(/0권 읽음/)).toBeVisible();
+    expect(within(failed).queryByText(/1권 읽음/)).not.toBeInTheDocument();
+    expect(within(failed).getByText("파일 내용을 읽지 못했습니다.")).toBeVisible();
+    const partial = screen.getByRole("listitem", { name: "partial.csv 처리 상태" });
+    expect(within(partial).getByText("일부 읽기 완료")).toBeVisible();
+    expect(within(partial).getByText("2권 읽음 · 확인 필요 1")).toBeVisible();
+    expect(within(partial).queryByText("대기 중")).not.toBeInTheDocument();
+  });
+
+  test("교체 파일을 연달아 고르면 최신 세대만 남기고 비교는 한 번만 시작한다", async () => {
+    const user = userEvent.setup();
+    const draft = workspace("workspace-repair-race", "교체 세대", "DRAFT");
+    type UploadResponse = Awaited<ReturnType<ReturnType<typeof createFixtureApi>["uploadSources"]>>;
+    const pending = new Map<number, (value: UploadResponse) => void>();
+    const generations: number[] = [];
+    const comparisons: string[][] = [];
+    let initial = true;
+    const api = createFixtureApi({
+      uploadSources: async (_workspaceId, input) => {
+        if (initial) {
+          initial = false;
+          return {
+            job_id: "ingest-ready",
+            items: [
+              { filename: "ready.csv", status: "ACCEPTED", source_id: "source-ready", error: null, repair_obligation_id: null, repair_generation: null },
+              { filename: "broken.exe", status: "FAILED", source_id: null, error: { code: "UNSUPPORTED_FILE_TYPE", message: "지원하지 않는 파일 형식입니다." }, repair_obligation_id: "repair-o", repair_generation: 0 },
+            ],
+          };
+        }
+        const generation = input.repairGeneration ?? -1;
+        generations.push(generation);
+        return await new Promise<UploadResponse>((resolve) => pending.set(generation, resolve));
+      },
+      getJob: async (jobId) => ({
+        ...idleJob,
+        id: jobId,
+        items: jobId === "ingest-ready"
+          ? [{ source_document_id: "source-ready", filename: "ready.csv", status: "SUCCESS", total_rows: 1, processed_rows: 1, error: null, mapping_required: null }]
+          : [{ source_document_id: "source-b", filename: "replacement-b.csv", status: "SUCCESS", total_rows: 1, processed_rows: 1, error: null, mapping_required: null }],
+      }),
+      createComparisonJob: async (_workspaceId, sourceIds, version) => {
+        comparisons.push(sourceIds);
+        return { job_id: "compare-repair", status: "QUEUED", workspace_status: "ANALYZING", row_version: version + 1 };
+      },
+    });
+    render(<IngestionPanel api={api} workspace={draft} />);
+    await user.upload(
+      screen.getByLabelText("추천자료 파일 선택"),
+      [new File(["제목\n준비\n"], "ready.csv"), new File(["bad"], "broken.exe")],
+    );
+    await user.click(screen.getByRole("button", { name: "우리 도서관에 없는 책 찾기" }));
+    const replacement = await screen.findByLabelText("broken.exe 수정한 파일 선택");
+    await user.upload(replacement, new File(["제목\nA\n"], "replacement-a.csv"));
+    await user.upload(replacement, new File(["제목\nB\n"], "replacement-b.csv"));
+    expect(generations).toEqual([1, 2]);
+
+    act(() => pending.get(2)?.({
+      job_id: "ingest-b",
+      items: [{ filename: "replacement-b.csv", status: "ACCEPTED", source_id: "source-b", error: null, repair_obligation_id: "repair-o", repair_generation: 2 }],
+    }));
+    await waitFor(() => expect(comparisons).toEqual([["source-ready", "source-b"]]));
+    act(() => pending.get(1)?.({
+      job_id: "ingest-a",
+      items: [{ filename: "replacement-a.csv", status: "ACCEPTED", source_id: "source-a", error: null, repair_obligation_id: "repair-o", repair_generation: 1 }],
+    }));
+    await act(async () => undefined);
+    expect(comparisons).toEqual([["source-ready", "source-b"]]);
+    expect(screen.getByText("replacement-b.csv")).toBeVisible();
+    expect(screen.queryByText("replacement-a.csv")).not.toBeInTheDocument();
+  });
   test("파일 고르기는 키보드 초점이 보이는 실제 버튼이다", async () => {
     const user = userEvent.setup();
     const draft = workspace("workspace-focus", "키보드 자료 선택", "DRAFT");
@@ -71,6 +1454,8 @@ describe("후보 만들기 자료 입력", () => {
             status: "ACCEPTED",
             source_id: "source-strict",
             error: null,
+            repair_obligation_id: null,
+            repair_generation: null,
           },
         ],
       }),
@@ -143,12 +1528,16 @@ describe("후보 만들기 자료 입력", () => {
                     code: "UNSUPPORTED_FILE_TYPE",
                     message: "지원하지 않는 파일 형식입니다.",
                   },
+                  repair_obligation_id: "repair-broken",
+                  repair_generation: 0,
                 }
               : {
                   filename: file.name,
                   status: "ACCEPTED",
                   source_id: "source-books",
                   error: null,
+                  repair_obligation_id: input.repairObligationId ?? null,
+                  repair_generation: input.repairGeneration ?? null,
                 },
           ),
         };
@@ -271,6 +1660,8 @@ describe("후보 만들기 자료 입력", () => {
             status: "ACCEPTED",
             source_id: sourceFixture.id,
             error: null,
+            repair_obligation_id: null,
+            repair_generation: null,
           },
         ],
       }),
@@ -433,6 +1824,8 @@ describe("후보 만들기 자료 입력", () => {
             status: "ACCEPTED",
             source_id: "source-recovery",
             error: null,
+            repair_obligation_id: null,
+            repair_generation: null,
           },
         ],
       }),
@@ -532,12 +1925,16 @@ describe("후보 만들기 자료 입력", () => {
                   status: "ACCEPTED",
                   source_id: "source-ready",
                   error: null,
+                  repair_obligation_id: null,
+                  repair_generation: null,
                 },
                 {
                   filename: "repair.exe",
                   status: "FAILED",
                   source_id: null,
                   error: { code: "FILE_TOO_LARGE", message: "파일을 확인해 주세요." },
+                  repair_obligation_id: "repair-obligation",
+                  repair_generation: 0,
                 },
               ],
             }
@@ -549,6 +1946,8 @@ describe("후보 만들기 자료 입력", () => {
                   status: "ACCEPTED",
                   source_id: "source-repair",
                   error: null,
+                  repair_obligation_id: "repair-obligation",
+                  repair_generation: 1,
                 },
               ],
             };
@@ -643,8 +2042,22 @@ describe("후보 만들기 자료 입력", () => {
       uploadSources: async () => ({
         job_id: "ingest-two-mappings",
         items: [
-          { filename: "first.xlsx", status: "ACCEPTED", source_id: "source-first", error: null },
-          { filename: "second.xlsx", status: "ACCEPTED", source_id: "source-second", error: null },
+          {
+            filename: "first.xlsx",
+            status: "ACCEPTED",
+            source_id: "source-first",
+            error: null,
+            repair_obligation_id: null,
+            repair_generation: null,
+          },
+          {
+            filename: "second.xlsx",
+            status: "ACCEPTED",
+            source_id: "source-second",
+            error: null,
+            repair_obligation_id: null,
+            repair_generation: null,
+          },
         ],
       }),
       getJob: async (jobId) => {
@@ -738,6 +2151,8 @@ describe("후보 만들기 자료 입력", () => {
             status: "ACCEPTED",
             source_id: "source-damaged",
             error: null,
+            repair_obligation_id: null,
+            repair_generation: null,
           },
         ],
       }),
@@ -807,6 +2222,8 @@ describe("후보 만들기 자료 입력", () => {
             status: "ACCEPTED",
             source_id: "source-ready",
             error: null,
+            repair_obligation_id: null,
+            repair_generation: null,
           },
         ],
       }),
@@ -890,6 +2307,8 @@ describe("후보 만들기 자료 입력", () => {
             status: "ACCEPTED",
             source_id: "source-refresh",
             error: null,
+            repair_obligation_id: null,
+            repair_generation: null,
           },
         ],
       }),
@@ -1050,6 +2469,537 @@ describe("후보 확인과 자동 저장", () => {
     expect(reads).toBe(7);
   }, 12_000);
 
+  test("발견한 비교 작업의 폴링이 멈춰도 다시 확인하면 같은 작업부터 이어간다", async () => {
+    const user = userEvent.setup();
+    const analyzing = workspace("workspace-known-job-recheck", "발견한 비교 재확인", "ANALYZING");
+    const reviewed = { ...analyzing, status: "CANDIDATE_REVIEW", row_version: 2 };
+    const running = {
+      ...idleJob,
+      id: "compare-known-running",
+      workspace_id: analyzing.id,
+      type: "COMPARE",
+      status: "RUNNING",
+      stage: "COMPARING",
+    };
+    let jobReads = 0;
+    let workspaceReads = 0;
+    const api = candidateApi({
+      getWorkspace: async () => {
+        workspaceReads += 1;
+        return {
+          data: jobReads > 5 ? reviewed : analyzing,
+          etag: jobReads > 5 ? '"2"' : '"1"',
+        };
+      },
+      listWorkspaceJobs: async () => ({ items: [running], next_cursor: null }),
+      getJob: async () => {
+        jobReads += 1;
+        if (jobReads <= 5) throw new TypeError("temporary job connection failure");
+        return { ...running, status: "SUCCEEDED", stage: "COMPLETED" };
+      },
+    });
+    renderWorkroom(api, analyzing.id);
+
+    const recheck = await screen.findByRole(
+      "button",
+      { name: "비교 상태 다시 확인" },
+      { timeout: 10_000 },
+    );
+    await user.click(recheck);
+
+    expect(await screen.findByRole("heading", { name: "후보 확인" })).toBeVisible();
+    expect(jobReads).toBe(6);
+    expect(workspaceReads).toBeGreaterThan(1);
+  }, 12_000);
+
+  test("분석 중 화면에서 이미 끝난 비교를 발견하면 작업실을 다시 읽어 후보를 연다", async () => {
+    const analyzing = workspace("workspace-discovered-success", "끝난 비교 발견", "ANALYZING");
+    const reviewed = { ...analyzing, status: "CANDIDATE_REVIEW", row_version: 2 };
+    const succeeded = {
+      ...idleJob,
+      id: "compare-discovered-success",
+      workspace_id: analyzing.id,
+      type: "COMPARE",
+      status: "SUCCEEDED",
+      stage: "COMPLETED",
+    };
+    let workspaceReads = 0;
+    const api = candidateApi({
+      getWorkspace: async () => {
+        workspaceReads += 1;
+        return {
+          data: workspaceReads > 2 ? reviewed : analyzing,
+          etag: workspaceReads > 2 ? '"2"' : '"1"',
+        };
+      },
+      listWorkspaceJobs: async () => ({ items: [succeeded], next_cursor: null }),
+    });
+
+    renderWorkroom(api, analyzing.id);
+
+    expect(await screen.findByRole("heading", { name: "후보 확인" })).toBeVisible();
+    expect(workspaceReads).toBe(3);
+  });
+
+  test("다시 연 분석 화면은 실패한 비교 작업을 찾아 같은 작업만 안전하게 재시도한다", async () => {
+    const user = userEvent.setup();
+    const analyzing = workspace("workspace-failed-compare", "실패한 비교", "ANALYZING");
+    const reviewed = { ...analyzing, status: "CANDIDATE_REVIEW", row_version: 3 };
+    const failed = {
+      ...idleJob,
+      id: "compare-failed-reload",
+      workspace_id: analyzing.id,
+      type: "COMPARE",
+      status: "FAILED",
+      stage: "FAILED",
+      error: { code: "JOB_FAILED", message: "도서 비교를 마치지 못했습니다.", type: null },
+    };
+    let retried = 0;
+    let created = 0;
+    let workspaceReads = 0;
+    let jobReads = 0;
+    const discoveredTypes: Array<string | undefined> = [];
+    const api = candidateApi({
+      getWorkspace: async () => {
+        workspaceReads += 1;
+        return { data: retried > 0 ? reviewed : analyzing, etag: retried > 0 ? '"3"' : '"1"' };
+      },
+      listWorkspaceJobs: async (
+        _workspaceId: string,
+        filters?: { type?: string },
+      ) => {
+        discoveredTypes.push(filters?.type);
+        return { items: [failed], next_cursor: null };
+      },
+      retryJob: async (jobId: string) => {
+        expect(jobId).toBe("compare-failed-reload");
+        retried += 1;
+        return { ...failed, status: "QUEUED", stage: "QUEUED", error: null, retry_count: 1 };
+      },
+      getJob: async () => {
+        jobReads += 1;
+        return jobReads === 1
+          ? failed
+          : { ...failed, status: "SUCCEEDED", stage: "COMPLETED", error: null };
+      },
+      createComparisonJob: async () => {
+        created += 1;
+        throw new Error("must not create a second comparison");
+      },
+    });
+    renderWorkroom(api, analyzing.id);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("도서 비교를 마치지 못했습니다");
+    expect(discoveredTypes).toContain("COMPARE");
+    await user.click(screen.getByRole("button", { name: "도서 비교 다시 시도" }));
+    expect(await screen.findByRole("heading", { name: "후보 확인" })).toBeVisible();
+    expect(retried).toBe(1);
+    expect(created).toBe(0);
+    expect(workspaceReads).toBeGreaterThan(1);
+  });
+
+  test("이전 버전의 실패한 비교에 교체 의무가 남으면 파일 복구부터 다시 열어 최신 버전으로 비교한다", async () => {
+    const user = userEvent.setup();
+    const analyzing = workspace(
+      "workspace-legacy-repair-ui",
+      "이전 비교 복구",
+      "ANALYZING",
+    );
+    const reopened = { ...analyzing, status: "DRAFT", row_version: 3 };
+    const reviewed = { ...analyzing, status: "CANDIDATE_REVIEW", row_version: 5 };
+    const failedCompare = {
+      ...idleJob,
+      id: "compare-legacy-repair-failed",
+      workspace_id: analyzing.id,
+      type: "COMPARE",
+      status: "FAILED",
+      stage: "FAILED",
+      error: { code: "JOB_FAILED", message: "이전 비교가 중단되었습니다.", type: null },
+    };
+    const readyResult = {
+      source_document_id: "source-legacy-ready",
+      filename: "ready.csv",
+      status: "SUCCESS" as const,
+      total_rows: 1,
+      processed_rows: 1,
+      error: null,
+      mapping_required: null,
+    };
+    let repaired = false;
+    let compared = false;
+    const comparisonVersions: number[] = [];
+    const api = candidateApi({
+      getWorkspace: async () => ({
+        data: compared ? reviewed : repaired ? reopened : analyzing,
+        etag: compared ? '"5"' : repaired ? '"3"' : '"2"',
+      }),
+      listWorkspaceJobs: async (
+        _workspaceId: string,
+        filters?: { type?: string },
+      ) => ({
+        items: filters?.type === "COMPARE" ? [failedCompare] : [],
+        next_cursor: null,
+      }),
+      listSources: async () => ({
+        items: [
+          {
+            ...sourceFixture,
+            id: "source-legacy-ready",
+            filename: "ready.csv",
+            latest_job_id: null,
+            latest_result: readyResult,
+          },
+        ],
+        next_cursor: null,
+      }),
+      listUploadRepairs: async () => ({
+        items: repaired
+          ? []
+          : [
+              {
+                id: "repair-legacy-ui",
+                filename: "broken.exe",
+                error: {
+                  code: "UNSUPPORTED_FILE_TYPE",
+                  message: "지원하지 않는 파일 형식입니다.",
+                },
+                status: "UNRESOLVED",
+                generation: 0,
+                role: "PURCHASE_REQUEST",
+                resolved_source_id: null,
+                created_at: "2026-08-29T00:00:00Z",
+                updated_at: "2026-08-29T00:00:00Z",
+              },
+            ],
+        next_cursor: null,
+      }),
+      uploadSources: async () => {
+        repaired = true;
+        return {
+          job_id: "parse-legacy-repair",
+          items: [
+            {
+              filename: "fixed.csv",
+              status: "ACCEPTED",
+              source_id: "source-legacy-fixed",
+              error: null,
+              repair_obligation_id: "repair-legacy-ui",
+              repair_generation: 1,
+            },
+          ],
+        };
+      },
+      getJob: async (jobId: string) =>
+        jobId === "parse-legacy-repair"
+          ? {
+              ...idleJob,
+              id: jobId,
+              type: "PARSE",
+              status: "SUCCEEDED",
+              items: [
+                {
+                  source_document_id: "source-legacy-fixed",
+                  filename: "fixed.csv",
+                  status: "SUCCESS",
+                  total_rows: 1,
+                  processed_rows: 1,
+                  error: null,
+                  mapping_required: null,
+                },
+              ],
+            }
+          : {
+              ...idleJob,
+              id: jobId,
+              type: "COMPARE",
+              status: "SUCCEEDED",
+              items: [],
+            },
+      createComparisonJob: async (
+        _workspaceId: string,
+        _sourceIds: string[],
+        version: number,
+      ) => {
+        comparisonVersions.push(version);
+        compared = true;
+        return {
+          job_id: "compare-legacy-recovered",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 4,
+        };
+      },
+    });
+    renderWorkroom(api, analyzing.id);
+
+    expect(
+      await screen.findByRole("heading", { name: "추천자료 가져오기" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "도서 비교 다시 시도" }),
+    ).not.toBeInTheDocument();
+    await user.upload(
+      await screen.findByLabelText("broken.exe 수정한 파일 선택"),
+      new File(["제목\n복구된 책\n"], "fixed.csv", { type: "text/csv" }),
+    );
+
+    expect(await screen.findByRole("heading", { name: "후보 확인" })).toBeVisible();
+    expect(comparisonVersions).toEqual([3]);
+  });
+
+  test("부분 처리된 추천자료는 화면에서 파일을 교체해 후보까지 이어간다", async () => {
+    const user = userEvent.setup();
+    const analyzing = workspace(
+      "workspace-partial-source-ui",
+      "부분 자료 복구",
+      "ANALYZING",
+    );
+    const reopened = { ...analyzing, status: "DRAFT" as const, row_version: 3 };
+    const reviewed = {
+      ...analyzing,
+      status: "CANDIDATE_REVIEW" as const,
+      row_version: 5,
+    };
+    const partialResult = {
+      source_document_id: "source-partial-ui",
+      filename: "partial.csv",
+      status: "PARTIAL" as const,
+      total_rows: 2,
+      processed_rows: 1,
+      error: { code: "ROW_ERROR", message: "제목이 없는 행이 있습니다.", type: null },
+      mapping_required: null,
+    };
+    const partialSource = {
+      ...sourceFixture,
+      id: "source-partial-ui",
+      filename: "partial.csv",
+      status: "ROW_ERROR" as const,
+      mapping: { 제목: "title" },
+      latest_job_id: "ingest-partial-ui",
+      latest_result: partialResult,
+    };
+    const partialIngest = {
+      ...idleJob,
+      id: "ingest-partial-ui",
+      workspace_id: analyzing.id,
+      type: "INGEST",
+      status: "PARTIAL",
+      items: [partialResult],
+    };
+    const partialCompare = {
+      ...idleJob,
+      id: "compare-partial-ui",
+      workspace_id: analyzing.id,
+      type: "COMPARE",
+      status: "PARTIAL",
+      error: { code: "JOB_FAILED", message: "일부 책을 비교하지 못했습니다.", type: null },
+      items: [],
+    };
+    let superseded = false;
+    let compared = false;
+    const mappings: Array<{ sourceId: string; role: string; version: number }> = [];
+    const replacementRoles: string[] = [];
+    const replacementSourceIds: Array<string | undefined> = [];
+    type UploadResponse = Awaited<
+      ReturnType<ReturnType<typeof createFixtureApi>["uploadSources"]>
+    >;
+    let resolveReplacementUpload!: (response: UploadResponse) => void;
+    const replacementUpload = new Promise<UploadResponse>((resolve) => {
+      resolveReplacementUpload = resolve;
+    });
+    const comparisons: Array<{ sourceIds: string[]; version: number }> = [];
+    const api = candidateApi({
+      getWorkspace: async () => ({
+        data: compared ? reviewed : superseded ? reopened : analyzing,
+        etag: compared ? '"5"' : superseded ? '"3"' : '"2"',
+      }),
+      listWorkspaceJobs: async (
+        _workspaceId: string,
+        filters?: { type?: string },
+      ) => ({
+        items: filters?.type === "COMPARE" ? [partialCompare] : [partialIngest],
+        next_cursor: null,
+      }),
+      listSources: async () => ({ items: [partialSource], next_cursor: null }),
+      listUploadRepairs: async () => ({ items: [], next_cursor: null }),
+      getSource: async () => ({ data: partialSource, etag: '"1"' }),
+      updateSourceMapping: async (
+        sourceId: string,
+        input: Parameters<ReturnType<typeof createFixtureApi>["updateSourceMapping"]>[1],
+        version: number,
+      ) => {
+        mappings.push({ sourceId, role: input.role, version });
+        superseded = true;
+        return {
+          data: { ...partialSource, role: input.role, row_version: 2 },
+          etag: '"2"',
+        };
+      },
+      uploadSources: async (
+        _workspaceId: string,
+        input: Parameters<ReturnType<typeof createFixtureApi>["uploadSources"]>[1],
+      ) => {
+        replacementRoles.push(input.role);
+        replacementSourceIds.push(input.replacementSourceId);
+        return await replacementUpload;
+      },
+      getJob: async (jobId: string) =>
+        jobId === "ingest-corrected-ui"
+          ? {
+              ...idleJob,
+              id: jobId,
+              type: "INGEST",
+              status: "SUCCEEDED",
+              items: [
+                {
+                  source_document_id: "source-corrected-ui",
+                  filename: "corrected-a.csv",
+                  status: "SUCCESS",
+                  total_rows: 2,
+                  processed_rows: 2,
+                  error: null,
+                  mapping_required: null,
+                },
+              ],
+            }
+          : {
+              ...idleJob,
+              id: jobId,
+              workspace_id: analyzing.id,
+              type: "COMPARE",
+              status: "SUCCEEDED",
+              items: [],
+            },
+      createComparisonJob: async (
+        _workspaceId: string,
+        sourceIds: string[],
+        version: number,
+      ) => {
+        comparisons.push({ sourceIds, version });
+        compared = true;
+        return {
+          job_id: "compare-corrected-ui",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: version + 1,
+        };
+      },
+    });
+    renderWorkroom(api, analyzing.id);
+
+    expect(
+      await screen.findByRole("heading", { name: "추천자료 가져오기" }),
+    ).toBeVisible();
+    await user.selectOptions(screen.getByLabelText("자료 역할"), "VENDOR_QUOTE");
+    const replacementInput = await screen.findByLabelText(
+      "partial.csv 수정한 파일 선택",
+    );
+    const correctedA = new File(
+      ["제목,저자\n정상 추천,저자\n수정 추천,저자\n"],
+      "corrected-a.csv",
+      { type: "text/csv" },
+    );
+    const correctedB = new File(
+      ["제목,저자\n다른 추천,저자\n"],
+      "corrected-b.csv",
+      { type: "text/csv" },
+    );
+    fireEvent.change(replacementInput, { target: { files: [correctedA] } });
+    fireEvent.change(replacementInput, { target: { files: [correctedB] } });
+    await waitFor(() => expect(replacementRoles).toEqual(["PURCHASE_REQUEST"]));
+    act(() => {
+      superseded = true;
+      resolveReplacementUpload({
+        job_id: "ingest-corrected-ui",
+        items: [
+          {
+            filename: "corrected-a.csv",
+            status: "ACCEPTED",
+            source_id: "source-corrected-ui",
+            error: null,
+            repair_obligation_id: null,
+            repair_generation: null,
+          },
+        ],
+      });
+    });
+
+    expect(await screen.findByRole("heading", { name: "후보 확인" })).toBeVisible();
+    expect(mappings).toEqual([]);
+    expect(comparisons).toEqual([
+      { sourceIds: ["source-corrected-ui"], version: 3 },
+    ]);
+    expect(replacementRoles).toEqual(["PURCHASE_REQUEST"]);
+    expect(replacementSourceIds).toEqual(["source-partial-ui"]);
+  });
+
+  test("실패 화면의 재시도 직전에 이미 끝난 작업이면 재시도하지 않고 후보를 연다", async () => {
+    const user = userEvent.setup();
+    const analyzing = workspace("workspace-stale-failed", "오래된 실패 상태", "ANALYZING");
+    const reviewed = { ...analyzing, status: "CANDIDATE_REVIEW", row_version: 2 };
+    const failed = {
+      ...idleJob,
+      id: "compare-stale-failed",
+      workspace_id: analyzing.id,
+      type: "COMPARE",
+      status: "FAILED",
+      stage: "FAILED",
+      error: { code: "JOB_FAILED", message: "도서 비교를 마치지 못했습니다.", type: null },
+    };
+    let workspaceReads = 0;
+    let jobReads = 0;
+    let retries = 0;
+    const api = candidateApi({
+      getWorkspace: async () => {
+        workspaceReads += 1;
+        return {
+          data: workspaceReads > 2 ? reviewed : analyzing,
+          etag: workspaceReads > 2 ? '"2"' : '"1"',
+        };
+      },
+      listWorkspaceJobs: async () => ({ items: [failed], next_cursor: null }),
+      getJob: async () => {
+        jobReads += 1;
+        return { ...failed, status: "SUCCEEDED", stage: "COMPLETED", error: null };
+      },
+      retryJob: async () => {
+        retries += 1;
+        return { ...failed, status: "QUEUED", stage: "QUEUED" };
+      },
+    });
+    renderWorkroom(api, analyzing.id);
+
+    await user.click(await screen.findByRole("button", { name: "도서 비교 다시 시도" }));
+
+    expect(await screen.findByRole("heading", { name: "후보 확인" })).toBeVisible();
+    expect(jobReads).toBe(1);
+    expect(retries).toBe(0);
+  });
+
+  test("검토자는 실패한 비교를 확인하지만 담당자용 재시도 행동은 보지 않는다", async () => {
+    const analyzing = workspace("workspace-reviewer-failed-compare", "검토자 비교 실패", "ANALYZING");
+    const failed = {
+      ...idleJob,
+      id: "compare-reviewer-failed",
+      workspace_id: analyzing.id,
+      type: "COMPARE",
+      status: "FAILED",
+      stage: "FAILED",
+      error: { code: "JOB_FAILED", message: "도서 비교를 마치지 못했습니다.", type: null },
+    };
+    const api = candidateApi({
+      getCurrentUser: async () => ({ ...operator, roles: ["REVIEWER"] }),
+      getWorkspace: async () => ({ data: analyzing, etag: '"1"' }),
+      listWorkspaceJobs: async () => ({ items: [failed], next_cursor: null }),
+    });
+    renderWorkroom(api, analyzing.id);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("도서 비교를 마치지 못했습니다");
+    expect(
+      screen.queryByRole("button", { name: "도서 비교 다시 시도" }),
+    ).not.toBeInTheDocument();
+  });
+
   test("검토자는 후보를 읽을 수 있지만 담당자 변경 행동은 할 수 없다", async () => {
     const api = candidateApi({ getCurrentUser: async () => ({ ...operator, roles: ["REVIEWER"] }) });
     renderWorkroom(api, candidateWorkspace.id);
@@ -1059,6 +3009,99 @@ describe("후보 확인과 자동 저장", () => {
       screen.queryByRole("button", { name: "후보 확정하고 승인 요청" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /수서 후보로 포함/u })).not.toBeInTheDocument();
+  });
+
+  test("다른 작업실로 이동한 뒤 이전 작업의 늦은 재확인 응답이 새 후보 화면을 지우지 않는다", async () => {
+    const user = userEvent.setup();
+    const first = workspace("workspace-route-first", "첫 작업", "ANALYZING");
+    const firstReviewed = {
+      ...first,
+      status: "CANDIDATE_REVIEW" as const,
+      row_version: 2,
+    };
+    const second = workspace(
+      "workspace-route-second",
+      "둘째 작업",
+      "CANDIDATE_REVIEW",
+    );
+    const failed = {
+      ...idleJob,
+      id: "compare-route-first",
+      workspace_id: first.id,
+      type: "COMPARE",
+      status: "FAILED",
+      stage: "FAILED",
+      error: { code: "JOB_FAILED", message: "첫 작업 비교 실패", type: null },
+    };
+    type JobResponse = Awaited<
+      ReturnType<ReturnType<typeof createFixtureApi>["getJob"]>
+    >;
+    let resolveOldCheck!: (job: JobResponse) => void;
+    const oldCheck = new Promise<JobResponse>((resolve) => {
+      resolveOldCheck = resolve;
+    });
+    let oldCheckCompleted = false;
+    const secondCandidate = candidate(
+      "candidate-route-second",
+      "둘째 작업의 책",
+      "NEEDS_REVIEW",
+    );
+    const api = candidateApi({
+      getWorkspace: async (workspaceId: string) => {
+        if (workspaceId === second.id) return { data: second, etag: '"1"' };
+        return {
+          data: oldCheckCompleted ? firstReviewed : first,
+          etag: oldCheckCompleted ? '"2"' : '"1"',
+        };
+      },
+      listWorkspaceJobs: async (workspaceId: string) => ({
+        items: workspaceId === first.id ? [failed] : [],
+        next_cursor: null,
+      }),
+      getJob: async () => await oldCheck,
+      listCandidates: async (workspaceId: string, filters: { outcome: string }) => ({
+        items:
+          workspaceId === second.id && filters.outcome === "NEEDS_REVIEW"
+            ? [secondCandidate]
+            : [],
+        next_cursor: null,
+        total_count:
+          workspaceId === second.id && filters.outcome === "NEEDS_REVIEW" ? 1 : 0,
+        summary: {
+          total_count: workspaceId === second.id ? 1 : 0,
+          candidate_count: 0,
+          needs_review_count: workspaceId === second.id ? 1 : 0,
+          excluded_count: 0,
+          unresolved_count: workspaceId === second.id ? 1 : 0,
+          expected_total_won: 0,
+        },
+      }),
+    });
+    render(
+      <MemoryRouter initialEntries={[`/workspaces/${first.id}`]}>
+        <Link to={`/workspaces/${second.id}`}>둘째 작업 열기</Link>
+        <App api={api} />
+      </MemoryRouter>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "도서 비교 다시 시도" }),
+    );
+    await user.click(screen.getByRole("link", { name: "둘째 작업 열기" }));
+    expect(await screen.findByText("둘째 작업의 책")).toBeVisible();
+    act(() => {
+      oldCheckCompleted = true;
+      resolveOldCheck({
+        ...failed,
+        status: "SUCCEEDED",
+        stage: "COMPLETED",
+        error: null,
+      });
+    });
+    await act(async () => undefined);
+
+    expect(screen.getByText("둘째 작업의 책")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "후보 확인" })).toBeVisible();
   });
 
   test("확인 필요를 기본 우선하고 count·필터·exact ISBN 제외 사유와 되돌리기를 제공한다", async () => {
@@ -1123,6 +3166,241 @@ describe("후보 확인과 자동 저장", () => {
     expect(await screen.findByText("천 번째 책")).toBeVisible();
   });
 
+  test("이전 cursor 응답은 새 검색의 후보와 전체 금액을 되돌리지 않는다", async () => {
+    const user = userEvent.setup();
+    type Page = Awaited<
+      ReturnType<ReturnType<typeof createFixtureApi>["listCandidates"]>
+    >;
+    let resolveOldPage: ((page: Page) => void) | undefined;
+    const emptySummary = {
+      total_count: 0,
+      candidate_count: 0,
+      needs_review_count: 0,
+      excluded_count: 0,
+      unresolved_count: 0,
+      expected_total_won: 0,
+    };
+    const api = candidateApi({
+      listCandidates: async (
+        _workspaceId: string,
+        filters: { outcome: string; search?: string; cursor?: string },
+      ) => {
+        if (filters.cursor === "old-next") {
+          return await new Promise<Page>((resolve) => {
+            resolveOldPage = resolve;
+          });
+        }
+        if (filters.search === "새 검색") {
+          const isCandidate = filters.outcome === "CANDIDATE";
+          return {
+            items: isCandidate
+              ? [candidate("candidate-new-query", "새 검색 결과", "CANDIDATE")]
+              : [],
+            next_cursor: null,
+            total_count: isCandidate ? 1 : 0,
+            summary: {
+              ...emptySummary,
+              total_count: 1,
+              candidate_count: 1,
+              expected_total_won: 12_000,
+            },
+          };
+        }
+        const isCandidate = filters.outcome === "CANDIDATE";
+        return {
+          items: isCandidate
+            ? [candidate("candidate-old-first", "이전 첫 페이지", "CANDIDATE")]
+            : [],
+          next_cursor: isCandidate ? "old-next" : null,
+          total_count: isCandidate ? 101 : 0,
+          summary: {
+            ...emptySummary,
+            total_count: 101,
+            candidate_count: 101,
+            expected_total_won: 1_212_000,
+          },
+        };
+      },
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+    await user.click(await screen.findByRole("tab", { name: "수서 후보 101" }));
+    await user.click(screen.getByRole("button", { name: "수서 후보 더 보기" }));
+    await waitFor(() => expect(resolveOldPage).toBeDefined());
+
+    await user.type(screen.getByRole("searchbox", { name: "후보 필터" }), "새 검색");
+    expect(await screen.findByText("새 검색 결과")).toBeVisible();
+    expect(screen.getByRole("tab", { name: "수서 후보 1" })).toBeVisible();
+    expect(screen.getByText(/예상 금액/u)).toHaveTextContent("예상 금액 12,000원");
+
+    act(() =>
+      resolveOldPage?.({
+        items: [candidate("candidate-old-late", "늦은 이전 결과", "CANDIDATE")],
+        next_cursor: null,
+        total_count: 999,
+        summary: {
+          ...emptySummary,
+          total_count: 999,
+          candidate_count: 999,
+          expected_total_won: 9_990_000,
+        },
+      }),
+    );
+    await act(async () => undefined);
+    expect(screen.queryByText("늦은 이전 결과")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "수서 후보 1" })).toBeVisible();
+    expect(screen.getByText(/예상 금액/u)).toHaveTextContent("예상 금액 12,000원");
+  });
+
+  test("저장된 수량과 금액은 먼저 시작한 cursor 응답보다 우선한다", async () => {
+    const user = userEvent.setup();
+    type Page = Awaited<
+      ReturnType<ReturnType<typeof createFixtureApi>["listCandidates"]>
+    >;
+    let resolveOldPage: ((page: Page) => void) | undefined;
+    type CandidateUpdate = Awaited<
+      ReturnType<ReturnType<typeof createFixtureApi>["updateCandidate"]>
+    >;
+    let resolveSave: ((updated: CandidateUpdate) => void) | undefined;
+    const current = candidate("candidate-race-save", "저장 우선 책", "CANDIDATE");
+    const summary = {
+      total_count: 1,
+      candidate_count: 1,
+      needs_review_count: 0,
+      excluded_count: 0,
+      unresolved_count: 0,
+      expected_total_won: 12_000,
+    };
+    const api = candidateApi({
+      listCandidates: async (
+        _workspaceId: string,
+        filters: { outcome: string; search?: string; cursor?: string },
+      ) => {
+        if (filters.cursor === "save-race-next") {
+          return await new Promise<Page>((resolve) => {
+            resolveOldPage = resolve;
+          });
+        }
+        const isCandidate = filters.outcome === "CANDIDATE";
+        return {
+          items: isCandidate ? [current] : [],
+          next_cursor: isCandidate ? "save-race-next" : null,
+          total_count: isCandidate ? 1 : 0,
+          summary,
+        };
+      },
+      updateCandidate: async () =>
+        await new Promise<CandidateUpdate>((resolve) => {
+          resolveSave = resolve;
+        }),
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+    await user.click(await screen.findByRole("tab", { name: "수서 후보 1" }));
+    await user.click(screen.getByRole("button", { name: "수서 후보 더 보기" }));
+    await waitFor(() => expect(resolveOldPage).toBeDefined());
+
+    const quantity = screen.getByRole("spinbutton", { name: "저장 우선 책 수량" });
+    await user.click(quantity);
+    await waitFor(() => expect(quantity).not.toHaveAttribute("readonly"));
+    await user.clear(quantity);
+    await user.type(quantity, "2");
+    await user.tab();
+    await waitFor(() => expect(resolveSave).toBeDefined());
+
+    act(() =>
+      resolveOldPage?.({
+        items: [candidate("candidate-stale-save", "늦은 저장 전 행", "CANDIDATE")],
+        next_cursor: null,
+        total_count: 999,
+        summary: {
+          ...summary,
+          total_count: 999,
+          candidate_count: 999,
+          expected_total_won: 9_990_000,
+        },
+      }),
+    );
+    await act(async () => undefined);
+    expect(screen.queryByText("늦은 저장 전 행")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "수서 후보 1" })).toBeVisible();
+
+    act(() =>
+      resolveSave?.({
+        data: { ...current, quantity: 2, row_version: 2 },
+        etag: '"2"',
+      }),
+    );
+    expect(await screen.findByText(/저장됨 \d{2}:\d{2}/u)).toBeVisible();
+    expect(quantity).toHaveValue(2);
+    expect(screen.queryByText("늦은 저장 전 행")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "수서 후보 1" })).toBeVisible();
+    expect(screen.getByText(/예상 금액/u)).toHaveTextContent("예상 금액 24,000원");
+  });
+
+  test("저장 요청 뒤 시작한 서버 검색도 저장 응답과 같은 변경을 두 번 합산하지 않는다", async () => {
+    const user = userEvent.setup();
+    const current = candidate(
+      "candidate-commit-before-response",
+      "응답 기다리는 책",
+      "CANDIDATE",
+    );
+    type CandidateUpdate = Awaited<
+      ReturnType<ReturnType<typeof createFixtureApi>["updateCandidate"]>
+    >;
+    let resolveSave: ((updated: CandidateUpdate) => void) | undefined;
+    let committedSearches = 0;
+    const api = candidateApi({
+      listCandidates: async (
+        _workspaceId: string,
+        filters: { outcome: string; search?: string },
+      ) => {
+        const committed = filters.search === "응답";
+        if (committed) committedSearches += 1;
+        const included = filters.outcome === "CANDIDATE";
+        return {
+          items: included
+            ? [{ ...current, quantity: committed ? 2 : 1, row_version: committed ? 2 : 1 }]
+            : [],
+          next_cursor: null,
+          total_count: included ? 1 : 0,
+          summary: {
+            total_count: 1,
+            candidate_count: 1,
+            needs_review_count: 0,
+            excluded_count: 0,
+            unresolved_count: 0,
+            expected_total_won: committed ? 24_000 : 12_000,
+          },
+        };
+      },
+      updateCandidate: async () =>
+        await new Promise<CandidateUpdate>((resolve) => {
+          resolveSave = resolve;
+        }),
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+    await user.click(await screen.findByRole("tab", { name: "수서 후보 1" }));
+    const quantity = screen.getByRole("spinbutton", { name: "응답 기다리는 책 수량" });
+    await user.click(quantity);
+    await waitFor(() => expect(quantity).not.toHaveAttribute("readonly"));
+    await user.clear(quantity);
+    await user.type(quantity, "2");
+    await user.tab();
+    await waitFor(() => expect(resolveSave).toBeDefined());
+
+    await user.type(screen.getByRole("searchbox", { name: "후보 필터" }), "응답");
+    await waitFor(() => expect(committedSearches).toBe(3));
+    act(() =>
+      resolveSave?.({
+        data: { ...current, quantity: 2, row_version: 2 },
+        etag: '"2"',
+      }),
+    );
+
+    expect(await screen.findByText(/저장됨 \d{2}:\d{2}/u)).toBeVisible();
+    expect(screen.getByText(/예상 금액/u)).toHaveTextContent("예상 금액 24,000원");
+    expect(screen.getAllByText("응답 기다리는 책")).toHaveLength(1);
+  });
+
   test("후보 검색은 브라우저 첫 페이지가 아니라 서버 필터를 다시 요청한다", async () => {
     const user = userEvent.setup();
     const filtersSeen: Array<{ outcome: string; search?: string }> = [];
@@ -1151,6 +3429,65 @@ describe("후보 확인과 자동 저장", () => {
     await waitFor(() => {
       expect(filtersSeen.some((filters) => filters.search === "마법 학교")).toBe(true);
     });
+  });
+
+  test("느린 이전 검색 응답은 최신 검색 결과와 전체 요약을 되돌리지 않는다", async () => {
+    const user = userEvent.setup();
+    type Page = Awaited<ReturnType<ReturnType<typeof createFixtureApi>["listCandidates"]>>;
+    const slowResolvers: Array<(page: Page) => void> = [];
+    const emptySummary = {
+      total_count: 0,
+      candidate_count: 0,
+      needs_review_count: 0,
+      excluded_count: 0,
+      unresolved_count: 0,
+      expected_total_won: 0,
+    };
+    const api = candidateApi({
+      listCandidates: async (_workspaceId: string, filters: { outcome: string; search?: string }) => {
+        if (filters.search === "느림") {
+          return await new Promise<Page>((resolve) => slowResolvers.push(resolve));
+        }
+        const fastSearch = filters.search === "빠름";
+        const fast = fastSearch && filters.outcome === "CANDIDATE";
+        return {
+          items: fast ? [candidate("candidate-fast", "빠름 결과", "CANDIDATE")] : [],
+          next_cursor: null,
+          total_count: fast ? 1 : 0,
+          summary: fastSearch
+            ? { ...emptySummary, total_count: 1, candidate_count: 1, expected_total_won: 12_000 }
+            : emptySummary,
+        };
+      },
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+    const search = await screen.findByRole("searchbox", { name: "후보 필터" });
+    await user.type(search, "느림");
+    await waitFor(() => expect(slowResolvers).toHaveLength(3));
+    await user.clear(search);
+    await user.type(search, "빠름");
+    await user.click(await screen.findByRole("tab", { name: "수서 후보 1" }));
+    expect(await screen.findByText("빠름 결과")).toBeVisible();
+
+    act(() => {
+      for (const resolve of slowResolvers) {
+        resolve({
+          items: [candidate("candidate-slow", "느림 결과", "CANDIDATE")],
+          next_cursor: null,
+          total_count: 999,
+          summary: {
+            ...emptySummary,
+            total_count: 999,
+            candidate_count: 999,
+            expected_total_won: 9_990_000,
+          },
+        });
+      }
+    });
+    await act(async () => undefined);
+    expect(screen.getByText("빠름 결과")).toBeVisible();
+    expect(screen.queryByText("느림 결과")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "수서 후보 1" })).toBeVisible();
   });
 
   test("확인 필요 판정을 끝내고 보이는 승인 예산을 입력해야 승인 요청할 수 있다", async () => {

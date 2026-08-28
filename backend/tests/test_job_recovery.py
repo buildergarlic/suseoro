@@ -99,6 +99,14 @@ def _source_document(connection, *, sha_digit: str, row_count: int = 2):
         """,
         (document_id, file_id, SCHOOL_ID, NOW_TEXT, NOW_TEXT),
     )
+    connection.execute(
+        """
+        INSERT INTO workspace_sources (
+            workspace_id, source_document_id, school_id, created_at
+        ) VALUES (?, ?, ?, ?)
+        """,
+        (WORKSPACE_ID, document_id, SCHOOL_ID, NOW_TEXT),
+    )
     row_ids = []
     for index in range(1, row_count + 1):
         row_id = str(uuid.uuid4())
@@ -124,6 +132,41 @@ def _source_document(connection, *, sha_digit: str, row_count: int = 2):
             ),
         )
     return document_id, tuple(row_ids)
+
+
+def _comparison_payload(connection, document_ids: tuple[str, ...]) -> dict:
+    from suseoro.jobs.source_snapshot import source_rows_snapshot
+
+    snapshots = []
+    for document_id in document_ids:
+        row = connection.execute(
+            """
+            SELECT document.id, document.status, document.parser_version,
+                   document.completed_at, file.sha256,
+                   COALESCE(config.role, document.role) AS role,
+                   COALESCE(config.row_version, 1) AS config_version,
+                   COALESCE(config.mapping_json, '{}') AS mapping_json
+            FROM source_documents document
+            JOIN source_files file ON file.id = document.source_file_id
+            LEFT JOIN source_configurations config
+              ON config.source_document_id = document.id
+            WHERE document.id = ?
+            """,
+            (document_id,),
+        ).fetchone()
+        row_count, row_digest = source_rows_snapshot(connection, document_id)
+        snapshots.append(
+            {
+                **dict(row),
+                "row_count": row_count,
+                "row_digest": row_digest,
+            }
+        )
+    return {
+        "source_document_ids": list(document_ids),
+        "source_snapshot_version": 1,
+        "source_snapshot": snapshots,
+    }
 
 
 def test_job_persists_stage_progress_heartbeat_and_success(tmp_path) -> None:
@@ -434,7 +477,7 @@ def test_real_compare_handler_batches_rows_and_resumes_persisted_results(
             school_id=SCHOOL_ID,
             workspace_id=WORKSPACE_ID,
             job_type="COMPARE",
-            payload={"source_document_ids": [document_id]},
+            payload=_comparison_payload(connection, (document_id,)),
             now=now,
         )
         connection.execute(
@@ -513,7 +556,7 @@ def test_compare_handler_observes_cancellation_between_row_batches(tmp_path) -> 
             school_id=SCHOOL_ID,
             workspace_id=WORKSPACE_ID,
             job_type="COMPARE",
-            payload={"source_document_ids": [document_id]},
+            payload=_comparison_payload(connection, (document_id,)),
             now=now,
         )
         connection.execute(
@@ -560,7 +603,7 @@ def test_compare_handler_recovers_from_last_committed_real_row_batch(tmp_path) -
             school_id=SCHOOL_ID,
             workspace_id=WORKSPACE_ID,
             job_type="COMPARE",
-            payload={"source_document_ids": [document_id]},
+            payload=_comparison_payload(connection, (document_id,)),
             now=now,
         )
         connection.execute(
@@ -619,7 +662,7 @@ def test_stale_claim_cannot_write_comparison_or_file_results(tmp_path) -> None:
             school_id=SCHOOL_ID,
             workspace_id=WORKSPACE_ID,
             job_type="COMPARE",
-            payload={"source_document_ids": [document_id]},
+            payload=_comparison_payload(connection, (document_id,)),
             now=started,
         )
         old_claim = repository.claim_next(now=started)
@@ -666,7 +709,7 @@ def test_reclaim_cannot_interleave_after_old_claim_check_before_domain_commit(
             school_id=SCHOOL_ID,
             workspace_id=WORKSPACE_ID,
             job_type="COMPARE",
-            payload={"source_document_ids": [document_id]},
+            payload=_comparison_payload(setup, (document_id,)),
             now=started,
         )
         old_claim = repository.claim_next(now=started)

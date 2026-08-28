@@ -22,6 +22,7 @@ from suseoro.api.dependencies import (
 from suseoro.api.errors import domain_not_found
 from suseoro.api.routes.events import publish_event
 from suseoro.jobs.repository import JobRepository
+from suseoro.jobs.source_snapshot import source_rows_snapshot
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.audit import record_audit_event
 from suseoro.services.idempotency import (
@@ -277,30 +278,84 @@ def create_comparison_job(
         from fastapi import HTTPException
 
         raise HTTPException(status_code=409, detail={"code": "ACTIVE_CATALOG_REQUIRED"})
+    unresolved_repairs = connection.execute(
+        """
+        SELECT COUNT(*) FROM upload_repair_obligations
+        WHERE school_id = ? AND workspace_id = ? AND status != 'RESOLVED'
+        """,
+        (user.school_id, workspace_id),
+    ).fetchone()[0]
+    if unresolved_repairs:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=409, detail={"code": "UPLOAD_REPAIR_REQUIRED"})
     document_ids = tuple(dict.fromkeys(payload.source_document_ids))
-    placeholders = ",".join("?" for _ in document_ids)
-    documents = connection.execute(
-        f"""
-        SELECT document.id, document.status,
-               COALESCE(config.role, document.role) AS role
+    authoritative_documents = connection.execute(
+        """
+        SELECT document.id, document.status, document.parser_version,
+               document.completed_at, file.sha256,
+               COALESCE(config.role, document.role) AS role,
+               COALESCE(config.row_version, 1) AS config_version,
+               COALESCE(config.mapping_json, '{{}}') AS mapping_json
         FROM source_documents document
+        JOIN source_files file ON file.id = document.source_file_id
         JOIN workspace_sources link ON link.source_document_id = document.id
         LEFT JOIN source_configurations config
           ON config.source_document_id = document.id
         WHERE link.workspace_id = ? AND link.school_id = ?
-          AND document.id IN ({placeholders})
+          AND COALESCE(config.role, document.role) = 'PURCHASE_REQUEST'
         """,
-        (workspace_id, user.school_id, *document_ids),
+        (workspace_id, user.school_id),
     ).fetchall()
-    if (
-        {row["id"] for row in documents} != set(document_ids)
-        or any(row["role"] != "PURCHASE_REQUEST" for row in documents)
-        or any(row["status"] not in {"SUCCESS", "ROW_ERROR"} for row in documents)
-    ):
+    documents_by_id = {row["id"]: row for row in authoritative_documents}
+    if set(document_ids) != set(documents_by_id):
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=409, detail={"code": "COMPARISON_SOURCE_SET_CHANGED"}
+        )
+    documents = [documents_by_id[document_id] for document_id in document_ids]
+    if any(row["status"] not in {"SUCCESS", "ROW_ERROR"} for row in documents):
         from fastapi import HTTPException
 
         raise HTTPException(
             status_code=422, detail={"code": "COMPARISON_SOURCES_NOT_READY"}
+        )
+    placeholders = ",".join("?" for _ in document_ids)
+    active_processing = connection.execute(
+        f"""
+        SELECT 1
+        FROM durable_jobs AS job, json_each(job.payload_json, '$.source_document_ids') AS source
+        WHERE job.school_id = ? AND job.workspace_id = ?
+          AND job.job_type IN ('INGEST', 'PARSE')
+          AND job.status IN ('QUEUED', 'RUNNING', 'CANCEL_REQUESTED')
+          AND source.value IN ({placeholders})
+        LIMIT 1
+        """,
+        (user.school_id, workspace_id, *document_ids),
+    ).fetchone()
+    if active_processing is not None:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=409, detail={"code": "SOURCE_PROCESSING_IN_PROGRESS"}
+        )
+    source_snapshot = []
+    for document in documents:
+        row_count, row_digest = source_rows_snapshot(connection, document["id"])
+        source_snapshot.append(
+            {
+                "id": document["id"],
+                "role": document["role"],
+                "status": document["status"],
+                "sha256": document["sha256"],
+                "config_version": document["config_version"],
+                "mapping_json": document["mapping_json"],
+                "parser_version": document["parser_version"],
+                "completed_at": document["completed_at"],
+                "row_count": row_count,
+                "row_digest": row_digest,
+            }
         )
     updated_at = format_utc(utc_now())
     updated = connection.execute(
@@ -315,15 +370,17 @@ def create_comparison_job(
         from suseoro.services.concurrency import VersionConflict
 
         raise VersionConflict(workspace["row_version"], submitted_version)
-    total = connection.execute(
-        f"SELECT COUNT(*) FROM source_rows WHERE source_document_id IN ({placeholders})",
-        document_ids,
-    ).fetchone()[0]
+    total = sum(int(item["row_count"]) for item in source_snapshot)
     job = JobRepository(connection).create(
         school_id=user.school_id,
         workspace_id=workspace_id,
         job_type="COMPARE",
-        payload={"source_document_ids": list(document_ids)},
+        payload={
+            "source_document_ids": list(document_ids),
+            "catalog_version_id": active_catalog["id"],
+            "source_snapshot_version": 1,
+            "source_snapshot": source_snapshot,
+        },
         progress_total=total,
     )
     result = {

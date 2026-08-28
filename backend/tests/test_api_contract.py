@@ -35,7 +35,7 @@ WORKSPACE_ID = "550e8400-e29b-41d4-a716-446655440104"
 REQUEST_ID = "550e8400-e29b-41d4-a716-446655440105"
 
 
-def _seed(settings: Settings) -> None:
+def _seed(settings: Settings, *, workspace_status: str = "DRAFT") -> None:
     with connect(settings.database_path) as connection:
         apply_migrations(connection)
         connection.executemany(
@@ -92,9 +92,16 @@ def _seed(settings: Settings) -> None:
             INSERT INTO acquisition_workspaces (
                 id, school_id, name, status, created_by_user_id,
                 created_at, updated_at
-            ) VALUES (?, ?, '기존 작업', 'CANDIDATE_REVIEW', ?, ?, ?)
+            ) VALUES (?, ?, '기존 작업', ?, ?, ?, ?)
             """,
-            (WORKSPACE_ID, SCHOOL_ID, OPERATOR_ID, NOW, NOW),
+            (
+                WORKSPACE_ID,
+                SCHOOL_ID,
+                workspace_status,
+                OPERATOR_ID,
+                NOW,
+                NOW,
+            ),
         )
         connection.commit()
 
@@ -105,13 +112,14 @@ def _client(
     reviewer: bool = False,
     raise_server_exceptions: bool = True,
     settings_kwargs: dict[str, object] | None = None,
+    workspace_status: str = "DRAFT",
 ) -> tuple[TestClient, Settings, str]:
     settings = Settings(
         data_dir=data_dir,
         secure_cookies=False,
         **(settings_kwargs or {}),
     )
-    _seed(settings)
+    _seed(settings, workspace_status=workspace_status)
     user = UserRecord(
         id=REVIEWER_ID if reviewer else OPERATOR_ID,
         school_id=SCHOOL_ID,
@@ -649,7 +657,7 @@ def test_reviewer_cannot_create_workspace_and_validation_uses_error_envelope(
 def test_workspace_and_candidate_lists_use_stable_filtered_cursor_pages(
     data_dir: Path,
 ) -> None:
-    client, settings, csrf = _client(data_dir)
+    client, settings, csrf = _client(data_dir, workspace_status="CANDIDATE_REVIEW")
     _, candidate_ids = _source_and_candidates(settings)
     with client:
         for index in range(3):
@@ -699,7 +707,7 @@ def test_workspace_and_candidate_lists_use_stable_filtered_cursor_pages(
 def test_candidate_pages_report_authoritative_totals_and_reach_beyond_one_hundred(
     data_dir: Path,
 ) -> None:
-    client, settings, _ = _client(data_dir)
+    client, settings, _ = _client(data_dir, workspace_status="CANDIDATE_REVIEW")
     source_id, _ = _source_and_candidates(settings)
     _extend_candidate_fixture(settings, source_id, through=150)
     with connect(settings.database_path) as connection:
@@ -775,7 +783,7 @@ def test_candidate_pages_report_authoritative_totals_and_reach_beyond_one_hundre
 def test_get_candidate_returns_the_authoritative_full_row_etag_and_hides_scope(
     data_dir: Path,
 ) -> None:
-    client, settings, csrf = _client(data_dir)
+    client, settings, csrf = _client(data_dir, workspace_status="CANDIDATE_REVIEW")
     _, candidate_ids = _source_and_candidates(settings)
     candidate_id = candidate_ids[0]
     other_workspace = "550e8400-e29b-41d4-a716-446655449999"
@@ -827,7 +835,7 @@ def test_get_candidate_returns_the_authoritative_full_row_etag_and_hides_scope(
 def test_candidate_patch_returns_etag_and_structured_412_conflict(
     data_dir: Path,
 ) -> None:
-    client, settings, csrf = _client(data_dir)
+    client, settings, csrf = _client(data_dir, workspace_status="CANDIDATE_REVIEW")
     _, candidate_ids = _source_and_candidates(settings)
     candidate_id = candidate_ids[0]
 
@@ -893,8 +901,16 @@ def test_multipart_upload_streams_each_file_and_keeps_partial_success(
 
     assert response.status_code == 207
     body = response.json()
-    assert set(body["items"][0]) == {"filename", "status", "source_id", "error"}
-    assert set(body["items"][1]) == {"filename", "status", "source_id", "error"}
+    upload_item_fields = {
+        "filename",
+        "status",
+        "source_id",
+        "error",
+        "repair_obligation_id",
+        "repair_generation",
+    }
+    assert set(body["items"][0]) == upload_item_fields
+    assert set(body["items"][1]) == upload_item_fields
     assert body["items"][0]["error"] is None
     assert body["items"][1]["source_id"] is None
     UploadResponse.model_validate(body)
@@ -1252,6 +1268,15 @@ def test_pre_0006b_completed_upload_rows_bridge_to_canonical_claim_without_colli
     route = f"POST /api/v2/workspaces/{WORKSPACE_ID}/sources"
     with connect(settings.database_path) as connection:
         connection.execute(
+            """
+            DELETE FROM upload_repair_obligations
+            WHERE upload_claim_id IN (
+                SELECT id FROM upload_idempotency_claims WHERE key = ?
+            )
+            """,
+            (key,),
+        )
+        connection.execute(
             "DELETE FROM upload_idempotency_claims WHERE key = ?", (key,)
         )
         connection.execute(
@@ -1301,12 +1326,28 @@ def test_pre_0006b_completed_upload_rows_bridge_to_canonical_claim_without_colli
             data={"role": "PURCHASE_REQUEST"},
             files=changed_files,
         )
+        fresh = (
+            restarted.post(
+                f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+                headers=_headers(csrf, f"{key}-fresh"),
+                data={"role": "PURCHASE_REQUEST"},
+                files=request_files,
+            )
+            if partial
+            else None
+        )
 
-    assert replay.status_code == first.status_code
-    assert replay.json() == first.json()
+    if partial:
+        assert replay.status_code == 409
+        assert replay.json()["detail"]["code"] == "LEGACY_UPLOAD_IDENTITY_UNVERIFIABLE"
+        assert fresh is not None and fresh.status_code != 409
+    else:
+        assert replay.status_code == first.status_code
+        assert replay.json() == first.json()
     assert changed.status_code == 409
     assert changed.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
-    assert _upload_durable_state(settings) == before_replay
+    if not partial:
+        assert _upload_durable_state(settings) == before_replay
 
 
 def test_pre_0006b_changed_request_cannot_poison_later_exact_replay(
@@ -1343,6 +1384,15 @@ def test_pre_0006b_changed_request_cannot_poison_later_exact_replay(
         ],
     }
     with connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            DELETE FROM upload_repair_obligations
+            WHERE upload_claim_id IN (
+                SELECT id FROM upload_idempotency_claims WHERE key = ?
+            )
+            """,
+            (key,),
+        )
         connection.execute(
             "DELETE FROM upload_idempotency_claims WHERE key = ?", (key,)
         )
@@ -1428,6 +1478,15 @@ def test_pre_0006b_file_too_large_replay_preserves_rejection_classification(
     }
     with connect(settings.database_path) as connection:
         connection.execute(
+            """
+            DELETE FROM upload_repair_obligations
+            WHERE upload_claim_id IN (
+                SELECT id FROM upload_idempotency_claims WHERE key = ?
+            )
+            """,
+            (key,),
+        )
+        connection.execute(
             "DELETE FROM upload_idempotency_claims WHERE key = ?", (key,)
         )
         connection.execute(
@@ -1461,8 +1520,8 @@ def test_pre_0006b_file_too_large_replay_preserves_rejection_classification(
             files=[("files", ("legacy.csv", content, "text/csv"))],
         )
 
-    assert replay.status_code == 207
-    assert replay.json() == first.json()
+    assert replay.status_code == 409
+    assert replay.json()["detail"]["code"] == "LEGACY_UPLOAD_IDENTITY_UNVERIFIABLE"
 
 
 def test_completed_upload_policy_exception_is_bounded_to_historical_shape_and_size(
@@ -3423,7 +3482,7 @@ def test_middleware_session_database_failures_use_the_request_id_json_envelope(
 def test_candidate_lock_is_audited_once_with_actor_and_before_after(
     data_dir: Path,
 ) -> None:
-    client, settings, csrf = _client(data_dir)
+    client, settings, csrf = _client(data_dir, workspace_status="CANDIDATE_REVIEW")
     _, candidate_ids = _source_and_candidates(settings)
     with client:
         first = client.post(

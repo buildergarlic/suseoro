@@ -24,9 +24,23 @@ export interface FixtureApi {
   listWorkspaces(): Promise<Schemas["WorkspacePage"]>;
   getWorkspace(workspaceId: string): Promise<Versioned<Workspace>>;
   listSources(workspaceId: string): Promise<Schemas["SourcePage"]>;
+  listUploadRepairs(workspaceId: string): Promise<Schemas["UploadRepairPage"]>;
+  listWorkspaceJobs(
+    workspaceId: string,
+    filters?: { type?: string; status?: string; cursor?: string; limit?: number },
+  ): Promise<Schemas["JobPage"]>;
   uploadSources(
     workspaceId: string,
-    input: { files: File[]; role: Schemas["DocumentRole"] },
+    input: {
+      files: File[];
+      role: Schemas["DocumentRole"];
+      vendorScope?: string;
+      requestedStartLocalDate?: string;
+      requestedThroughLocalDate?: string;
+      repairObligationId?: string;
+      repairGeneration?: number;
+      replacementSourceId?: string;
+    },
   ): Promise<Upload>;
   getJob(jobId: string): Promise<Job>;
   retryJob(jobId: string): Promise<Schemas["JobCommandResponse"]>;
@@ -155,6 +169,8 @@ export const sourceFixture: Source = {
   row_version: 1,
   created_at: "2026-08-29T08:05:00.000000Z",
   completed_at: null,
+  latest_job_id: null,
+  latest_result: null,
 };
 
 export const idleJob: Job = {
@@ -188,6 +204,8 @@ export function createFixtureApi(
       etag: '"1"',
     }),
     listSources: async (_workspaceId) => ({ items: [], next_cursor: null }),
+    listUploadRepairs: async (_workspaceId) => ({ items: [], next_cursor: null }),
+    listWorkspaceJobs: async (_workspaceId) => ({ items: [], next_cursor: null }),
     uploadSources: async (_workspaceId, input) => ({
       job_id: "job-default",
       items: input.files.map((file, index) => ({
@@ -195,6 +213,8 @@ export function createFixtureApi(
         status: "ACCEPTED",
         source_id: `source-${index + 1}`,
         error: null,
+        repair_obligation_id: null,
+        repair_generation: null,
       })),
     }),
     getJob: async (_jobId) => idleJob,

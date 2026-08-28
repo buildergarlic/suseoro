@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Candidate, SuseoroApi, User, Workspace } from "../../api/client";
 import type { components } from "../../api/types";
@@ -78,10 +78,17 @@ export function CandidatePanel({
   const [loadingMore, setLoadingMore] = useState(false);
   const [requestingApproval, setRequestingApproval] = useState(false);
   const [budgetWon, setBudgetWon] = useState("");
+  const [mutationRefresh, setMutationRefresh] = useState(0);
+  const queryGenerationRef = useRef(0);
+  const mutationEpochRef = useRef(0);
+  const mutationInFlightRef = useRef(0);
   const operator = canOperate(user);
 
   useEffect(() => {
     let active = true;
+    const generation = ++queryGenerationRef.current;
+    const mutationEpoch = mutationEpochRef.current;
+    const mutationWasInFlight = mutationInFlightRef.current > 0;
     const timer = window.setTimeout(() => {
       void Promise.all(
         OUTCOMES.map(async (outcome) => [
@@ -94,7 +101,13 @@ export function CandidatePanel({
         ] as const),
       )
         .then((results) => {
-          if (!active) return;
+          if (
+            !active ||
+            queryGenerationRef.current !== generation ||
+            mutationEpochRef.current !== mutationEpoch ||
+            mutationWasInFlight ||
+            mutationInFlightRef.current > 0
+          ) return;
           const next = Object.fromEntries(
             results.map(([outcome, page]) => [
               outcome,
@@ -125,7 +138,20 @@ export function CandidatePanel({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [api, search, workspace.id]);
+  }, [api, mutationRefresh, search, workspace.id]);
+
+  function beginMutation() {
+    mutationEpochRef.current += 1;
+    mutationInFlightRef.current += 1;
+  }
+
+  function finishMutation(authoritative: boolean) {
+    mutationInFlightRef.current = Math.max(0, mutationInFlightRef.current - 1);
+    queryGenerationRef.current += 1;
+    if (mutationInFlightRef.current === 0 && !authoritative) {
+      setMutationRefresh((current) => current + 1);
+    }
+  }
 
   const visibleItems = useMemo(
     () => pages[activeOutcome].items.filter((item) => matchesSearch(item, search)),
@@ -233,6 +259,11 @@ export function CandidatePanel({
   async function loadMore() {
     const cursor = pages[activeOutcome].nextCursor;
     if (!cursor) return;
+    const generation = queryGenerationRef.current;
+    const mutationEpoch = mutationEpochRef.current;
+    const mutationWasInFlight = mutationInFlightRef.current > 0;
+    const outcome = activeOutcome;
+    const requestedSearch = search.trim();
     setLoadingMore(true);
     try {
       const page = await api.listCandidates(workspace.id, {
@@ -241,10 +272,18 @@ export function CandidatePanel({
         cursor,
         limit: 100,
       });
+      if (
+        queryGenerationRef.current !== generation ||
+        mutationEpochRef.current !== mutationEpoch ||
+        mutationWasInFlight ||
+        mutationInFlightRef.current > 0 ||
+        activeOutcome !== outcome ||
+        search.trim() !== requestedSearch
+      ) return;
       setPages((current) => ({
         ...current,
-        [activeOutcome]: {
-          items: [...current[activeOutcome].items, ...page.items],
+        [outcome]: {
+          items: [...current[outcome].items, ...page.items],
           nextCursor: page.next_cursor,
           totalCount: page.total_count,
         },
@@ -264,41 +303,48 @@ export function CandidatePanel({
   async function restore(candidate: Candidate) {
     try {
       await api.lockCandidate(candidate.id, workspace.id);
-      const updated = await api.updateCandidate(
-        candidate.id,
-        {
-          workspace_id: workspace.id,
-          changes: { outcome: "CANDIDATE" },
-          reason: "제외 되돌리기",
-        },
-        candidate.row_version,
-      );
-      const restored: Candidate = {
-        ...candidate,
-        ...updated.data,
-        outcome: "CANDIDATE",
-        reason: null,
-      };
-      setPages((current) => ({
-        ...current,
-        EXCLUDED: {
-          ...current.EXCLUDED,
-          totalCount: Math.max(0, current.EXCLUDED.totalCount - 1),
-          items: current.EXCLUDED.items.filter((item) => item.id !== candidate.id),
-        },
-        CANDIDATE: {
-          ...current.CANDIDATE,
-          totalCount: current.CANDIDATE.totalCount + 1,
-          items: [...current.CANDIDATE.items, restored],
-        },
-      }));
-      setSummary((current) => ({
-        ...current,
-        candidate_count: current.candidate_count + 1,
-        excluded_count: Math.max(0, current.excluded_count - 1),
-        expected_total_won: current.expected_total_won + candidateAmount(restored),
-      }));
-      setAnnouncement("수서 후보로 되돌렸습니다.");
+      beginMutation();
+      let authoritative = false;
+      try {
+        const updated = await api.updateCandidate(
+            candidate.id,
+            {
+              workspace_id: workspace.id,
+              changes: { outcome: "CANDIDATE" },
+              reason: "제외 되돌리기",
+            },
+            candidate.row_version,
+          );
+        const restored: Candidate = {
+          ...candidate,
+          ...updated.data,
+          outcome: "CANDIDATE",
+          reason: null,
+        };
+        setPages((current) => ({
+          ...current,
+          EXCLUDED: {
+            ...current.EXCLUDED,
+            totalCount: Math.max(0, current.EXCLUDED.totalCount - 1),
+            items: current.EXCLUDED.items.filter((item) => item.id !== candidate.id),
+          },
+          CANDIDATE: {
+            ...current.CANDIDATE,
+            totalCount: current.CANDIDATE.totalCount + 1,
+            items: [...current.CANDIDATE.items, restored],
+          },
+        }));
+        setSummary((current) => ({
+          ...current,
+          candidate_count: current.candidate_count + 1,
+          excluded_count: Math.max(0, current.excluded_count - 1),
+          expected_total_won: current.expected_total_won + candidateAmount(restored),
+        }));
+        setAnnouncement("수서 후보로 되돌렸습니다.");
+        authoritative = true;
+      } finally {
+        finishMutation(authoritative);
+      }
     } catch (error) {
       setAnnouncement(
         error instanceof Error ? error.message : "되돌리지 못했습니다. 다시 시도해 주세요.",
@@ -438,6 +484,8 @@ export function CandidatePanel({
                     key={candidate.id}
                     onCandidateUpdated={updateCandidate}
                     onDecided={moveResolvedCandidate}
+                    onMutationFinished={finishMutation}
+                    onMutationStarted={beginMutation}
                     user={user}
                     workspaceId={workspace.id}
                   />

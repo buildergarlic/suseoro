@@ -233,6 +233,23 @@ def _existing_upload_idempotency_response(
         return None
 
     stored_body = json.loads(row["response_body"]) if row["response_body"] else None
+    if row["request_hash"] == canonical_digest:
+        if row["response_status"] is None or stored_body is None:
+            raise IdempotencyConflict("IDEMPOTENCY_REQUEST_IN_PROGRESS")
+        return StoredResponse(status=int(row["response_status"]), body=stored_body)
+    canonical_claim = connection.execute(
+        """
+        SELECT request_fingerprint
+        FROM upload_idempotency_claims
+        WHERE school_id = ? AND actor_id = ? AND route = ? AND key = ?
+        """,
+        (school_id, actor_id, route, key),
+    ).fetchone()
+    if (
+        canonical_claim is not None
+        and canonical_claim["request_fingerprint"] != canonical_digest
+    ):
+        raise IdempotencyConflict()
     compatible_digests = {canonical_digest}
     client_files = request_body.get("files")
     stored_items = stored_body.get("items") if isinstance(stored_body, dict) else None
@@ -244,6 +261,7 @@ def _existing_upload_idempotency_response(
     ):
         legacy_files: list[dict[str, Any]] = []
         compatible = True
+        contains_unverifiable_rejection = False
         for client_file, stored_item, current_error in zip(
             client_files,
             stored_items,
@@ -262,6 +280,8 @@ def _existing_upload_idempotency_response(
             if error_code != current_error:
                 compatible = False
                 break
+            if error_code:
+                contains_unverifiable_rejection = True
             legacy_files.append(
                 {"filename": client_file["filename"], "error": error_code}
                 if error_code
@@ -271,6 +291,8 @@ def _existing_upload_idempotency_response(
                 }
             )
         if compatible:
+            if contains_unverifiable_rejection:
+                raise IdempotencyConflict("LEGACY_UPLOAD_IDENTITY_UNVERIFIABLE")
             compatible_digests.add(
                 request_hash({**request_body, "files": legacy_files})
             )
@@ -468,6 +490,8 @@ def acquire_upload_claim(
                                     {
                                         "filename": item.get("filename"),
                                         "size_bytes": item.get("size_bytes"),
+                                        "sha256": item.get("sha256"),
+                                        "content_type": item.get("content_type"),
                                     }
                                     for item in request_body.get("files", [])
                                     if isinstance(item, dict)

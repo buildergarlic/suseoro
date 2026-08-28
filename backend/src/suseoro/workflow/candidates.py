@@ -9,6 +9,8 @@ from typing import Any
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.audit import record_audit_event
 from suseoro.services.concurrency import (
+    EditLockConflict,
+    EditLockRequired,
     VersionConflict,
     require_edit_lock,
     update_with_version,
@@ -233,13 +235,6 @@ class CandidateService:
                         }
                     )
                     continue
-                require_edit_lock(
-                    self.connection,
-                    school_id=school_id,
-                    entity_type="candidate_decision",
-                    entity_id=candidate_id,
-                    actor_id=actor_id,
-                )
                 try:
                     reason = str(item.get("reason") or "").strip()
                     if not reason:
@@ -268,6 +263,13 @@ class CandidateService:
                     )
                     continue
                 try:
+                    require_edit_lock(
+                        self.connection,
+                        school_id=school_id,
+                        entity_type="candidate_decision",
+                        entity_id=candidate_id,
+                        actor_id=actor_id,
+                    )
                     updated = update_with_version(
                         self.connection,
                         table="candidate_decisions",
@@ -281,6 +283,17 @@ class CandidateService:
                             "updated_at": format_utc(utc_now()),
                         },
                     )
+                except (EditLockConflict, EditLockRequired) as error:
+                    results.append(
+                        {
+                            "id": candidate_id,
+                            "status": "LOCKED",
+                            "code": error.detail["code"],
+                            "outcome": before["outcome"],
+                            "row_version": before["row_version"],
+                        }
+                    )
+                    continue
                 except VersionConflict:
                     current = self._candidate(school_id, workspace_id, candidate_id)
                     results.append(

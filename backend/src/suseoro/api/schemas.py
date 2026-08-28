@@ -80,11 +80,30 @@ class UploadItem(PublicSchema):
     status: str
     source_id: str | None
     error: UploadItemError | None
+    repair_obligation_id: str | None = None
+    repair_generation: int | None = None
 
 
 class UploadResponse(PublicSchema):
     job_id: str | None
     items: list[UploadItem]
+
+
+class UploadRepairObligation(PublicSchema):
+    id: str
+    filename: str
+    error: UploadItemError
+    status: str
+    generation: int
+    role: str
+    resolved_source_id: str | None
+    created_at: str
+    updated_at: str
+
+
+class UploadRepairPage(PublicSchema):
+    items: list[UploadRepairObligation]
+    next_cursor: str | None
 
 
 class SourceResponse(PublicSchema):
@@ -99,6 +118,8 @@ class SourceResponse(PublicSchema):
     row_version: int
     created_at: str
     completed_at: str | None
+    latest_job_id: str | None = None
+    latest_result: JobFileResult | None = None
 
 
 class SourcePage(PublicSchema):
@@ -179,6 +200,11 @@ class JobCommandResponse(PublicSchema):
     progress_total: int
     error: JobError | None
     retry_count: int
+
+
+class JobPage(PublicSchema):
+    items: list[JobResponse]
+    next_cursor: str | None
 
 
 class CandidateResponse(PublicSchema):
@@ -634,7 +660,9 @@ OPERATION_RESPONSE_MODELS: dict[str, type[BaseModel]] = {
     "transitionWorkspace": WorkspaceStateResponse,
     "createComparisonJob": ComparisonJobResponse,
     "uploadSources": UploadResponse,
+    "listUploadRepairs": UploadRepairPage,
     "listSources": SourcePage,
+    "listWorkspaceJobs": JobPage,
     "getSource": SourceResponse,
     "updateSourceMapping": SourceResponse,
     "parseSource": QueuedJobResponse,

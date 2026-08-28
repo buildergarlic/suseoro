@@ -13,6 +13,8 @@ interface CandidateRowProps {
   allowDecision?: boolean;
   onCandidateUpdated?: (candidate: Candidate, previous: Candidate) => void;
   onDecided?: (candidate: Candidate, outcome: "CANDIDATE" | "EXCLUDED") => void;
+  onMutationStarted?: () => void;
+  onMutationFinished?: (authoritative: boolean) => void;
 }
 
 interface ConflictState {
@@ -87,6 +89,8 @@ export function CandidateRow({
   allowDecision = false,
   onCandidateUpdated,
   onDecided,
+  onMutationStarted,
+  onMutationFinished,
 }: CandidateRowProps) {
   const [quantity, setQuantityState] = useState(candidate.quantity);
   const [confirmedQuantity, setConfirmedQuantity] = useState(candidate.quantity);
@@ -199,7 +203,9 @@ export function CandidateRow({
         const desired = queuedQuantityRef.current;
         queuedQuantityRef.current = null;
         if (desired === confirmedQuantityRef.current) continue;
+        let authoritative = false;
         try {
+          onMutationStarted?.();
           const updated = await api.updateCandidate(
             candidate.id,
             {
@@ -218,6 +224,7 @@ export function CandidateRow({
           if (quantityDraftRef.current === desired) setQuantity(updated.data.quantity);
           setSavedAt(shortTime(new Date()));
           onCandidateUpdated?.(merged, previous);
+          authoritative = true;
         } catch (error) {
           if (isConflict(error)) {
             try {
@@ -230,6 +237,7 @@ export function CandidateRow({
               queuedQuantityRef.current = null;
               setConflict({ server: latest.data, localQuantity: quantityDraftRef.current });
               onCandidateUpdated?.(latest.data, previous);
+              authoritative = true;
             } catch (refreshError) {
               announce(
                 refreshError instanceof Error
@@ -251,6 +259,8 @@ export function CandidateRow({
             );
           }
           break;
+        } finally {
+          onMutationFinished?.(authoritative);
         }
       }
     } finally {
@@ -306,26 +316,34 @@ export function CandidateRow({
         announce("수량 저장을 확인한 뒤 판정해 주세요.");
         return;
       }
-      const updated = await api.updateCandidate(
-        candidate.id,
-        {
-          workspace_id: workspaceId,
-          changes: { outcome },
-          reason: outcome === "CANDIDATE" ? "판본 확인 완료" : "사서 확인 후 제외",
-        },
-        versionRef.current,
-      );
-      const merged: Candidate = {
-        ...authoritativeRef.current,
-        ...updated.data,
-        reason:
-          outcome === "EXCLUDED"
-            ? "LIBRARIAN_DECISION"
-            : authoritativeRef.current.reason,
-      };
-      authoritativeRef.current = merged;
-      versionRef.current = updated.data.row_version;
-      onDecided?.(merged, outcome);
+      onMutationStarted?.();
+      let authoritative = false;
+      try {
+        const updated = await api.updateCandidate(
+            candidate.id,
+            {
+              workspace_id: workspaceId,
+              changes: { outcome },
+              reason:
+                outcome === "CANDIDATE" ? "판본 확인 완료" : "사서 확인 후 제외",
+            },
+            versionRef.current,
+          );
+        const merged: Candidate = {
+          ...authoritativeRef.current,
+          ...updated.data,
+          reason:
+            outcome === "EXCLUDED"
+              ? "LIBRARIAN_DECISION"
+              : authoritativeRef.current.reason,
+        };
+        authoritativeRef.current = merged;
+        versionRef.current = updated.data.row_version;
+        onDecided?.(merged, outcome);
+        authoritative = true;
+      } finally {
+        onMutationFinished?.(authoritative);
+      }
     } catch (error) {
       announce(
         error instanceof Error
