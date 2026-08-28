@@ -26,14 +26,17 @@ class JobContext:
         self.clock = clock
 
     def ensure_not_cancelled(self) -> None:
-        current = self.repository.get(self.job.id)
-        if current is None or current.cancel_requested_at is not None:
+        if self.job.claim_token is None:
+            raise RuntimeError("running job has no claim token")
+        current = self.repository.assert_claim(self.job.id, self.job.claim_token)
+        if current.cancel_requested_at is not None:
             raise JobCancelled()
 
     def checkpoint(self, *, stage: str, current: int, total: int | None) -> None:
         self.ensure_not_cancelled()
         self.job = self.repository.update_progress(
             self.job.id,
+            claim_token=self.job.claim_token,
             stage=stage,
             current=current,
             total=total,
@@ -63,13 +66,16 @@ class DurableJobRunner:
         # Release the atomic claim before doing potentially long-running work.
         self.repository.connection.commit()
         if job.cancel_requested_at is not None:
-            cancelled = self.repository.mark_cancelled(job.id, now=self.clock())
+            cancelled = self.repository.mark_cancelled(
+                job.id, claim_token=job.claim_token, now=self.clock()
+            )
             self.repository.connection.commit()
             return cancelled
         handler = self.handlers.get(job.job_type)
         if handler is None:
             failed = self.repository.mark_failed(
                 job.id,
+                claim_token=job.claim_token,
                 error={
                     "type": "UnknownJobType",
                     "message": f"No handler registered for {job.job_type}",
@@ -84,7 +90,9 @@ class DurableJobRunner:
             context.ensure_not_cancelled()
         except JobCancelled:
             self.repository.connection.rollback()
-            cancelled = self.repository.mark_cancelled(job.id, now=self.clock())
+            cancelled = self.repository.mark_cancelled(
+                job.id, claim_token=job.claim_token, now=self.clock()
+            )
             self.repository.connection.commit()
             return cancelled
         # A job boundary must persist every ordinary handler failure for retry.
@@ -92,11 +100,14 @@ class DurableJobRunner:
             self.repository.connection.rollback()
             failed = self.repository.mark_failed(
                 job.id,
+                claim_token=job.claim_token,
                 error={"type": type(error).__name__, "message": str(error)},
                 now=self.clock(),
             )
             self.repository.connection.commit()
             return failed
-        succeeded = self.repository.mark_succeeded(job.id, now=self.clock())
+        succeeded = self.repository.mark_succeeded(
+            job.id, claim_token=job.claim_token, now=self.clock()
+        )
         self.repository.connection.commit()
         return succeeded

@@ -3,8 +3,11 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import sqlite3
 import uuid
 from types import SimpleNamespace
+
+import pytest
 
 from suseoro.db.connection import connect
 from suseoro.db.migrations import apply_migrations
@@ -20,16 +23,21 @@ def _api() -> SimpleNamespace:
         "suseoro.catalog.contracts",
         "suseoro.catalog.sync",
         "suseoro.services.comparison",
+        "suseoro.jobs.repository",
     )
     missing = [name for name in modules if importlib.util.find_spec(name) is None]
     assert not missing, f"Task 5 modules are not implemented: {', '.join(missing)}"
     contracts = importlib.import_module(modules[0])
     sync = importlib.import_module(modules[1])
     comparison = importlib.import_module(modules[2])
+    jobs = importlib.import_module(modules[3])
     return SimpleNamespace(
         CatalogRecord=contracts.CatalogRecord,
-        CatalogSyncService=sync.CatalogSyncService,
+        CatalogSyncService=lambda connection: sync.CatalogSyncService(
+            connection, _allow_unbound_sources=True
+        ),
         ComparisonService=comparison.ComparisonService,
+        JobRepository=jobs.JobRepository,
         SourceType=contracts.SourceType,
     )
 
@@ -410,3 +418,136 @@ def test_comparison_is_school_scoped_and_idempotent_on_rerun(tmp_path) -> None:
     assert recommendation_count == 1
     assert result_count == 1
     assert outcome == "CANDIDATE"
+
+
+def test_file_status_is_failed_when_all_rows_error_or_no_logical_rows(tmp_path) -> None:
+    """PARTIAL is reserved for a real mixture of successful and failed rows."""
+    api = _api()
+    with _database(tmp_path) as connection:
+        all_error, _ = _source_document(
+            connection,
+            document_status="ROW_ERROR",
+            sha_digit="1",
+            rows=[
+                {
+                    "status": "ROW_ERROR",
+                    "error_code": "BROKEN_ONE",
+                    "error_message": "첫 행 손상",
+                },
+                {
+                    "status": "ROW_ERROR",
+                    "error_code": "BROKEN_TWO",
+                    "error_message": "둘째 행 손상",
+                },
+            ],
+        )
+        empty, _ = _source_document(
+            connection,
+            document_status="SUCCESS",
+            sha_digit="2",
+            rows=[],
+        )
+
+        summary = api.ComparisonService(connection).compare_documents(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            source_document_ids=(all_error, empty),
+        )
+        errors = {
+            row["source_document_id"]: json.loads(row["error_json"])
+            for row in connection.execute(
+                """
+                SELECT source_document_id, error_json
+                FROM comparison_file_results
+                WHERE workspace_id = ?
+                """,
+                (WORKSPACE_ID,),
+            )
+        }
+
+    assert summary.file_statuses == {all_error: "FAILED", empty: "FAILED"}
+    assert errors[all_error]["code"] == "ALL_LOGICAL_ROWS_FAILED"
+    assert errors[empty]["code"] == "NO_LOGICAL_ROWS"
+
+
+def test_supplied_job_must_match_comparison_school_workspace_and_type(tmp_path) -> None:
+    """Attaching comparison rows to an unrelated durable job corrupts recovery scope."""
+    api = _api()
+    with _database(tmp_path) as connection:
+        document_id, _ = _source_document(
+            connection,
+            sha_digit="3",
+            rows=[{"fields": {"title": _field("후보")}}],
+        )
+        unrelated = api.JobRepository(connection).create(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            job_type="EXPORT",
+            payload={},
+        )
+
+        with pytest.raises(ValueError, match="COMPARE"):
+            api.ComparisonService(connection).compare_documents(
+                school_id=SCHOOL_ID,
+                workspace_id=WORKSPACE_ID,
+                source_document_ids=(document_id,),
+                job_id=unrelated.id,
+            )
+
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM job_file_results WHERE job_id = ?",
+            (unrelated.id,),
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_database_rejects_cross_school_comparison_graph_writes(tmp_path) -> None:
+    """Service-only checks are insufficient when direct SQL can cross tenant boundaries."""
+    with _database(tmp_path) as connection:
+        document_id, row_ids = _source_document(
+            connection,
+            school_id=OTHER_SCHOOL_ID,
+            sha_digit="4",
+            rows=[{"fields": {"title": _field("타교")}}],
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="scope"):
+            connection.execute(
+                """
+                INSERT INTO recommendations (
+                    id, school_id, workspace_id, source_document_id, source_row_id,
+                    original_title, original_authors_json, original_json,
+                    title_key, subtitle_key, author_key, publisher_key,
+                    volume_key, edition_key, series_key, created_at
+                ) VALUES (?, ?, ?, ?, ?, '타교', '[]', '{}', '타교', '', '', '', '', '', '', ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    SCHOOL_ID,
+                    WORKSPACE_ID,
+                    document_id,
+                    row_ids[0],
+                    NOW,
+                ),
+            )
+        own_document, _ = _source_document(
+            connection,
+            school_id=SCHOOL_ID,
+            sha_digit="5",
+            rows=[{"fields": {"title": _field("본교")}}],
+        )
+        _api().ComparisonService(connection).compare_documents(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            source_document_ids=(own_document,),
+        )
+        recommendation_id = connection.execute(
+            "SELECT id FROM recommendations WHERE source_document_id = ?",
+            (own_document,),
+        ).fetchone()[0]
+        with pytest.raises(sqlite3.IntegrityError, match="scope"):
+            connection.execute(
+                "UPDATE recommendations SET school_id = ? WHERE id = ?",
+                (OTHER_SCHOOL_ID, recommendation_id),
+            )

@@ -12,14 +12,24 @@ _AUTHOR_ROLES = re.compile(r"(?:지음|글|그림|옮김|번역|역|저)\s*$")
 _PUBLISHER_MARKERS = re.compile(
     r"(?:\(\s*주\s*\)|（\s*주\s*）|주식회사|유한회사|출판사)", re.IGNORECASE
 )
-_ISBN_PREFIX = re.compile(r"^\s*ISBN(?:-1[03])?\s*:?\s*", re.IGNORECASE)
+_ISBN_PRESENTATION = re.compile(
+    r"^(?:ISBN(?:-(10|13))?\s*:?\s*)?([0-9Xx](?:[0-9Xx -]*[0-9Xx])?)$",
+    re.IGNORECASE,
+)
 
 
 def _isbn_digits(value: object) -> str:
     if value is None:
         return ""
-    text = _ISBN_PREFIX.sub("", unicodedata.normalize("NFKC", str(value)))
-    return re.sub(r"[^0-9Xx]", "", text).upper()
+    text = unicodedata.normalize("NFKC", str(value)).strip()
+    presentation = _ISBN_PRESENTATION.fullmatch(text)
+    if presentation is None:
+        return ""
+    declared_length, body = presentation.groups()
+    digits = re.sub(r"[ -]", "", body).upper()
+    if declared_length is not None and len(digits) != int(declared_length):
+        return ""
+    return digits
 
 
 def _valid_isbn10(value: str) -> bool:
@@ -33,7 +43,7 @@ def _valid_isbn10(value: str) -> bool:
 
 
 def _valid_isbn13(value: str) -> bool:
-    if not re.fullmatch(r"[0-9]{13}", value):
+    if not re.fullmatch(r"(?:978|979)[0-9]{10}", value):
         return False
     total = sum(
         int(character) * (1 if index % 2 == 0 else 3)
@@ -82,10 +92,54 @@ def normalize_publisher(value: object) -> str:
     return normalize_key(_PUBLISHER_MARKERS.sub("", str(value or "")))
 
 
-def normalize_numbered_part(value: object) -> str:
-    key = normalize_key(value)
-    numbers = re.findall(r"\d+", key)
-    return ".".join(numbers) if numbers else key
+def _semantic_number(value: object) -> tuple[str, tuple[str, ...]]:
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold().strip()
+    return normalize_key(text), tuple(re.findall(r"\d+", text))
+
+
+def normalize_volume(value: object) -> str:
+    """Preserve part semantics while merging obvious volume-format variants."""
+    key, numbers = _semantic_number(value)
+    if not key:
+        return ""
+    qualifiers = (
+        (("상권", "상편", "upper"), "upper"),
+        (("중권", "중편", "middle"), "middle"),
+        (("하권", "하편", "lower"), "lower"),
+        (("부록", "appendix"), "appendix"),
+        (("부", "part"), "part"),
+        (("편",), "part"),
+        (("권", "volume", "vol"), "volume"),
+    )
+    qualifier = next(
+        (
+            name
+            for markers, name in qualifiers
+            if any(marker in key for marker in markers)
+        ),
+        "volume" if numbers else key,
+    )
+    return f"{qualifier}:{'.'.join(numbers)}" if numbers else qualifier
+
+
+def normalize_edition(value: object) -> str:
+    """Keep edition/revision/printing qualifiers instead of numeric-only collapse."""
+    key, numbers = _semantic_number(value)
+    if not key:
+        return ""
+    parts: list[str] = []
+    if "초판" in key or "firstedition" in key:
+        parts.append("first-edition")
+    elif "개정" in key or "revision" in key or "revised" in key:
+        parts.append(f"revision:{numbers[0]}" if numbers else "revision")
+    elif "판" in key or "edition" in key:
+        parts.append(f"edition:{numbers[0]}" if numbers else "edition")
+    if "쇄" in key or "printing" in key or "impression" in key:
+        printing_number = numbers[-1] if numbers else ""
+        parts.append(f"printing:{printing_number}" if printing_number else "printing")
+    if parts:
+        return "|".join(dict.fromkeys(parts))
+    return f"edition:{'.'.join(numbers)}" if numbers else key
 
 
 def _ngrams(value: str, width: int = 2) -> list[str]:
@@ -113,8 +167,8 @@ def normalize_book(record: CatalogRecord) -> NormalizedBook:
     subtitle_key = normalize_key(record.subtitle)
     author_key = normalize_authors(record.authors)
     publisher_key = normalize_publisher(record.publisher)
-    volume_key = normalize_numbered_part(record.volume)
-    edition_key = normalize_numbered_part(record.edition)
+    volume_key = normalize_volume(record.volume)
+    edition_key = normalize_edition(record.edition)
     series_key = normalize_key(record.series)
     provisional = NormalizedBook(
         original=record,

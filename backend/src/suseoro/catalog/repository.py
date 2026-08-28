@@ -123,6 +123,9 @@ class CatalogRepository:
         parent_version_id: str | None = None,
         source_document_id: str | None = None,
         as_of_local_date: date | None = None,
+        expected_active_version_id: str | None = None,
+        expected_active_item_count: int | None = None,
+        expected_active_source_type: SourceType | None = None,
         created_at=None,
     ) -> CatalogVersion:
         version_id = str(uuid.uuid4())
@@ -132,8 +135,9 @@ class CatalogRepository:
             INSERT INTO catalog_versions (
                 id, school_id, source_type, import_mode, status,
                 source_document_id, parent_version_id, item_count,
-                as_of_local_date, created_at
-            ) VALUES (?, ?, ?, ?, 'STAGING', ?, ?, 0, ?, ?)
+                as_of_local_date, expected_active_version_id,
+                expected_active_item_count, expected_active_source_type, created_at
+            ) VALUES (?, ?, ?, ?, 'STAGING', ?, ?, 0, ?, ?, ?, ?, ?)
             """,
             (
                 version_id,
@@ -143,6 +147,11 @@ class CatalogRepository:
                 source_document_id,
                 parent_version_id,
                 as_of_local_date.isoformat() if as_of_local_date else None,
+                expected_active_version_id,
+                expected_active_item_count,
+                expected_active_source_type.value
+                if expected_active_source_type is not None
+                else None,
                 format_utc(now),
             ),
         )
@@ -197,9 +206,6 @@ class CatalogRepository:
             now,
         )
         if existing:
-            self.connection.execute(
-                "DELETE FROM holding_search_fts WHERE holding_id = ?", (holding_id,)
-            )
             self.connection.execute(
                 "DELETE FROM normalized_works WHERE holding_id = ?", (holding_id,)
             )
@@ -261,14 +267,6 @@ class CatalogRepository:
                 normalized.search_text,
             ),
         )
-        self.connection.execute(
-            """
-            INSERT INTO holding_search_fts (
-                holding_id, school_id, catalog_version_id, search_text
-            ) VALUES (?, ?, ?, ?)
-            """,
-            (holding_id, school_id, version_id, normalized.search_text),
-        )
         return holding_id
 
     def copy_version(
@@ -317,16 +315,6 @@ class CatalogRepository:
             WHERE old_nw.catalog_version_id = ?
             """,
             (target_version_id, target_version_id, source_version_id),
-        )
-        self.connection.execute(
-            """
-            INSERT INTO holding_search_fts (
-                holding_id, school_id, catalog_version_id, search_text
-            )
-            SELECT holding_id, school_id, catalog_version_id, search_text
-            FROM normalized_works WHERE catalog_version_id = ?
-            """,
-            (target_version_id,),
         )
 
     def refresh_item_count(self, version_id: str) -> int:
@@ -390,13 +378,13 @@ class CatalogRepository:
             SELECT h.id, h.stable_id, h.source_item_id, h.isbn13,
                    h.holding_status, nw.title_key, nw.subtitle_key, nw.author_key,
                    nw.publisher_key, nw.volume_key, nw.edition_key, nw.series_key,
-                   nw.search_text, bm25(holding_search_fts) AS rank
-            FROM holding_search_fts
-            JOIN holdings AS h ON h.id = holding_search_fts.holding_id
+                   nw.search_text, bm25(holding_search_fts_index) AS rank
+            FROM holding_search_fts_index
+            JOIN holdings AS h ON h.id = holding_search_fts_index.holding_id
             JOIN normalized_works AS nw ON nw.holding_id = h.id
             JOIN catalog_versions AS cv ON cv.id = h.catalog_version_id
-            WHERE holding_search_fts MATCH ?
-              AND holding_search_fts.school_id = ?
+            WHERE holding_search_fts_index MATCH ?
+              AND holding_search_fts_index.school_id = ?
               AND cv.status = 'ACTIVE'
               AND h.holding_status IN ('AVAILABLE', 'UNCERTAIN')
             ORDER BY rank, h.id

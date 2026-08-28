@@ -36,7 +36,9 @@ def _api() -> SimpleNamespace:
         canonical_isbn13=normalization.canonical_isbn13,
         normalize_book=normalization.normalize_book,
         CatalogRepository=repository.CatalogRepository,
-        CatalogSyncService=sync.CatalogSyncService,
+        CatalogSyncService=lambda connection: sync.CatalogSyncService(
+            connection, _allow_unbound_sources=True
+        ),
         MatchingEngine=engine.MatchingEngine,
     )
 
@@ -57,8 +59,12 @@ def _database(tmp_path):
         ("0-306-40615-2", "9780306406157"),
         ("978-0-306-40615-7", "9780306406157"),
         ("ISBN 9780306406157", "9780306406157"),
+        ("ISBN-13: 978 0 306 40615 7", "9780306406157"),
         ("0306406153", None),
         ("9780306406158", None),
+        ("4006381333931", None),
+        ("abc9780306406157def", None),
+        ("978/0/306/40615/7", None),
         ("", None),
         (None, None),
     ],
@@ -95,11 +101,136 @@ def test_korean_safe_normalization_preserves_originals_and_builds_separate_keys(
     assert normalized.subtitle_key == "두번째이야기"
     assert normalized.author_key == "김하늘|박별"
     assert normalized.publisher_key == "푸른숲"
-    assert normalized.volume_key == "2"
-    assert normalized.edition_key == "3"
+    assert normalized.volume_key == "volume:2"
+    assert normalized.edition_key == "revision:3"
     assert normalized.series_key == "마음문고"
     assert original.title == "  우리 집, 고양이! "
     assert original.authors == ("김 하늘 지음", "박 별")
+
+
+def test_volume_and_edition_keys_preserve_meaning_without_format_false_conflicts() -> (
+    None
+):
+    """Dropping semantic qualifiers would merge distinct parts and printings."""
+    api = _api()
+
+    def keys(*, volume: str | None = None, edition: str | None = None):
+        normalized = api.normalize_book(
+            api.CatalogRecord(
+                source_item_id="KEY",
+                title="의미 키",
+                volume=volume,
+                edition=edition,
+            )
+        )
+        return normalized.volume_key, normalized.edition_key
+
+    assert keys(volume="상권 1")[0] == "upper:1"
+    assert keys(volume="하권 1")[0] == "lower:1"
+    assert keys(volume="제 1권")[0] == keys(volume="1권")[0] == "volume:1"
+    assert (
+        keys(edition="개정 제2판")[1] == keys(edition="개정판 2판")[1] == "revision:2"
+    )
+    assert keys(edition="초판 2쇄")[1] == "first-edition|printing:2"
+
+
+def test_generic_ean_and_embedded_isbn_text_never_auto_exclude(tmp_path) -> None:
+    """Stripping arbitrary text or accepting generic EANs would create false exclusions."""
+    api = _api()
+    with _database(tmp_path) as connection:
+        api.CatalogSyncService(connection).import_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            records=(
+                api.CatalogRecord(
+                    source_item_id="H-ISBN",
+                    isbn="9780306406157",
+                    title="보유 도서",
+                    authors=("저자",),
+                ),
+            ),
+            confirm_anomaly=True,
+        )
+        engine = api.MatchingEngine(api.CatalogRepository(connection), SCHOOL_ID)
+
+        embedded = engine.classify(
+            api.CatalogRecord(
+                source_item_id="R-EMBEDDED",
+                isbn="abc9780306406157def",
+                title="완전히 다른 후보",
+                authors=("다른 저자",),
+            )
+        )
+        generic_ean = engine.classify(
+            api.CatalogRecord(
+                source_item_id="R-EAN",
+                isbn="4006381333931",
+                title="또 다른 후보",
+                authors=("또 다른 저자",),
+            )
+        )
+
+    assert embedded.outcome == api.CandidateOutcome.CANDIDATE
+    assert embedded.reason == "NO_CATALOG_MATCH_INVALID_ISBN"
+    assert generic_ean.outcome == api.CandidateOutcome.CANDIDATE
+    assert generic_ean.reason == "NO_CATALOG_MATCH_INVALID_ISBN"
+
+
+def test_semantic_volume_and_edition_conflicts_override_exact_isbn(tmp_path) -> None:
+    """Numeric-only part keys would auto-exclude different volumes or printings."""
+    api = _api()
+    with _database(tmp_path) as connection:
+        api.CatalogSyncService(connection).import_full_snapshot(
+            school_id=SCHOOL_ID,
+            source_type=api.SourceType.DLS_MARC,
+            records=(
+                api.CatalogRecord(
+                    source_item_id="H-SEMANTIC",
+                    isbn="9780306406157",
+                    title="의미가 있는 권차",
+                    authors=("저자",),
+                    volume="상권 1",
+                    edition="개정 제2판",
+                ),
+            ),
+            confirm_anomaly=True,
+        )
+        engine = api.MatchingEngine(api.CatalogRepository(connection), SCHOOL_ID)
+
+        volume_conflict = engine.classify(
+            api.CatalogRecord(
+                source_item_id="R-VOLUME",
+                isbn="9780306406157",
+                title="의미가 있는 권차",
+                authors=("저자",),
+                volume="하권 1",
+                edition="개정판 2판",
+            )
+        )
+        edition_conflict = engine.classify(
+            api.CatalogRecord(
+                source_item_id="R-EDITION",
+                isbn="9780306406157",
+                title="의미가 있는 권차",
+                authors=("저자",),
+                volume="상권 1",
+                edition="초판 2쇄",
+            )
+        )
+        equivalent = engine.classify(
+            api.CatalogRecord(
+                source_item_id="R-EQUIVALENT",
+                isbn="9780306406157",
+                title="의미가 있는 권차",
+                authors=("저자",),
+                volume="상권 1",
+                edition="개정판 2판",
+            )
+        )
+
+    assert volume_conflict.outcome == api.CandidateOutcome.NEEDS_REVIEW
+    assert edition_conflict.outcome == api.CandidateOutcome.NEEDS_REVIEW
+    assert equivalent.outcome == api.CandidateOutcome.EXCLUDED
 
 
 def test_exact_valid_isbn_excludes_but_edition_or_volume_conflict_requires_review(

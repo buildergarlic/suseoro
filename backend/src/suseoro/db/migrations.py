@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -13,7 +13,7 @@ class MigrationChecksumMismatch(RuntimeError):
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _migration_directory() -> Path:
@@ -43,10 +43,37 @@ def _ensure_migration_ledger(connection: sqlite3.Connection) -> None:
     )
 
 
+def _protect_internal_fts(connection: sqlite3.Connection) -> None:
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'holding_search_fts_index'"
+    ).fetchone()
+    if exists is None:
+        return
+    allowed_triggers = {
+        "normalized_works_fts_insert",
+        "normalized_works_fts_update",
+        "normalized_works_fts_delete",
+    }
+
+    def authorize(action, table, _column, _database, source):
+        writes = {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE}
+        if (
+            action in writes
+            and table
+            and table == "holding_search_fts_index"
+            and source not in allowed_triggers
+        ):
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    connection.set_authorizer(authorize)
+
+
 def apply_migrations(
     connection: sqlite3.Connection, migrations_dir: Path | None = None
 ) -> None:
     """Apply pending SQL files and refuse checksum changes to migration history."""
+    connection.set_authorizer(None)
     _ensure_migration_ledger(connection)
     directory = migrations_dir or _migration_directory()
 
@@ -71,11 +98,27 @@ def apply_migrations(
             f"{_sql_literal(migration_id)}, {_sql_literal(checksum)}, "
             f"{_sql_literal(_utc_now())});"
         )
+        rebuilds_foreign_key_parents = "PRAGMA defer_foreign_keys = ON;" in contents
         try:
-            connection.executescript(
-                "BEGIN IMMEDIATE;\n" + contents + "\n" + ledger_insert + "\nCOMMIT;"
-            )
+            if rebuilds_foreign_key_parents:
+                connection.execute("PRAGMA foreign_keys=OFF")
+                connection.executescript("BEGIN IMMEDIATE;\n" + contents)
+                violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise sqlite3.IntegrityError(
+                        f"foreign key violations after {migration_id}: {violations!r}"
+                    )
+                connection.execute(ledger_insert)
+                connection.commit()
+            else:
+                connection.executescript(
+                    "BEGIN IMMEDIATE;\n" + contents + "\n" + ledger_insert + "\nCOMMIT;"
+                )
         except BaseException:
             if connection.in_transaction:
                 connection.rollback()
             raise
+        finally:
+            if rebuilds_foreign_key_parents:
+                connection.execute("PRAGMA foreign_keys=ON")
+    _protect_internal_fts(connection)

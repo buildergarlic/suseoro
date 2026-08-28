@@ -27,6 +27,8 @@ class Job:
     heartbeat_at: datetime | None
     error: dict[str, Any] | None
     retry_count: int
+    claim_token: str | None
+    claim_generation: int
     created_at: datetime
     updated_at: datetime
 
@@ -52,6 +54,8 @@ def _job(row: sqlite3.Row | None) -> Job | None:
         heartbeat_at=parse_utc(row["heartbeat_at"]) if row["heartbeat_at"] else None,
         error=json.loads(row["error_json"]) if row["error_json"] else None,
         retry_count=row["retry_count"],
+        claim_token=row["claim_token"],
+        claim_generation=row["claim_generation"],
         created_at=parse_utc(row["created_at"]),
         updated_at=parse_utc(row["updated_at"]),
     )
@@ -71,6 +75,13 @@ class JobRepository:
         progress_total: int | None = None,
         now: datetime | None = None,
     ) -> Job:
+        if workspace_id is not None:
+            workspace = self.connection.execute(
+                "SELECT school_id FROM acquisition_workspaces WHERE id = ?",
+                (workspace_id,),
+            ).fetchone()
+            if workspace is None or workspace["school_id"] != school_id:
+                raise ValueError("workspace does not belong to the requested school")
         timestamp = format_utc(now or utc_now())
         job_id = str(uuid.uuid4())
         self.connection.execute(
@@ -118,10 +129,11 @@ class JobRepository:
                 """
                 UPDATE durable_jobs
                 SET status = 'RUNNING', stage = 'STARTING',
+                    claim_token = ?, claim_generation = claim_generation + 1,
                     heartbeat_at = ?, updated_at = ?
                 WHERE id = ? AND status = 'QUEUED'
                 """,
-                (timestamp, timestamp, row["id"]),
+                (str(uuid.uuid4()), timestamp, timestamp, row["id"]),
             )
             if claimed.rowcount == 1:
                 return self.get(row["id"])
@@ -130,6 +142,7 @@ class JobRepository:
         self,
         job_id: str,
         *,
+        claim_token: str,
         stage: str,
         current: int,
         total: int | None,
@@ -143,13 +156,19 @@ class JobRepository:
             UPDATE durable_jobs
             SET stage = ?, progress_current = ?, progress_total = ?,
                 heartbeat_at = ?, updated_at = ?
-            WHERE id = ? AND status = 'RUNNING'
+            WHERE id = ? AND status = 'RUNNING' AND claim_token = ?
             """,
-            (stage, current, total, timestamp, timestamp, job_id),
+            (stage, current, total, timestamp, timestamp, job_id, claim_token),
         )
         if updated.rowcount != 1:
-            raise RuntimeError("job is not running")
+            raise RuntimeError("job claim is no longer current")
         return self.get(job_id)
+
+    def assert_claim(self, job_id: str, claim_token: str) -> Job:
+        job = self.get(job_id)
+        if job is None or job.status != "RUNNING" or job.claim_token != claim_token:
+            raise RuntimeError("job claim is no longer current")
+        return job
 
     def request_cancel(self, job_id: str, *, now: datetime | None = None) -> Job:
         timestamp = format_utc(now or utc_now())
@@ -165,38 +184,47 @@ class JobRepository:
             raise RuntimeError("job cannot be cancelled")
         return self.get(job_id)
 
-    def mark_cancelled(self, job_id: str, *, now: datetime | None = None) -> Job:
+    def mark_cancelled(
+        self, job_id: str, *, claim_token: str, now: datetime | None = None
+    ) -> Job:
         timestamp = format_utc(now or utc_now())
         updated = self.connection.execute(
             """
             UPDATE durable_jobs
             SET status = 'CANCELLED', stage = 'CANCELLED',
                 heartbeat_at = ?, updated_at = ?
-            WHERE id = ? AND status IN ('QUEUED', 'RUNNING')
+            WHERE id = ? AND status = 'RUNNING' AND claim_token = ?
             """,
-            (timestamp, timestamp, job_id),
+            (timestamp, timestamp, job_id, claim_token),
         )
         if updated.rowcount != 1:
-            raise RuntimeError("job cannot transition to cancelled")
+            raise RuntimeError("job claim cannot transition to cancelled")
         return self.get(job_id)
 
-    def mark_succeeded(self, job_id: str, *, now: datetime | None = None) -> Job:
+    def mark_succeeded(
+        self, job_id: str, *, claim_token: str, now: datetime | None = None
+    ) -> Job:
         timestamp = format_utc(now or utc_now())
         updated = self.connection.execute(
             """
             UPDATE durable_jobs
             SET status = 'SUCCEEDED', stage = 'COMPLETED', error_json = NULL,
                 heartbeat_at = ?, updated_at = ?
-            WHERE id = ? AND status = 'RUNNING'
+            WHERE id = ? AND status = 'RUNNING' AND claim_token = ?
             """,
-            (timestamp, timestamp, job_id),
+            (timestamp, timestamp, job_id, claim_token),
         )
         if updated.rowcount != 1:
-            raise RuntimeError("job cannot transition to succeeded")
+            raise RuntimeError("job claim cannot transition to succeeded")
         return self.get(job_id)
 
     def mark_failed(
-        self, job_id: str, *, error: dict[str, Any], now: datetime | None = None
+        self,
+        job_id: str,
+        *,
+        claim_token: str,
+        error: dict[str, Any],
+        now: datetime | None = None,
     ) -> Job:
         timestamp = format_utc(now or utc_now())
         updated = self.connection.execute(
@@ -204,17 +232,18 @@ class JobRepository:
             UPDATE durable_jobs
             SET status = 'FAILED', stage = 'FAILED', error_json = ?,
                 heartbeat_at = ?, updated_at = ?
-            WHERE id = ? AND status = 'RUNNING'
+            WHERE id = ? AND status = 'RUNNING' AND claim_token = ?
             """,
             (
                 json.dumps(error, ensure_ascii=False, sort_keys=True),
                 timestamp,
                 timestamp,
                 job_id,
+                claim_token,
             ),
         )
         if updated.rowcount != 1:
-            raise RuntimeError("job cannot transition to failed")
+            raise RuntimeError("job claim cannot transition to failed")
         return self.get(job_id)
 
     def retry(self, job_id: str, *, now: datetime | None = None) -> Job:
@@ -224,7 +253,7 @@ class JobRepository:
             UPDATE durable_jobs
             SET status = 'QUEUED', stage = 'QUEUED', retry_count = retry_count + 1,
                 cancel_requested_at = NULL, heartbeat_at = NULL,
-                error_json = NULL, updated_at = ?
+                claim_token = NULL, error_json = NULL, updated_at = ?
             WHERE id = ? AND status IN ('FAILED', 'CANCELLED')
             """,
             (timestamp, job_id),
@@ -262,7 +291,7 @@ class JobRepository:
                 UPDATE durable_jobs
                 SET status = 'QUEUED', stage = 'RECOVERING',
                     retry_count = retry_count + 1, error_json = ?,
-                    heartbeat_at = NULL, updated_at = ?
+                    claim_token = NULL, heartbeat_at = NULL, updated_at = ?
                 WHERE id = ? AND status = 'RUNNING'
                   AND (heartbeat_at IS NULL OR heartbeat_at < ?)
                 """,
@@ -276,6 +305,7 @@ class JobRepository:
         self,
         *,
         job_id: str,
+        claim_token: str,
         source_document_id: str,
         status: str,
         total_rows: int,
@@ -283,17 +313,30 @@ class JobRepository:
         error: dict[str, Any] | None = None,
         now: datetime | None = None,
     ) -> None:
+        job = self.assert_claim(job_id, claim_token)
+        document = self.connection.execute(
+            "SELECT school_id FROM source_documents WHERE id = ?",
+            (source_document_id,),
+        ).fetchone()
+        if (
+            job.job_type != "COMPARE"
+            or job.workspace_id is None
+            or document is None
+            or document["school_id"] != job.school_id
+        ):
+            raise ValueError("job file result scope does not match a COMPARE job")
         timestamp = format_utc(now or utc_now())
         self.connection.execute(
             """
             INSERT INTO job_file_results (
                 id, job_id, source_document_id, status, total_rows,
-                processed_rows, error_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                processed_rows, error_json, claim_token, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (job_id, source_document_id) DO UPDATE SET
                 status = excluded.status, total_rows = excluded.total_rows,
                 processed_rows = excluded.processed_rows,
-                error_json = excluded.error_json, updated_at = excluded.updated_at
+                error_json = excluded.error_json,
+                claim_token = excluded.claim_token, updated_at = excluded.updated_at
             """,
             (
                 str(uuid.uuid4()),
@@ -305,6 +348,7 @@ class JobRepository:
                 json.dumps(error, ensure_ascii=False, sort_keys=True)
                 if error
                 else None,
+                claim_token,
                 timestamp,
                 timestamp,
             ),

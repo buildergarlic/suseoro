@@ -287,6 +287,8 @@ class ComparisonService:
         workspace_id: str,
         source_document_ids,
         job_id: str | None = None,
+        claim_token: str | None = None,
+        source_row_ids=None,
         now: datetime | None = None,
     ) -> ComparisonSummary:
         workspace = self.connection.execute(
@@ -295,11 +297,30 @@ class ComparisonService:
         ).fetchone()
         if workspace is None or workspace["school_id"] != school_id:
             raise ValueError("workspace does not belong to the requested school")
+        job_repository = JobRepository(self.connection) if job_id else None
+        if job_repository is not None:
+            job = job_repository.get(job_id)
+            if (
+                job is None
+                or job.school_id != school_id
+                or job.workspace_id != workspace_id
+                or job.job_type != "COMPARE"
+            ):
+                raise ValueError(
+                    "job must be a COMPARE job for the requested school and workspace"
+                )
+            if claim_token is None:
+                raise ValueError("a COMPARE job claim token is required")
+            job_repository.assert_claim(job_id, claim_token)
+        requested_row_ids = (
+            None if source_row_ids is None else frozenset(source_row_ids)
+        )
         timestamp = format_utc(now or utc_now())
         engine = MatchingEngine(CatalogRepository(self.connection), school_id)
+        if not self.connection.in_transaction:
+            self.connection.execute("BEGIN")
         totals: Counter = Counter({outcome: 0 for outcome in _OUTCOMES})
         file_statuses: dict[str, str] = {}
-        job_repository = JobRepository(self.connection) if job_id else None
         for document_id in tuple(source_document_ids):
             document = self.connection.execute(
                 """
@@ -312,7 +333,7 @@ class ComparisonService:
                 raise ValueError(
                     "source document does not belong to the requested school"
                 )
-            rows = self.connection.execute(
+            all_rows = self.connection.execute(
                 """
                 SELECT * FROM source_rows
                 WHERE source_document_id = ?
@@ -320,6 +341,11 @@ class ComparisonService:
                 """,
                 (document_id,),
             ).fetchall()
+            rows = [
+                row
+                for row in all_rows
+                if requested_row_ids is None or row["id"] in requested_row_ids
+            ]
             counts: Counter = Counter({outcome: 0 for outcome in _OUTCOMES})
             file_error: dict[str, Any] | None = None
             for row in rows:
@@ -387,31 +413,57 @@ class ComparisonService:
                         now=timestamp,
                     )
                 counts[outcome] += 1
-            if document["status"] in ("PENDING", "FAILED"):
-                status = "FAILED"
-            elif counts["ROW_ERROR"]:
-                status = "PARTIAL"
-            else:
-                status = "SUCCESS"
-            self._upsert_file_result(
-                school_id=school_id,
-                workspace_id=workspace_id,
-                document_id=document_id,
-                status=status,
-                counts=counts,
-                error=file_error,
-                now=timestamp,
-            )
-            if job_repository is not None:
-                job_repository.record_file_result(
-                    job_id=job_id,
-                    source_document_id=document_id,
-                    status=status,
-                    total_rows=len(rows),
-                    processed_rows=len(rows),
-                    error=file_error,
-                    now=now,
+            persisted_rows = self.connection.execute(
+                """
+                SELECT outcome FROM comparison_row_results
+                WHERE workspace_id = ? AND source_document_id = ?
+                """,
+                (workspace_id, document_id),
+            ).fetchall()
+            complete = len(persisted_rows) == len(all_rows)
+            if complete:
+                complete_counts: Counter = Counter(
+                    {outcome: 0 for outcome in _OUTCOMES}
                 )
+                complete_counts.update(row["outcome"] for row in persisted_rows)
+                successful = sum(
+                    complete_counts[outcome]
+                    for outcome in ("CANDIDATE", "NEEDS_REVIEW", "EXCLUDED")
+                )
+                if not all_rows:
+                    status = "FAILED"
+                    file_error = {"code": "NO_LOGICAL_ROWS"}
+                elif document["status"] in ("PENDING", "FAILED"):
+                    status = "FAILED"
+                elif complete_counts["ROW_ERROR"] and successful == 0:
+                    status = "FAILED"
+                    file_error = {"code": "ALL_LOGICAL_ROWS_FAILED"}
+                elif complete_counts["ROW_ERROR"]:
+                    status = "PARTIAL"
+                else:
+                    status = "SUCCESS"
+                self._upsert_file_result(
+                    school_id=school_id,
+                    workspace_id=workspace_id,
+                    document_id=document_id,
+                    status=status,
+                    counts=complete_counts,
+                    error=file_error,
+                    now=timestamp,
+                )
+                if job_repository is not None:
+                    job_repository.record_file_result(
+                        job_id=job_id,
+                        claim_token=claim_token,
+                        source_document_id=document_id,
+                        status=status,
+                        total_rows=len(all_rows),
+                        processed_rows=len(all_rows),
+                        error=file_error,
+                        now=now,
+                    )
+            else:
+                status = "PENDING"
             totals.update(counts)
             file_statuses[document_id] = status
         return ComparisonSummary(

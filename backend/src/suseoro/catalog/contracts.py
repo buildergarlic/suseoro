@@ -124,6 +124,7 @@ class DeltaFile:
     status: ParserStatus
     records: tuple[CatalogRecord, ...] = ()
     activation_allowed: bool = True
+    source_document_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "records", tuple(self.records))

@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+
+import pytest
 
 from suseoro.db.connection import connect
 from suseoro.db.migrations import apply_migrations
 
 SCHOOL_ID = "40000000-0000-4000-8000-000000000001"
 WORKSPACE_ID = "40000000-0000-4000-8000-000000000002"
+OTHER_SCHOOL_ID = "40000000-0000-4000-8000-000000000003"
+OTHER_WORKSPACE_ID = "40000000-0000-4000-8000-000000000004"
 NOW_TEXT = "2026-08-28T00:00:00Z"
 
 
@@ -40,7 +46,82 @@ def _database(tmp_path):
         """,
         (WORKSPACE_ID, SCHOOL_ID, NOW_TEXT, NOW_TEXT),
     )
+    connection.execute(
+        "INSERT INTO schools (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (OTHER_SCHOOL_ID, "다른 학교", NOW_TEXT, NOW_TEXT),
+    )
+    connection.execute(
+        """
+        INSERT INTO acquisition_workspaces (
+            id, school_id, name, status, created_at, updated_at
+        ) VALUES (?, ?, '타교 작업', 'DRAFT', ?, ?)
+        """,
+        (OTHER_WORKSPACE_ID, OTHER_SCHOOL_ID, NOW_TEXT, NOW_TEXT),
+    )
     return connection
+
+
+def _comparison_api() -> SimpleNamespace:
+    modules = (
+        "suseoro.jobs.handlers",
+        "suseoro.services.comparison",
+    )
+    missing = [name for name in modules if importlib.util.find_spec(name) is None]
+    assert not missing, f"Task 5 job modules are not implemented: {', '.join(missing)}"
+    handlers = importlib.import_module(modules[0])
+    comparison = importlib.import_module(modules[1])
+    return SimpleNamespace(
+        build_comparison_handler=handlers.build_comparison_handler,
+        build_job_runner=handlers.build_job_runner,
+        ComparisonService=comparison.ComparisonService,
+    )
+
+
+def _source_document(connection, *, sha_digit: str, row_count: int = 2):
+    file_id = str(uuid.uuid4())
+    document_id = str(uuid.uuid4())
+    connection.execute(
+        """
+        INSERT INTO source_files (
+            id, sha256, size_bytes, storage_path, detected_format, created_at
+        ) VALUES (?, ?, 10, ?, 'XLSX', ?)
+        """,
+        (file_id, sha_digit * 64, f"jobs/{sha_digit}.xlsx", NOW_TEXT),
+    )
+    connection.execute(
+        """
+        INSERT INTO source_documents (
+            id, source_file_id, school_id, role, parser_version, status,
+            detected_format, created_at, completed_at
+        ) VALUES (?, ?, ?, 'PURCHASE_REQUEST', 'tabular-v1', 'SUCCESS', 'XLSX', ?, ?)
+        """,
+        (document_id, file_id, SCHOOL_ID, NOW_TEXT, NOW_TEXT),
+    )
+    row_ids = []
+    for index in range(1, row_count + 1):
+        row_id = str(uuid.uuid4())
+        row_ids.append(row_id)
+        fields = {
+            "title": {"value": f"작업 후보 {index}", "raw_value": f"작업 후보 {index}"},
+            "author": {"value": f"저자 {index}", "raw_value": f"저자 {index}"},
+        }
+        connection.execute(
+            """
+            INSERT INTO source_rows (
+                id, source_document_id, source_row, status, raw_json,
+                fields_json, warnings_json, created_at
+            ) VALUES (?, ?, ?, 'SUCCESS', ?, ?, '[]', ?)
+            """,
+            (
+                row_id,
+                document_id,
+                index,
+                json.dumps({"title": f"작업 후보 {index}"}, ensure_ascii=False),
+                json.dumps(fields, ensure_ascii=False),
+                NOW_TEXT,
+            ),
+        )
+    return document_id, tuple(row_ids)
 
 
 def test_job_persists_stage_progress_heartbeat_and_success(tmp_path) -> None:
@@ -170,6 +251,7 @@ def test_stale_running_job_is_requeued_once_with_checkpoint_intact(tmp_path) -> 
         claimed = repository.claim_next(now=started)
         repository.update_progress(
             claimed.id,
+            claim_token=claimed.claim_token,
             stage="MATCHING",
             current=5,
             total=10,
@@ -217,3 +299,290 @@ def test_claim_is_atomic_so_two_workers_cannot_run_the_same_job(tmp_path) -> Non
     assert first.id == job.id
     assert first.status == "RUNNING"
     assert second is None
+
+
+def test_job_creation_rejects_a_workspace_from_another_school(tmp_path) -> None:
+    """A cross-school workspace on a job would bypass later tenant checks."""
+    api = _api()
+    with (
+        _database(tmp_path) as connection,
+        pytest.raises(ValueError, match="workspace"),
+    ):
+        api.JobRepository(connection).create(
+            school_id=SCHOOL_ID,
+            workspace_id=OTHER_WORKSPACE_ID,
+            job_type="COMPARE",
+            payload={},
+        )
+
+
+def test_stale_worker_claim_is_fenced_after_recovery_and_reclaim(tmp_path) -> None:
+    """A recovered job's old worker must not overwrite the new worker's progress."""
+    api = _api()
+    started = datetime(2026, 8, 28, 6, 0, tzinfo=UTC)
+    recovered_at = started + timedelta(minutes=10)
+    with _database(tmp_path) as connection:
+        old_worker = api.JobRepository(connection)
+        job = old_worker.create(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            job_type="COMPARE",
+            payload={},
+            now=started,
+        )
+        connection.commit()
+        old_claim = old_worker.claim_next(now=started)
+        old_worker.update_progress(
+            job.id,
+            claim_token=old_claim.claim_token,
+            stage="COMPARING",
+            current=1,
+            total=2,
+            now=started,
+        )
+        connection.commit()
+        reclaim_connection = connect(tmp_path / "jobs.sqlite3")
+        new_worker = api.JobRepository(reclaim_connection)
+        new_worker.recover_stale(
+            stale_before=started + timedelta(minutes=5), now=recovered_at
+        )
+        new_claim = new_worker.claim_next(now=recovered_at)
+        reclaim_connection.commit()
+
+        with pytest.raises(RuntimeError, match="claim"):
+            old_worker.update_progress(
+                job.id,
+                claim_token=old_claim.claim_token,
+                stage="STALE_WRITE",
+                current=2,
+                total=2,
+                now=recovered_at,
+            )
+        with pytest.raises(RuntimeError, match="claim"):
+            old_worker.mark_succeeded(
+                job.id, claim_token=old_claim.claim_token, now=recovered_at
+            )
+        stored = new_worker.get(job.id)
+        reclaim_connection.close()
+
+    assert old_claim.claim_token
+    assert new_claim.claim_token
+    assert new_claim.claim_token != old_claim.claim_token
+    assert new_claim.claim_generation == old_claim.claim_generation + 1
+    assert stored.status == "RUNNING"
+    assert stored.stage == "STARTING"
+
+
+def test_real_compare_handler_batches_rows_and_resumes_persisted_results(
+    tmp_path,
+) -> None:
+    """The production handler must use ComparisonService and resume without duplicates."""
+    jobs = _api()
+    comparison = _comparison_api()
+    now = datetime(2026, 8, 28, 7, 0, tzinfo=UTC)
+    with _database(tmp_path) as connection:
+        document_id, row_ids = _source_document(connection, sha_digit="a", row_count=3)
+        # Simulate the durable result left by a prior worker's completed batch.
+        comparison.ComparisonService(connection).compare_documents(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            source_document_ids=(document_id,),
+            source_row_ids=(row_ids[0],),
+        )
+        repository = jobs.JobRepository(connection)
+        job = repository.create(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            job_type="COMPARE",
+            payload={"source_document_ids": [document_id]},
+            now=now,
+        )
+        connection.execute(
+            "CREATE TABLE observed_job_stages (stage TEXT NOT NULL, current INTEGER NOT NULL)"
+        )
+        connection.execute(
+            """
+            CREATE TRIGGER observe_job_stages AFTER UPDATE OF stage, progress_current
+            ON durable_jobs FOR EACH ROW WHEN NEW.id = OLD.id
+            BEGIN
+                INSERT INTO observed_job_stages(stage, current)
+                VALUES (NEW.stage, NEW.progress_current);
+            END
+            """
+        )
+        runner = comparison.build_job_runner(
+            connection,
+            file_batch_size=1,
+            row_batch_size=1,
+            clock=lambda: now,
+        )
+
+        completed = runner.run_once()
+        stored = repository.get(job.id)
+        results = connection.execute(
+            "SELECT source_row_id FROM comparison_row_results WHERE workspace_id = ?",
+            (WORKSPACE_ID,),
+        ).fetchall()
+        stages = connection.execute(
+            "SELECT stage, current FROM observed_job_stages ORDER BY rowid"
+        ).fetchall()
+
+    assert completed.status == "SUCCEEDED"
+    assert stored.progress_current == stored.progress_total == 3
+    assert {row["source_row_id"] for row in results} == set(row_ids)
+    assert [row["stage"] for row in stages] == [
+        "STARTING",
+        "VALIDATING",
+        "COMPARING",
+        "COMPARING",
+        "FINALIZING",
+        "COMPLETED",
+    ]
+
+
+def test_compare_handler_observes_cancellation_between_row_batches(tmp_path) -> None:
+    """A completed batch stays durable while cancellation stops the next batch."""
+    jobs = _api()
+    comparison = _comparison_api()
+    now = datetime(2026, 8, 28, 8, 0, tzinfo=UTC)
+    with _database(tmp_path) as connection:
+        document_id, _ = _source_document(connection, sha_digit="b", row_count=2)
+        repository = jobs.JobRepository(connection)
+        job = repository.create(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            job_type="COMPARE",
+            payload={"source_document_ids": [document_id]},
+            now=now,
+        )
+        connection.execute(
+            f"""
+            CREATE TRIGGER cancel_after_first_real_result
+            AFTER INSERT ON comparison_row_results
+            BEGIN
+                UPDATE durable_jobs SET cancel_requested_at = '{NOW_TEXT}'
+                WHERE id = '{job.id}';
+            END
+            """
+        )
+        runner = jobs.DurableJobRunner(
+            repository,
+            handlers={
+                "COMPARE": comparison.build_comparison_handler(
+                    connection, file_batch_size=1, row_batch_size=1
+                )
+            },
+            clock=lambda: now,
+        )
+
+        cancelled = runner.run_once()
+        stored = repository.get(job.id)
+        result_count = connection.execute(
+            "SELECT COUNT(*) FROM comparison_row_results WHERE workspace_id = ?",
+            (WORKSPACE_ID,),
+        ).fetchone()[0]
+
+    assert cancelled.status == "CANCELLED"
+    assert stored.stage == "CANCELLED"
+    assert result_count == 1
+
+
+def test_compare_handler_recovers_from_last_committed_real_row_batch(tmp_path) -> None:
+    """A worker crash must retain prior real results and resume without rescoring them."""
+    jobs = _api()
+    comparison = _comparison_api()
+    now = datetime(2026, 8, 28, 8, 30, tzinfo=UTC)
+    with _database(tmp_path) as connection:
+        document_id, row_ids = _source_document(connection, sha_digit="d", row_count=3)
+        repository = jobs.JobRepository(connection)
+        job = repository.create(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            job_type="COMPARE",
+            payload={"source_document_ids": [document_id]},
+            now=now,
+        )
+        connection.execute(
+            f"""
+            CREATE TRIGGER crash_second_real_batch
+            BEFORE INSERT ON comparison_row_results
+            FOR EACH ROW WHEN NEW.source_row_id = '{row_ids[1]}'
+            BEGIN SELECT RAISE(ABORT, 'simulated worker crash'); END
+            """
+        )
+        runner = jobs.DurableJobRunner(
+            repository,
+            handlers={
+                "COMPARE": comparison.build_comparison_handler(
+                    connection, file_batch_size=1, row_batch_size=1
+                )
+            },
+            clock=lambda: now,
+        )
+
+        failed = runner.run_once()
+        after_crash = connection.execute(
+            """
+            SELECT source_row_id FROM comparison_row_results
+            WHERE workspace_id = ? ORDER BY source_row_id
+            """,
+            (WORKSPACE_ID,),
+        ).fetchall()
+        connection.execute("DROP TRIGGER crash_second_real_batch")
+        repository.retry(job.id, now=now)
+        completed = runner.run_once()
+        after_retry = connection.execute(
+            """
+            SELECT source_row_id FROM comparison_row_results
+            WHERE workspace_id = ? ORDER BY source_row_id
+            """,
+            (WORKSPACE_ID,),
+        ).fetchall()
+
+    assert failed.status == "FAILED"
+    assert [row["source_row_id"] for row in after_crash] == [row_ids[0]]
+    assert completed.status == "SUCCEEDED"
+    assert {row["source_row_id"] for row in after_retry} == set(row_ids)
+
+
+def test_stale_claim_cannot_write_comparison_or_file_results(tmp_path) -> None:
+    """Job fencing must cover result side effects, not only the progress row."""
+    jobs = _api()
+    comparison = _comparison_api()
+    started = datetime(2026, 8, 28, 9, 0, tzinfo=UTC)
+    recovered_at = started + timedelta(minutes=10)
+    with _database(tmp_path) as connection:
+        document_id, _ = _source_document(connection, sha_digit="c", row_count=1)
+        repository = jobs.JobRepository(connection)
+        job = repository.create(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            job_type="COMPARE",
+            payload={"source_document_ids": [document_id]},
+            now=started,
+        )
+        old_claim = repository.claim_next(now=started)
+        connection.commit()
+        repository.recover_stale(
+            stale_before=started + timedelta(minutes=5), now=recovered_at
+        )
+        repository.claim_next(now=recovered_at)
+
+        with pytest.raises(RuntimeError, match="claim"):
+            comparison.ComparisonService(connection).compare_documents(
+                school_id=SCHOOL_ID,
+                workspace_id=WORKSPACE_ID,
+                source_document_ids=(document_id,),
+                job_id=job.id,
+                claim_token=old_claim.claim_token,
+            )
+        row_count = connection.execute(
+            "SELECT COUNT(*) FROM comparison_row_results WHERE workspace_id = ?",
+            (WORKSPACE_ID,),
+        ).fetchone()[0]
+        file_count = connection.execute(
+            "SELECT COUNT(*) FROM job_file_results WHERE job_id = ?", (job.id,)
+        ).fetchone()[0]
+
+    assert row_count == 0
+    assert file_count == 0
