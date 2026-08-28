@@ -16,32 +16,46 @@ from suseoro.workflow._common import (
 
 
 class WorkflowState(str, Enum):
-    DATA_PREPARATION = "DATA_PREPARATION"
-    COMPARING = "COMPARING"
+    DRAFT = "DRAFT"
+    ANALYZING = "ANALYZING"
     CANDIDATE_REVIEW = "CANDIDATE_REVIEW"
     APPROVAL_PENDING = "APPROVAL_PENDING"
-    REVISION_REQUESTED = "REVISION_REQUESTED"
+    CHANGES_REQUESTED = "CHANGES_REQUESTED"
     APPROVED = "APPROVED"
-    QUOTE_ADJUSTMENT = "QUOTE_ADJUSTMENT"
+    QUOTE_REVIEW = "QUOTE_REVIEW"
     ORDER_READY = "ORDER_READY"
-    AWAITING_DELIVERY = "AWAITING_DELIVERY"
+    ORDER_SENT = "ORDER_SENT"
     RECEIVING = "RECEIVING"
-    COMPLETE = "COMPLETE"
+    COMPLETED = "COMPLETED"
 
 
 _ALLOWED = frozenset(
     {
-        (WorkflowState.DATA_PREPARATION, WorkflowState.COMPARING),
-        (WorkflowState.COMPARING, WorkflowState.CANDIDATE_REVIEW),
+        (WorkflowState.DRAFT, WorkflowState.ANALYZING),
+        (WorkflowState.ANALYZING, WorkflowState.CANDIDATE_REVIEW),
         (WorkflowState.CANDIDATE_REVIEW, WorkflowState.APPROVAL_PENDING),
-        (WorkflowState.APPROVAL_PENDING, WorkflowState.REVISION_REQUESTED),
-        (WorkflowState.REVISION_REQUESTED, WorkflowState.APPROVAL_PENDING),
+        (WorkflowState.APPROVAL_PENDING, WorkflowState.CANDIDATE_REVIEW),
+        (WorkflowState.APPROVAL_PENDING, WorkflowState.CHANGES_REQUESTED),
+        (WorkflowState.CHANGES_REQUESTED, WorkflowState.APPROVAL_PENDING),
         (WorkflowState.APPROVAL_PENDING, WorkflowState.APPROVED),
-        (WorkflowState.APPROVED, WorkflowState.QUOTE_ADJUSTMENT),
-        (WorkflowState.QUOTE_ADJUSTMENT, WorkflowState.ORDER_READY),
-        (WorkflowState.ORDER_READY, WorkflowState.AWAITING_DELIVERY),
-        (WorkflowState.AWAITING_DELIVERY, WorkflowState.RECEIVING),
-        (WorkflowState.RECEIVING, WorkflowState.COMPLETE),
+        (WorkflowState.APPROVED, WorkflowState.QUOTE_REVIEW),
+        (WorkflowState.QUOTE_REVIEW, WorkflowState.APPROVAL_PENDING),
+        (WorkflowState.QUOTE_REVIEW, WorkflowState.ORDER_READY),
+        (WorkflowState.ORDER_READY, WorkflowState.APPROVAL_PENDING),
+        (WorkflowState.ORDER_READY, WorkflowState.ORDER_SENT),
+        (WorkflowState.ORDER_SENT, WorkflowState.APPROVAL_PENDING),
+        (WorkflowState.ORDER_SENT, WorkflowState.ORDER_READY),
+        (WorkflowState.ORDER_SENT, WorkflowState.RECEIVING),
+        (WorkflowState.RECEIVING, WorkflowState.APPROVAL_PENDING),
+        (WorkflowState.RECEIVING, WorkflowState.ORDER_READY),
+        (WorkflowState.RECEIVING, WorkflowState.COMPLETED),
+    }
+)
+
+_BOOTSTRAP_EDGES = frozenset(
+    {
+        (WorkflowState.DRAFT, WorkflowState.ANALYZING),
+        (WorkflowState.ANALYZING, WorkflowState.CANDIDATE_REVIEW),
     }
 )
 
@@ -61,8 +75,6 @@ def is_transition_allowed(
 
 
 def _role_for_transition(target: WorkflowState) -> str:
-    if target in {WorkflowState.APPROVED, WorkflowState.REVISION_REQUESTED}:
-        return "REVIEWER"
     return "OPERATOR"
 
 
@@ -79,7 +91,10 @@ def transition_workspace(
     request_id: str,
     reason: str,
 ) -> dict[str, object]:
-    target_state = WorkflowState(target)
+    try:
+        target_state = WorkflowState(target)
+    except ValueError as error:
+        raise WorkflowRuleError("ILLEGAL_STATE_TRANSITION") from error
     request_body = {
         "workspace_id": workspace_id,
         "target": target_state.value,
@@ -96,8 +111,14 @@ def transition_workspace(
             raise WorkflowRuleError("WORKSPACE_NOT_FOUND")
         if not reason.strip():
             raise WorkflowRuleError("MODIFICATION_REASON_REQUIRED")
-        if not is_transition_allowed(workspace["status"], target_state):
+        try:
+            edge = (WorkflowState(workspace["status"]), target_state)
+        except ValueError as error:
+            raise WorkflowRuleError("ILLEGAL_STATE_TRANSITION") from error
+        if edge not in _ALLOWED:
             raise WorkflowRuleError("ILLEGAL_STATE_TRANSITION")
+        if edge not in _BOOTSTRAP_EDGES:
+            raise WorkflowRuleError("DOMAIN_TRANSITION_REQUIRED")
         require_role(
             connection,
             school_id=school_id,

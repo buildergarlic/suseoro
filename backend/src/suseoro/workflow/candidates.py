@@ -108,7 +108,7 @@ class CandidateService:
             ).fetchone()
             if workspace is None or workspace["status"] not in {
                 "CANDIDATE_REVIEW",
-                "REVISION_REQUESTED",
+                "CHANGES_REQUESTED",
             }:
                 raise CandidateWorkflowError("CANDIDATE_EDIT_STATE_INVALID")
             updated = update_with_version(
@@ -172,14 +172,12 @@ class CandidateService:
             ).fetchone()
             if workspace is None:
                 raise CandidateWorkflowError("WORKSPACE_NOT_FOUND")
-            if workspace["status"] not in {"CANDIDATE_REVIEW", "REVISION_REQUESTED"}:
+            if workspace["status"] not in {"CANDIDATE_REVIEW", "CHANGES_REQUESTED"}:
                 raise CandidateWorkflowError("CANDIDATE_EDIT_STATE_INVALID")
             results: list[dict[str, object]] = []
             for item in items:
                 candidate_id = str(item["id"])
                 reason = str(item.get("reason") or "").strip()
-                if not reason:
-                    raise CandidateWorkflowError("MODIFICATION_REASON_REQUIRED")
                 before = self.connection.execute(
                     """
                     SELECT * FROM candidate_decisions
@@ -197,14 +195,39 @@ class CandidateService:
                         }
                     )
                     continue
-                changes = _validated_changes({"outcome": item.get("outcome")})
+                try:
+                    if not reason:
+                        raise CandidateWorkflowError("MODIFICATION_REASON_REQUIRED")
+                    changes = _validated_changes({"outcome": item.get("outcome")})
+                    submitted_version = int(item["submitted_version"])
+                except (
+                    CandidateWorkflowError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                ) as error:
+                    code = (
+                        error.code
+                        if isinstance(error, CandidateWorkflowError)
+                        else "INVALID_ROW_VERSION"
+                    )
+                    results.append(
+                        {
+                            "id": candidate_id,
+                            "status": "INVALID",
+                            "code": code,
+                            "outcome": before["outcome"],
+                            "row_version": before["row_version"],
+                        }
+                    )
+                    continue
                 try:
                     updated = update_with_version(
                         self.connection,
                         table="candidate_decisions",
                         school_id=school_id,
                         entity_id=candidate_id,
-                        submitted_version=int(item["submitted_version"]),
+                        submitted_version=submitted_version,
                         changes={
                             **changes,
                             "reason": reason,

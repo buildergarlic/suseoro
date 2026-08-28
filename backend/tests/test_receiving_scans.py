@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 
@@ -35,6 +36,17 @@ def _order_ready(fixture, tmp_path):
         idempotency_key="approve",
         request_id=str(uuid.uuid4()),
     )
+    quote_rows = fixture.connection.execute(
+        """
+        SELECT cd.quantity, cd.unit_price, r.isbn13, r.original_title,
+               r.original_authors_json, r.original_edition
+        FROM candidate_decisions cd
+        JOIN recommendations r ON r.id = cd.recommendation_id
+        WHERE cd.workspace_id = ? AND cd.outcome = 'CANDIDATE' AND cd.quantity > 0
+        ORDER BY cd.id
+        """,
+        (fixture.workspace_id,),
+    ).fetchall()
     quote = QuoteService(fixture.connection).ingest(
         school_id=fixture.school_id,
         workspace_id=fixture.workspace_id,
@@ -45,13 +57,14 @@ def _order_ready(fixture, tmp_path):
         vendor_name="업체",
         rows=[
             {
-                "isbn": "9788937464010",
-                "title": "책",
-                "author": "저자",
-                "edition": "초판",
-                "quantity": 2,
-                "unit_price": 9_000,
+                "isbn": row["isbn13"],
+                "title": row["original_title"],
+                "author": ", ".join(json.loads(row["original_authors_json"])),
+                "edition": row["original_edition"],
+                "quantity": row["quantity"],
+                "unit_price": max(0, row["unit_price"] - 1_000),
             }
+            for row in quote_rows
         ],
         reason="견적",
         idempotency_key="quote",
@@ -301,6 +314,161 @@ def test_only_one_active_scan_session_and_scan_idempotency(tmp_path) -> None:
     fixture.connection.rollback()
 
 
+def test_exact_ordered_isbn_wins_before_expected_row_edition_hint(tmp_path) -> None:
+    from suseoro.workflow.receiving import ReceivingService
+
+    fixture = make_workflow_fixture(tmp_path)
+    fixture.add_candidate(title="A", author="저자", isbn="9788937464010", quantity=1)
+    fixture.add_candidate(title="B", author="저자", isbn="9788936434267", quantity=1)
+    order = _order_ready(fixture, tmp_path)
+    service = ReceivingService(fixture.connection)
+    session = service.start_scan_session(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        order_revision_id=order["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="스캔 시작",
+        idempotency_key="precedence-session",
+        request_id=str(uuid.uuid4()),
+    )
+    rows = fixture.connection.execute(
+        "SELECT id, isbn13 FROM order_rows WHERE order_revision_id = ?",
+        (order["revision_id"],),
+    ).fetchall()
+    row_by_isbn = {row["isbn13"]: row["id"] for row in rows}
+    result = service.scan(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        session_id=session["session_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        isbn="9788936434267",
+        expected_order_row_id=row_by_isbn["9788937464010"],
+        idempotency_key="scan-b-with-a-hint",
+        request_id=str(uuid.uuid4()),
+    )
+    assert result["code"] == "NORMAL"
+    assert result["order_row_id"] == row_by_isbn["9788936434267"]
+    assert result["scanned_quantity"] == 1
+
+
+def test_receiving_requires_latest_current_revision_and_successful_transmission(
+    tmp_path,
+) -> None:
+    from suseoro.workflow.orders import OrderService
+    from suseoro.workflow.receiving import ReceivingRuleError, ReceivingService
+
+    fixture = make_workflow_fixture(tmp_path)
+    fixture.add_candidate(title="책", author="저자", isbn="9788937464010", quantity=1)
+    first = _order_ready(fixture, tmp_path)
+    order_record = fixture.connection.execute(
+        "SELECT approval_revision_id, quote_id FROM order_revisions WHERE id = ?",
+        (first["revision_id"],),
+    ).fetchone()
+    orders = OrderService(fixture.connection, tmp_path / "artifacts")
+    receiving = ReceivingService(fixture.connection)
+    receiving.record_delivery(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        order_revision_id=first["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        rows=[
+            {
+                "isbn": "9788936434267",
+                "title": "잘못 온 책",
+                "quantity": 1,
+                "unit_price": 9_000,
+            }
+        ],
+        reason="r1 불일치 보존",
+        idempotency_key="r1-unresolved-delivery",
+        request_id=str(uuid.uuid4()),
+    )
+    second = orders.generate_revision(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        approval_revision_id=order_record["approval_revision_id"],
+        quote_id=order_record["quote_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="전달 뒤 수정본",
+        idempotency_key="current-r2",
+        request_id=str(uuid.uuid4()),
+    )
+    for order_revision_id, key in (
+        (first["revision_id"], "stale-r1-delivery"),
+        (second["revision_id"], "unsent-r2-delivery"),
+    ):
+        with pytest.raises(ReceivingRuleError) as unavailable:
+            receiving.record_delivery(
+                school_id=fixture.school_id,
+                workspace_id=fixture.workspace_id,
+                order_revision_id=order_revision_id,
+                actor_id=fixture.operator_id,
+                actor_roles=("OPERATOR",),
+                workspace_version=fixture.workspace_version(),
+                rows=[
+                    {
+                        "isbn": "9788937464010",
+                        "title": "책",
+                        "quantity": 1,
+                        "unit_price": 9_000,
+                    }
+                ],
+                reason="현재 주문 아님",
+                idempotency_key=key,
+                request_id=str(uuid.uuid4()),
+            )
+        assert unavailable.value.code == "ORDER_NOT_CURRENT_OR_SENT"
+    orders.mark_sent(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        order_revision_id=second["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="r2 전달",
+        idempotency_key="send-current-r2",
+        request_id=str(uuid.uuid4()),
+    )
+    delivered = receiving.record_delivery(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        order_revision_id=second["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        rows=[
+            {
+                "isbn": "9788937464010",
+                "title": "책",
+                "quantity": 1,
+                "unit_price": 9_000,
+            }
+        ],
+        reason="현재 주문 납품",
+        idempotency_key="current-r2-delivery",
+        request_id=str(uuid.uuid4()),
+    )
+    assert delivered["state"] == "RECEIVING"
+    completed = receiving.complete(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="현재 r2 완료",
+        idempotency_key="complete-current-r2",
+        request_id=str(uuid.uuid4()),
+    )
+    assert completed["state"] == "COMPLETED"
+
+
 def test_completion_requires_quantities_or_dispositions_on_every_difference(
     tmp_path,
 ) -> None:
@@ -347,6 +515,20 @@ def test_completion_requires_quantities_or_dispositions_on_every_difference(
         "SELECT id, row_version FROM receiving_differences WHERE workspace_id = ? AND kind = 'MISSING'",
         (fixture.workspace_id,),
     ).fetchone()
+    with pytest.raises(ReceivingRuleError) as legacy:
+        service.set_disposition(
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            difference_id=shortage["id"],
+            actor_id=fixture.operator_id,
+            actor_roles=("OPERATOR",),
+            submitted_version=shortage["row_version"],
+            disposition="ADDITIONAL_DELIVERY_PLANNED",
+            reason="legacy code",
+            idempotency_key="legacy-disposition",
+            request_id=str(uuid.uuid4()),
+        )
+    assert legacy.value.code == "INVALID_DISPOSITION"
     disposition = service.set_disposition(
         school_id=fixture.school_id,
         workspace_id=fixture.workspace_id,
@@ -354,12 +536,12 @@ def test_completion_requires_quantities_or_dispositions_on_every_difference(
         actor_id=fixture.operator_id,
         actor_roles=("OPERATOR",),
         submitted_version=shortage["row_version"],
-        disposition="ADDITIONAL_DELIVERY_PLANNED",
+        disposition="ADDITIONAL_DELIVERY",
         reason="추가 납품 예정",
         idempotency_key="disposition",
         request_id=str(uuid.uuid4()),
     )
-    assert disposition["disposition"] == "ADDITIONAL_DELIVERY_PLANNED"
+    assert disposition["disposition"] == "ADDITIONAL_DELIVERY"
     completed = service.complete(
         school_id=fixture.school_id,
         workspace_id=fixture.workspace_id,
@@ -370,4 +552,4 @@ def test_completion_requires_quantities_or_dispositions_on_every_difference(
         idempotency_key="complete-yes",
         request_id=str(uuid.uuid4()),
     )
-    assert completed["state"] == "COMPLETE"
+    assert completed["state"] == "COMPLETED"

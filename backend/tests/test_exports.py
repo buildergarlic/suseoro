@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import uuid
 from io import BytesIO
 
 from openpyxl import load_workbook
+from workflow_fixtures import make_workflow_fixture
 
 
 def test_dls_isbn_txt_is_exact_crlf_utf8_without_bom_or_final_newline() -> None:
@@ -79,9 +82,12 @@ def test_every_user_controlled_workbook_cell_is_formula_safe() -> None:
         "\r=cmd",
         "\n=cmd",
         "\x01cmd",
+        "  =cmd",
+        "\x01=cmd",
     ]
     for value in dangerous:
         escaped = escape_spreadsheet_cell(value)
+        assert "\x01" not in escaped
         assert escaped.startswith("'")
     dls = load_workbook(
         BytesIO(
@@ -162,3 +168,73 @@ def test_user_controlled_template_headers_are_formula_safe() -> None:
     header = workbook["발주서"]["A1"]
     assert header.data_type == "s"
     assert header.value == '\'=HYPERLINK("bad")'
+
+
+def test_versioned_export_artifact_service_is_the_scoped_production_entrypoint(
+    tmp_path,
+) -> None:
+    from suseoro.exports.service import ExportArtifactService
+
+    fixture = make_workflow_fixture(tmp_path)
+    service = ExportArtifactService(fixture.connection, tmp_path / "exports")
+    request_id = str(uuid.uuid4())
+    first = service.create_dls_title(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        rows=[
+            {
+                "title": "\x01 =cmd",
+                "author": "저자",
+                "publisher": "출판사",
+                "isbn": "9788937464010",
+            }
+        ],
+        reason="DLS 서명 내보내기",
+        idempotency_key="dls-title-artifact",
+        request_id=request_id,
+    )
+    replay = service.create_dls_title(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=1,
+        rows=[
+            {
+                "title": "\x01 =cmd",
+                "author": "저자",
+                "publisher": "출판사",
+                "isbn": "9788937464010",
+            }
+        ],
+        reason="DLS 서명 내보내기",
+        idempotency_key="dls-title-artifact",
+        request_id=request_id,
+    )
+    assert replay == first
+    assert first["path"].exists()
+    content = first["path"].read_bytes()
+    assert hashlib.sha256(content).hexdigest() == first["sha256"]
+    stored = fixture.connection.execute(
+        """
+        SELECT artifact_type, storage_path, sha256, content_bytes
+        FROM generated_artifacts WHERE id = ?
+        """,
+        (first["artifact_id"],),
+    ).fetchone()
+    assert (stored["artifact_type"], stored["storage_path"], stored["sha256"]) == (
+        "DLS_TITLE_XLSX",
+        str(first["path"]),
+        first["sha256"],
+    )
+    assert stored["content_bytes"] == content
+    assert fixture.workspace_version() == 2
+    assert (
+        fixture.connection.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'EXPORT_ARTIFACT_CREATED'"
+        ).fetchone()[0]
+        == 1
+    )

@@ -18,9 +18,9 @@ from suseoro.workflow._common import (
 )
 
 _DISPOSITIONS = {
-    "VENDOR_CONFIRM",
+    "VENDOR_CHECK",
     "RETURN_PLANNED",
-    "ADDITIONAL_DELIVERY_PLANNED",
+    "ADDITIONAL_DELIVERY",
     "ACCEPTED",
 }
 
@@ -55,13 +55,22 @@ class ReceivingService:
     def _order(self, school_id: str, workspace_id: str, order_revision_id: str):
         row = self.connection.execute(
             """
-            SELECT * FROM order_revisions
-            WHERE id = ? AND school_id = ? AND workspace_id = ? AND sealed_at IS NOT NULL
+            SELECT ors.*
+            FROM order_revisions ors
+            JOIN workspace_current_orders current
+              ON current.order_revision_id = ors.id
+             AND current.workspace_id = ors.workspace_id
+             AND current.school_id = ors.school_id
+            JOIN order_transmissions transmission
+              ON transmission.id = current.transmission_id
+             AND transmission.order_revision_id = ors.id
+            WHERE ors.id = ? AND ors.school_id = ? AND ors.workspace_id = ?
+              AND ors.sealed_at IS NOT NULL
             """,
             (order_revision_id, school_id, workspace_id),
         ).fetchone()
         if row is None:
-            raise ReceivingRuleError("ORDER_NOT_FOUND")
+            raise ReceivingRuleError("ORDER_NOT_CURRENT_OR_SENT")
         return row
 
     def _insert_difference(
@@ -312,7 +321,7 @@ class ReceivingService:
                 raise ReceivingRuleError("MODIFICATION_REASON_REQUIRED")
             workspace = self._workspace(school_id, workspace_id)
             self._order(school_id, workspace_id, order_revision_id)
-            if workspace["status"] not in {"AWAITING_DELIVERY", "RECEIVING"}:
+            if workspace["status"] not in {"ORDER_SENT", "RECEIVING"}:
                 raise ReceivingRuleError("DELIVERY_STATE_INVALID")
             delivery_number = self.connection.execute(
                 """
@@ -494,7 +503,7 @@ class ReceivingService:
                 raise ReceivingRuleError("MODIFICATION_REASON_REQUIRED")
             workspace = self._workspace(school_id, workspace_id)
             self._order(school_id, workspace_id, order_revision_id)
-            if workspace["status"] not in {"AWAITING_DELIVERY", "RECEIVING"}:
+            if workspace["status"] not in {"ORDER_SENT", "RECEIVING"}:
                 raise ReceivingRuleError("SCAN_STATE_INVALID")
             if (
                 self.connection.execute(
@@ -590,30 +599,28 @@ class ReceivingService:
             ).fetchone()
             if session is None:
                 raise ReceivingRuleError("ACTIVE_SCAN_SESSION_NOT_FOUND")
+            self._order(school_id, workspace_id, session["order_revision_id"])
             isbn13 = canonical_isbn13(isbn)
-            ordered = None
-            code = "NORMAL"
-            if expected_order_row_id is not None:
-                ordered = self.connection.execute(
+            ordered = self.connection.execute(
+                """
+                SELECT * FROM order_rows
+                WHERE order_revision_id = ? AND isbn13 = ? LIMIT 1
+                """,
+                (session["order_revision_id"], isbn13),
+            ).fetchone()
+            code = "NORMAL" if ordered is not None else "UNORDERED"
+            if ordered is None and expected_order_row_id is not None:
+                hinted = self.connection.execute(
                     """
                     SELECT * FROM order_rows
                     WHERE id = ? AND order_revision_id = ?
                     """,
                     (expected_order_row_id, session["order_revision_id"]),
                 ).fetchone()
-                if ordered is None:
+                if hinted is None:
                     raise ReceivingRuleError("ORDER_ROW_NOT_FOUND")
-                if isbn13 != ordered["isbn13"]:
-                    code = "EDITION_MISMATCH"
-            if ordered is None:
-                ordered = self.connection.execute(
-                    """
-                    SELECT * FROM order_rows
-                    WHERE order_revision_id = ? AND isbn13 = ? LIMIT 1
-                    """,
-                    (session["order_revision_id"], isbn13),
-                ).fetchone()
-                code = "UNORDERED" if ordered is None else "NORMAL"
+                ordered = hinted
+                code = "EDITION_MISMATCH"
             current = 0
             if ordered is not None and code != "EDITION_MISMATCH":
                 current = (
@@ -678,6 +685,7 @@ class ReceivingService:
                 "code": code,
                 "isbn13": isbn13,
                 "scanned_quantity": current,
+                "order_row_id": ordered["id"] if ordered else None,
             }
             record_audit_event(
                 self.connection,
@@ -732,8 +740,13 @@ class ReceivingService:
                 raise ReceivingRuleError("MODIFICATION_REASON_REQUIRED")
             before = self.connection.execute(
                 """
-                SELECT * FROM receiving_differences
-                WHERE id = ? AND school_id = ? AND workspace_id = ? AND active = 1
+                SELECT rd.* FROM receiving_differences rd
+                JOIN workspace_current_orders current
+                  ON current.workspace_id = rd.workspace_id
+                 AND current.school_id = rd.school_id
+                 AND current.order_revision_id = rd.order_revision_id
+                WHERE rd.id = ? AND rd.school_id = ? AND rd.workspace_id = ?
+                  AND rd.active = 1 AND current.transmission_id IS NOT NULL
                 """,
                 (difference_id, school_id, workspace_id),
             ).fetchone()
@@ -808,9 +821,13 @@ class ReceivingService:
                 raise ReceivingRuleError("RECEIVING_STATE_INVALID")
             unresolved = self.connection.execute(
                 """
-                SELECT COUNT(*) AS n FROM receiving_differences
-                WHERE school_id = ? AND workspace_id = ?
-                  AND active = 1 AND disposition IS NULL
+                SELECT COUNT(*) AS n FROM receiving_differences rd
+                JOIN workspace_current_orders current
+                  ON current.workspace_id = rd.workspace_id
+                 AND current.school_id = rd.school_id
+                 AND current.order_revision_id = rd.order_revision_id
+                WHERE rd.school_id = ? AND rd.workspace_id = ?
+                  AND rd.active = 1 AND rd.disposition IS NULL
                 """,
                 (school_id, workspace_id),
             ).fetchone()["n"]
@@ -831,9 +848,9 @@ class ReceivingService:
                 school_id=school_id,
                 entity_id=workspace_id,
                 submitted_version=workspace_version,
-                changes={"status": "COMPLETE", "updated_at": now},
+                changes={"status": "COMPLETED", "updated_at": now},
             )
-            result = {"state": "COMPLETE", "row_version": updated["row_version"]}
+            result = {"state": "COMPLETED", "row_version": updated["row_version"]}
             record_audit_event(
                 self.connection,
                 actor_id=actor_id,

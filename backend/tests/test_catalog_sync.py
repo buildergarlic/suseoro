@@ -1350,7 +1350,7 @@ def test_parent_identity_links_cannot_be_reparented_after_insert(tmp_path) -> No
             )
 
         connection.execute(
-            "UPDATE acquisition_workspaces SET status = 'REVIEWING' WHERE id = ?",
+            "UPDATE acquisition_workspaces SET status = 'ANALYZING' WHERE id = ?",
             (workspace_id,),
         )
         connection.execute(
@@ -1803,6 +1803,7 @@ def test_forward_migration_expands_formats_without_losing_b5fc8_rows(tmp_path) -
             "0004a_catalog_integrity",
             "0004b_catalog_hardening",
             "0005_workflow",
+            "0005a_workflow_contract",
         ):
             shutil.copy2(source, old_dir / source.name)
     connection = connect(tmp_path / "upgrade.sqlite3")
@@ -1868,7 +1869,7 @@ def test_forward_migration_expands_formats_without_losing_b5fc8_rows(tmp_path) -
         "XLSX",
     )
     assert foreign_keys == []
-    assert latest == "0005_workflow"
+    assert latest == "0005a_workflow_contract"
 
 
 def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
@@ -1879,7 +1880,11 @@ def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
     old_dir = tmp_path / "0731aa1-migrations"
     old_dir.mkdir()
     for source in current_dir.glob("*.sql"):
-        if source.stem not in ("0004b_catalog_hardening", "0005_workflow"):
+        if source.stem not in (
+            "0004b_catalog_hardening",
+            "0005_workflow",
+            "0005a_workflow_contract",
+        ):
             shutil.copy2(source, old_dir / source.name)
     connection = connect(tmp_path / "0731aa1-upgrade.sqlite3")
     apply_migrations(connection, old_dir)
@@ -1910,7 +1915,7 @@ def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
     connection.close()
 
     assert preserved == 2
-    assert latest == "0005_workflow"
+    assert latest == "0005a_workflow_contract"
     assert {
         "requested_start_local_date",
         "requested_through_local_date",

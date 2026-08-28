@@ -121,14 +121,18 @@ def test_reviewer_view_comment_and_decision_enforce_self_approval_policy(
     assert view["sha256"] == requested["sha256"]
     comment = service.comment(
         school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
         revision_id=requested["revision_id"],
         actor_id=fixture.reviewer_id,
         actor_roles=("REVIEWER",),
+        workspace_version=fixture.workspace_version(),
         content="예산 근거 확인",
+        reason="승인 검토 의견",
         idempotency_key="comment-1",
         request_id=str(uuid.uuid4()),
     )
     assert comment["content"] == "예산 근거 확인"
+    assert comment["row_version"] == 3
     with pytest.raises(ApprovalError) as denied:
         service.approve(
             school_id=fixture.school_id,
@@ -153,7 +157,78 @@ def test_reviewer_view_comment_and_decision_enforce_self_approval_policy(
         idempotency_key="self-reject",
         request_id=str(uuid.uuid4()),
     )
-    assert rejected["state"] == "REVISION_REQUESTED"
+    assert rejected["state"] == "CHANGES_REQUESTED"
+
+
+def test_pending_request_can_be_cancelled_and_comments_require_current_version(
+    tmp_path,
+) -> None:
+    from suseoro.services.concurrency import VersionConflict
+    from suseoro.workflow.approvals import ApprovalError, ApprovalService
+
+    fixture = make_workflow_fixture(tmp_path)
+    fixture.add_candidate(title="책", author="저자", isbn="9788937464010")
+    requested = _request(fixture)
+    service = ApprovalService(fixture.connection)
+    comment = service.comment(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        revision_id=requested["revision_id"],
+        actor_id=fixture.reviewer_id,
+        actor_roles=("REVIEWER",),
+        workspace_version=requested["row_version"],
+        content="현재 승인본 의견",
+        reason="검토 의견",
+        idempotency_key="versioned-comment",
+        request_id=str(uuid.uuid4()),
+    )
+    assert comment["row_version"] == requested["row_version"] + 1
+    with pytest.raises(VersionConflict):
+        service.comment(
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            revision_id=requested["revision_id"],
+            actor_id=fixture.reviewer_id,
+            actor_roles=("REVIEWER",),
+            workspace_version=requested["row_version"],
+            content="stale 의견",
+            reason="stale",
+            idempotency_key="stale-comment",
+            request_id=str(uuid.uuid4()),
+        )
+    cancelled = service.cancel_request(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        revision_id=requested["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="목록을 다시 수정",
+        idempotency_key="cancel-approval",
+        request_id=str(uuid.uuid4()),
+    )
+    assert cancelled["state"] == "CANDIDATE_REVIEW"
+    assert (
+        fixture.connection.execute(
+            "SELECT COUNT(*) FROM approval_cancellations WHERE approval_revision_id = ?",
+            (requested["revision_id"],),
+        ).fetchone()[0]
+        == 1
+    )
+    with pytest.raises(ApprovalError) as not_pending:
+        service.comment(
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            revision_id=requested["revision_id"],
+            actor_id=fixture.reviewer_id,
+            actor_roles=("REVIEWER",),
+            workspace_version=fixture.workspace_version(),
+            content="취소 후 의견",
+            reason="취소됨",
+            idempotency_key="comment-cancelled",
+            request_id=str(uuid.uuid4()),
+        )
+    assert not_pending.value.code == "APPROVAL_COMMENT_STATE_INVALID"
 
 
 def test_single_operator_mode_allows_self_approval_and_first_decision_wins(
@@ -279,7 +354,7 @@ def test_rejection_requires_reason_and_re_request_creates_revision(tmp_path) -> 
         idempotency_key="reject-valid",
         request_id=str(uuid.uuid4()),
     )
-    assert rejected["state"] == "REVISION_REQUESTED"
+    assert rejected["state"] == "CHANGES_REQUESTED"
     second = _request(fixture, key="approval-rerequest", reason="수량 근거를 보완함")
     assert second["revision_number"] == 2
     assert second["revision_id"] != first["revision_id"]
@@ -405,7 +480,7 @@ def test_downward_adjustment_during_quote_review_keeps_the_current_stage(
         request_id=str(uuid.uuid4()),
     )
     assert adjusted["reapproval_required"] is False
-    assert adjusted["state"] == "QUOTE_ADJUSTMENT"
+    assert adjusted["state"] == "QUOTE_REVIEW"
 
 
 def test_post_approval_adjustment_rejects_float_money(tmp_path) -> None:

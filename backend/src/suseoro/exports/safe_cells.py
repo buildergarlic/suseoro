@@ -13,17 +13,22 @@ _FORMULA_PREFIXES = ("=", "+", "-", "@")
 
 
 def escape_spreadsheet_cell(value: Any) -> Any:
-    if (
-        isinstance(value, str)
-        and value
-        and (
-            value.startswith(_FORMULA_PREFIXES)
-            or ord(value[0]) < 32
-            or ord(value[0]) == 127
+    if not isinstance(value, str) or not value:
+        return value
+    had_unsafe_leading_control = ord(value[0]) < 32 or ord(value[0]) == 127
+    sanitized = "".join(
+        "\ufffd"
+        if (
+            (ord(character) < 32 and character not in {"\t", "\n", "\r"})
+            or ord(character) == 127
         )
-    ):
-        return "'" + value
-    return value
+        else character
+        for character in value
+    )
+    probe = sanitized.lstrip(" \t\r\n\ufffd")
+    if had_unsafe_leading_control or probe.startswith(_FORMULA_PREFIXES):
+        return "'" + sanitized
+    return sanitized
 
 
 @dataclass(frozen=True)

@@ -236,7 +236,7 @@ class ApprovalService:
             if not reason.strip():
                 raise ApprovalError("MODIFICATION_REASON_REQUIRED")
             workspace = self._workspace(school_id, workspace_id)
-            if workspace["status"] not in {"CANDIDATE_REVIEW", "REVISION_REQUESTED"}:
+            if workspace["status"] not in {"CANDIDATE_REVIEW", "CHANGES_REQUESTED"}:
                 raise ApprovalError("APPROVAL_REQUEST_STATE_INVALID")
             unresolved = self.connection.execute(
                 """
@@ -325,25 +325,55 @@ class ApprovalService:
         self,
         *,
         school_id: str,
+        workspace_id: str,
         revision_id: str,
         actor_id: str,
         actor_roles: tuple[str, ...],
+        workspace_version: int,
         content: str,
+        reason: str,
         idempotency_key: str,
         request_id: str,
     ) -> dict[str, object]:
-        body = {"revision_id": revision_id, "content": content}
+        body = {
+            "workspace_id": workspace_id,
+            "revision_id": revision_id,
+            "workspace_version": workspace_version,
+            "content": content,
+            "reason": reason,
+        }
 
         def mutate() -> dict[str, object]:
             self._require_reviewer(school_id, actor_id, actor_roles)
             if not content.strip():
                 raise ApprovalError("COMMENT_REQUIRED")
+            if not reason.strip():
+                raise ApprovalError("MODIFICATION_REASON_REQUIRED")
+            workspace = self._workspace(school_id, workspace_id)
+            if workspace["status"] != "APPROVAL_PENDING":
+                raise ApprovalError("APPROVAL_COMMENT_STATE_INVALID")
             revision = self.connection.execute(
-                "SELECT id FROM approval_revisions WHERE id = ? AND school_id = ?",
-                (revision_id, school_id),
+                """
+                SELECT id FROM approval_revisions
+                WHERE id = ? AND school_id = ? AND workspace_id = ?
+                  AND sealed_at IS NOT NULL
+                  AND revision_number = (
+                      SELECT MAX(revision_number) FROM approval_revisions
+                      WHERE workspace_id = ?
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM approval_decisions
+                      WHERE approval_revision_id = approval_revisions.id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM approval_cancellations
+                      WHERE approval_revision_id = approval_revisions.id
+                  )
+                """,
+                (revision_id, school_id, workspace_id, workspace_id),
             ).fetchone()
             if revision is None:
-                raise ApprovalError("APPROVAL_REVISION_NOT_FOUND")
+                raise ApprovalError("APPROVAL_REVISION_NOT_CURRENT")
             comment_id = str(uuid.uuid4())
             now = format_utc(utc_now())
             self.connection.execute(
@@ -354,10 +384,20 @@ class ApprovalService:
                 """,
                 (comment_id, revision_id, school_id, actor_id, content.strip(), now),
             )
+            updated = update_with_version(
+                self.connection,
+                table="acquisition_workspaces",
+                school_id=school_id,
+                entity_id=workspace_id,
+                submitted_version=workspace_version,
+                changes={"status": "APPROVAL_PENDING", "updated_at": now},
+            )
             result = {
                 "comment_id": comment_id,
                 "content": content.strip(),
                 "created_at": now,
+                "state": updated["status"],
+                "row_version": updated["row_version"],
             }
             record_audit_event(
                 self.connection,
@@ -366,8 +406,11 @@ class ApprovalService:
                 action="APPROVAL_COMMENTED",
                 entity_type="approval_revision",
                 entity_id=revision_id,
-                before=None,
-                after=result,
+                before={
+                    "state": workspace["status"],
+                    "row_version": workspace["row_version"],
+                },
+                after={**result, "reason": reason.strip()},
                 request_id=request_id,
             )
             return result
@@ -377,6 +420,109 @@ class ApprovalService:
             school_id=school_id,
             actor_id=actor_id,
             route="approvals.comment",
+            key=idempotency_key,
+            request_body=body,
+            operation=mutate,
+        )
+
+    def cancel_request(
+        self,
+        *,
+        school_id: str,
+        workspace_id: str,
+        revision_id: str,
+        actor_id: str,
+        actor_roles: tuple[str, ...],
+        workspace_version: int,
+        reason: str,
+        idempotency_key: str,
+        request_id: str,
+    ) -> dict[str, object]:
+        body = {
+            "workspace_id": workspace_id,
+            "revision_id": revision_id,
+            "workspace_version": workspace_version,
+            "reason": reason,
+        }
+
+        def mutate() -> dict[str, object]:
+            self._require_operator(school_id, actor_id, actor_roles)
+            if not reason.strip():
+                raise ApprovalError("MODIFICATION_REASON_REQUIRED")
+            workspace = self._workspace(school_id, workspace_id)
+            if workspace["status"] != "APPROVAL_PENDING":
+                raise ApprovalError("APPROVAL_CANCEL_STATE_INVALID")
+            revision = self.connection.execute(
+                """
+                SELECT ar.id FROM approval_revisions ar
+                WHERE ar.id = ? AND ar.school_id = ? AND ar.workspace_id = ?
+                  AND ar.revision_number = (
+                      SELECT MAX(revision_number) FROM approval_revisions
+                      WHERE workspace_id = ?
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM approval_decisions ad
+                      WHERE ad.approval_revision_id = ar.id
+                  )
+                """,
+                (revision_id, school_id, workspace_id, workspace_id),
+            ).fetchone()
+            if revision is None:
+                raise ApprovalError("APPROVAL_REVISION_NOT_CURRENT")
+            cancellation_id = str(uuid.uuid4())
+            now = format_utc(utc_now())
+            self.connection.execute(
+                """
+                INSERT INTO approval_cancellations (
+                    id, approval_revision_id, school_id, workspace_id,
+                    actor_id, reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    cancellation_id,
+                    revision_id,
+                    school_id,
+                    workspace_id,
+                    actor_id,
+                    reason.strip(),
+                    now,
+                ),
+            )
+            updated = update_with_version(
+                self.connection,
+                table="acquisition_workspaces",
+                school_id=school_id,
+                entity_id=workspace_id,
+                submitted_version=workspace_version,
+                changes={"status": "CANDIDATE_REVIEW", "updated_at": now},
+            )
+            result = {
+                "cancellation_id": cancellation_id,
+                "revision_id": revision_id,
+                "state": updated["status"],
+                "row_version": updated["row_version"],
+            }
+            record_audit_event(
+                self.connection,
+                actor_id=actor_id,
+                school_id=school_id,
+                action="APPROVAL_CANCELLED",
+                entity_type="approval_revision",
+                entity_id=revision_id,
+                before={
+                    "state": workspace["status"],
+                    "row_version": workspace["row_version"],
+                },
+                after={**result, "reason": reason.strip()},
+                request_id=request_id,
+            )
+            return result
+
+        return idempotent_mutation(
+            self.connection,
+            school_id=school_id,
+            actor_id=actor_id,
+            route="approvals.cancel",
             key=idempotency_key,
             request_body=body,
             operation=mutate,
@@ -453,7 +599,7 @@ class ApprovalService:
                     now,
                 ),
             )
-            state = "APPROVED" if decision == "APPROVED" else "REVISION_REQUESTED"
+            state = "APPROVED" if decision == "APPROVED" else "CHANGES_REQUESTED"
             updated = update_with_version(
                 self.connection,
                 table="acquisition_workspaces",
@@ -533,9 +679,9 @@ class ApprovalService:
             workspace = self._workspace(school_id, workspace_id)
             if workspace["status"] not in {
                 "APPROVED",
-                "QUOTE_ADJUSTMENT",
+                "QUOTE_REVIEW",
                 "ORDER_READY",
-                "AWAITING_DELIVERY",
+                "ORDER_SENT",
                 "RECEIVING",
             }:
                 raise ApprovalError("APPROVED_ADJUSTMENT_STATE_INVALID")

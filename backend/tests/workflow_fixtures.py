@@ -149,9 +149,10 @@ def make_workflow_fixture(
     *,
     state: str = "CANDIDATE_REVIEW",
     single_operator_mode: bool = False,
+    migrations_dir: Path | None = None,
 ) -> WorkflowFixture:
     connection = connect(tmp_path / "workflow.sqlite3")
-    apply_migrations(connection)
+    apply_migrations(connection, migrations_dir)
     school_id = str(uuid.uuid4())
     other_school_id = str(uuid.uuid4())
     operator_id = str(uuid.uuid4())

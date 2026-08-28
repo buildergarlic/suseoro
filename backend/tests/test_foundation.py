@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import uuid
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from workflow_fixtures import NOW, make_workflow_fixture
 
 from suseoro.api.app import create_app
 from suseoro.config import Settings
@@ -226,6 +228,277 @@ def test_foundation_constraints_upgrade_preserves_valid_linked_data(
                 """,
                 ("not-a-uuid", "Invalid", VALID_TIMESTAMP, VALID_TIMESTAMP),
             )
+
+
+def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
+    tmp_path: Path,
+) -> None:
+    current_dir = Path(__file__).parents[1] / "src" / "suseoro" / "db" / "migrations"
+    old_dir = tmp_path / "c714348-migrations"
+    old_dir.mkdir()
+    for source in current_dir.glob("*.sql"):
+        if source.stem != "0005a_workflow_contract":
+            shutil.copy2(source, old_dir / source.name)
+    fixture = make_workflow_fixture(
+        tmp_path / "upgrade",
+        state="AWAITING_DELIVERY",
+        migrations_dir=old_dir,
+    )
+    candidate_id = fixture.add_candidate(
+        title="보존 책",
+        author="저자",
+        isbn="9788937464010",
+        quantity=1,
+        unit_price=10_000,
+    )
+    recommendation_id = fixture.connection.execute(
+        "SELECT recommendation_id FROM candidate_decisions WHERE id = ?",
+        (candidate_id,),
+    ).fetchone()["recommendation_id"]
+    aliases = {
+        "DATA_PREPARATION": "DRAFT",
+        "COMPARING": "ANALYZING",
+        "REVISION_REQUESTED": "CHANGES_REQUESTED",
+        "QUOTE_ADJUSTMENT": "QUOTE_REVIEW",
+        "AWAITING_DELIVERY": "ORDER_SENT",
+        "COMPLETE": "COMPLETED",
+    }
+    workspace_ids = {"AWAITING_DELIVERY": fixture.workspace_id}
+    for old_state in aliases:
+        if old_state == "AWAITING_DELIVERY":
+            continue
+        workspace_id = str(uuid.uuid4())
+        workspace_ids[old_state] = workspace_id
+        fixture.connection.execute(
+            """
+            INSERT INTO acquisition_workspaces (
+                id, school_id, name, status, created_by_user_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                workspace_id,
+                fixture.school_id,
+                f"upgrade-{old_state}",
+                old_state,
+                fixture.operator_id,
+                NOW,
+                NOW,
+            ),
+        )
+    approval_id = str(uuid.uuid4())
+    approval_row_id = str(uuid.uuid4())
+    quote_id = str(uuid.uuid4())
+    quote_row_id = str(uuid.uuid4())
+    zero_quote_row_id = str(uuid.uuid4())
+    artifact_id = str(uuid.uuid4())
+    order_id = str(uuid.uuid4())
+    order_row_id = str(uuid.uuid4())
+    difference_id = str(uuid.uuid4())
+    fixture.connection.execute(
+        """
+        INSERT INTO approval_revisions (
+            id, school_id, workspace_id, revision_number, canonical_json, sha256,
+            budget_won, expected_total_won, created_by_user_id, reason,
+            created_at
+        ) VALUES (?, ?, ?, 1, '{}', ?, 20000, 10000, ?, 'legacy', ?)
+        """,
+        (
+            approval_id,
+            fixture.school_id,
+            fixture.workspace_id,
+            "a" * 64,
+            fixture.operator_id,
+            NOW,
+        ),
+    )
+    fixture.connection.execute(
+        """
+        INSERT INTO approval_rows (
+            id, approval_revision_id, school_id, workspace_id, candidate_id,
+            recommendation_id, isbn13, title, author, quantity, unit_price,
+            line_total_won, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, '9788937464010', '보존 책', '저자', 1, 10000, 10000, ?)
+        """,
+        (
+            approval_row_id,
+            approval_id,
+            fixture.school_id,
+            fixture.workspace_id,
+            candidate_id,
+            recommendation_id,
+            NOW,
+        ),
+    )
+    fixture.connection.execute(
+        "UPDATE approval_revisions SET sealed_at = ? WHERE id = ?",
+        (NOW, approval_id),
+    )
+    fixture.connection.execute(
+        """
+        INSERT INTO approval_decisions (
+            id, approval_revision_id, school_id, workspace_id, actor_id,
+            decision, reason, created_at
+        ) VALUES (?, ?, ?, ?, ?, 'APPROVED', 'legacy', ?)
+        """,
+        (
+            str(uuid.uuid4()),
+            approval_id,
+            fixture.school_id,
+            fixture.workspace_id,
+            fixture.reviewer_id,
+            NOW,
+        ),
+    )
+    fixture.connection.execute(
+        """
+        INSERT INTO vendor_quotes (
+            id, school_id, workspace_id, approval_revision_id, vendor_name,
+            total_won, list_total_won, discount_won, budget_overrun_won,
+            out_of_stock_count, missing_price_count, list_mismatch_count,
+            needs_review_count, unmatched_count, requires_reapproval, reason,
+            created_by_user_id, created_at
+        ) VALUES (?, ?, ?, ?, 'legacy vendor', 9000, 10000, 1000, 0,
+                  0, 0, 0, 0, 0, 0, 'legacy', ?, ?)
+        """,
+        (
+            quote_id,
+            fixture.school_id,
+            fixture.workspace_id,
+            approval_id,
+            fixture.operator_id,
+            NOW,
+        ),
+    )
+    fixture.connection.execute(
+        """
+        INSERT INTO vendor_quote_rows (
+            id, quote_id, approval_row_id, match_status, isbn13, title, author,
+            quantity, unit_price, line_total_won, created_at
+        ) VALUES (?, ?, ?, 'MATCHED_ISBN', '9788937464010', '보존 책', '저자', 1, 9000, 9000, ?)
+        """,
+        (quote_row_id, quote_id, approval_row_id, NOW),
+    )
+    fixture.connection.execute(
+        """
+        INSERT INTO vendor_quote_rows (
+            id, quote_id, approval_row_id, match_status, isbn13, title, author,
+            quantity, unit_price, line_total_won, created_at
+        ) VALUES (?, ?, ?, 'MATCHED_ISBN', '9788937464010', '구버전 0수량',
+                  '저자', 0, 9000, 0, ?)
+        """,
+        (zero_quote_row_id, quote_id, approval_row_id, NOW),
+    )
+    fixture.connection.execute(
+        "UPDATE vendor_quotes SET sealed_at = ? WHERE id = ?",
+        (NOW, quote_id),
+    )
+    fixture.connection.execute(
+        """
+        INSERT INTO generated_artifacts (
+            id, school_id, workspace_id, artifact_type, storage_path, sha256,
+            size_bytes, content_bytes, created_by_user_id, created_at
+        ) VALUES (?, ?, ?, 'ORDER_XLSX', 'legacy.xlsx', ?, 1, X'00', ?, ?)
+        """,
+        (
+            artifact_id,
+            fixture.school_id,
+            fixture.workspace_id,
+            "b" * 64,
+            fixture.operator_id,
+            NOW,
+        ),
+    )
+    fixture.connection.execute(
+        """
+        INSERT INTO order_revisions (
+            id, school_id, workspace_id, approval_revision_id, quote_id,
+            artifact_id, revision_number, reason, created_by_user_id,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, 'legacy', ?, ?)
+        """,
+        (
+            order_id,
+            fixture.school_id,
+            fixture.workspace_id,
+            approval_id,
+            quote_id,
+            artifact_id,
+            fixture.operator_id,
+            NOW,
+        ),
+    )
+    fixture.connection.execute(
+        """
+        INSERT INTO order_rows (
+            id, order_revision_id, approval_row_id, isbn13, title, author,
+            quantity, unit_price, line_total_won, created_at
+        ) VALUES (?, ?, ?, '9788937464010', '보존 책', '저자', 1, 9000, 9000, ?)
+        """,
+        (order_row_id, order_id, approval_row_id, NOW),
+    )
+    fixture.connection.execute(
+        "UPDATE order_revisions SET sealed_at = ? WHERE id = ?",
+        (NOW, order_id),
+    )
+    fixture.connection.execute(
+        """
+        INSERT INTO receiving_differences (
+            id, school_id, workspace_id, order_revision_id, order_row_id,
+            kind, reference_key, details_json, disposition, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'MISSING', 'legacy', '{}',
+                  'ADDITIONAL_DELIVERY_PLANNED', ?, ?)
+        """,
+        (
+            difference_id,
+            fixture.school_id,
+            fixture.workspace_id,
+            order_id,
+            order_row_id,
+            NOW,
+            NOW,
+        ),
+    )
+    fixture.connection.commit()
+
+    apply_migrations(fixture.connection, current_dir)
+
+    migrated_states = {
+        row["id"]: row["status"]
+        for row in fixture.connection.execute(
+            "SELECT id, status FROM acquisition_workspaces WHERE id IN ({})".format(
+                ",".join("?" for _ in workspace_ids)
+            ),
+            tuple(workspace_ids.values()),
+        ).fetchall()
+    }
+    assert {
+        old_state: migrated_states[workspace_ids[old_state]] for old_state in aliases
+    } == aliases
+    assert (
+        fixture.connection.execute(
+            "SELECT disposition FROM receiving_differences WHERE id = ?",
+            (difference_id,),
+        ).fetchone()["disposition"]
+        == "ADDITIONAL_DELIVERY"
+    )
+    assert fixture.connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    preserved_quote_rows = [
+        dict(row)
+        for row in fixture.connection.execute(
+            "SELECT id, quantity FROM vendor_quote_rows WHERE quote_id = ? ORDER BY quantity",
+            (quote_id,),
+        ).fetchall()
+    ]
+    assert preserved_quote_rows == [
+        {"id": zero_quote_row_id, "quantity": 0},
+        {"id": quote_row_id, "quantity": 1},
+    ]
+    assert (
+        fixture.connection.execute(
+            "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
+        ).fetchone()[0]
+        == "0005a_workflow_contract"
+    )
 
 
 def test_forward_constraints_reject_invalid_legacy_data_without_data_loss(

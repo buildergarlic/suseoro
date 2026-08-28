@@ -102,6 +102,133 @@ def test_quote_ingest_isbn_first_and_reports_every_mismatch(tmp_path) -> None:
     assert result["rows"][2]["match_status"] == "UNMATCHED"
 
 
+def test_quote_reconciliation_rejects_zero_quantity_and_reports_duplicates(
+    tmp_path,
+) -> None:
+    from suseoro.workflow.quotes import QuoteRuleError, QuoteService
+
+    fixture = make_workflow_fixture(tmp_path)
+    fixture.add_candidate(
+        title="책", author="저자", isbn="9788937464010", quantity=2, unit_price=12_000
+    )
+    approved = _approved(fixture)
+    service = QuoteService(fixture.connection)
+    with pytest.raises(QuoteRuleError) as zero:
+        service.ingest(
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            approval_revision_id=approved["revision_id"],
+            actor_id=fixture.operator_id,
+            actor_roles=("OPERATOR",),
+            workspace_version=fixture.workspace_version(),
+            vendor_name="0권 업체",
+            rows=[
+                {
+                    "isbn": "9788937464010",
+                    "title": "책",
+                    "author": "저자",
+                    "quantity": 0,
+                    "unit_price": 9_000,
+                }
+            ],
+            reason="수량 검증",
+            idempotency_key="zero-quantity",
+            request_id=str(uuid.uuid4()),
+        )
+    assert zero.value.code == "INVALID_QUOTE_QUANTITY"
+    duplicate = service.ingest(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        approval_revision_id=approved["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        vendor_name="중복 업체",
+        rows=[
+            {
+                "isbn": "9788937464010",
+                "title": "책",
+                "author": "저자",
+                "quantity": 1,
+                "unit_price": 9_000,
+            },
+            {
+                "isbn": "9788937464010",
+                "title": "책",
+                "author": "저자",
+                "quantity": 1,
+                "unit_price": 8_500,
+            },
+        ],
+        reason="중복 진단",
+        idempotency_key="duplicate-quote",
+        request_id=str(uuid.uuid4()),
+    )
+    assert duplicate["reconciliation"] == {
+        "duplicate_isbns": ["9788937464010"],
+        "price_conflicts": ["9788937464010"],
+    }
+
+
+def test_manual_no_isbn_confirmation_creates_new_immutable_quote_revision(
+    tmp_path,
+) -> None:
+    from suseoro.workflow.quotes import QuoteService
+
+    fixture = make_workflow_fixture(tmp_path)
+    fixture.add_candidate(title="무ISBN", author="저자", isbn=None, unit_price=10_000)
+    approved = _approved(fixture)
+    service = QuoteService(fixture.connection)
+    original = service.ingest(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        approval_revision_id=approved["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        vendor_name="무ISBN 업체",
+        rows=[
+            {
+                "isbn": None,
+                "title": "무ISBN",
+                "author": "저자",
+                "quantity": 1,
+                "unit_price": 9_000,
+            }
+        ],
+        reason="견적 등록",
+        idempotency_key="manual-source",
+        request_id=str(uuid.uuid4()),
+    )
+    approval_row_id = fixture.connection.execute(
+        "SELECT id FROM approval_rows WHERE approval_revision_id = ?",
+        (approved["revision_id"],),
+    ).fetchone()["id"]
+    confirmed = service.confirm_manual_match(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        quote_id=original["quote_id"],
+        quote_row_id=original["rows"][0]["quote_row_id"],
+        approval_row_id=approval_row_id,
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="제목과 저자 확인",
+        idempotency_key="manual-confirm",
+        request_id=str(uuid.uuid4()),
+    )
+    assert confirmed["quote_id"] != original["quote_id"]
+    assert confirmed["revision_number"] == 2
+    assert confirmed["rows"][0]["match_status"] == "MATCHED_MANUAL"
+    assert confirmed["rows"][0]["approval_row_id"] == approval_row_id
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        fixture.connection.execute(
+            "UPDATE vendor_quote_rows SET title = '변조' WHERE quote_id = ?",
+            (original["quote_id"],),
+        )
+    fixture.connection.rollback()
+
+
 def test_budget_overrun_never_auto_removes_books(tmp_path) -> None:
     from suseoro.workflow.quotes import QuoteService
 
@@ -225,6 +352,248 @@ def test_quote_rejects_a_superseded_approval_scope(tmp_path) -> None:
     assert old_scope.value.code == "APPROVAL_REVISION_NOT_CURRENT"
 
 
+def test_order_validation_persists_missing_duplicate_and_overallocation_diagnostics(
+    tmp_path,
+) -> None:
+    from suseoro.workflow.orders import OrderService
+    from suseoro.workflow.quotes import QuoteService
+
+    fixture = make_workflow_fixture(tmp_path)
+    duplicated_id = fixture.add_candidate(
+        title="중복", author="저자", isbn="9788937464010", quantity=1, unit_price=10_000
+    )
+    missing_id = fixture.add_candidate(
+        title="누락", author="저자", isbn="9788936434267", quantity=1, unit_price=10_000
+    )
+    approved = _approved(fixture)
+    quote = QuoteService(fixture.connection).ingest(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        approval_revision_id=approved["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        vendor_name="불완전 업체",
+        rows=[
+            {
+                "isbn": "9788937464010",
+                "title": "중복",
+                "author": "저자",
+                "quantity": 1,
+                "unit_price": 9_000,
+            },
+            {
+                "isbn": "9788937464010",
+                "title": "중복",
+                "author": "저자",
+                "quantity": 1,
+                "unit_price": 8_500,
+            },
+        ],
+        reason="불완전 견적",
+        idempotency_key="incomplete-quote",
+        request_id=str(uuid.uuid4()),
+    )
+    result = OrderService(
+        fixture.connection, tmp_path / "validation-artifacts"
+    ).generate_revision(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        approval_revision_id=approved["revision_id"],
+        quote_id=quote["quote_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="coverage 확인",
+        idempotency_key="invalid-order-coverage",
+        request_id=str(uuid.uuid4()),
+    )
+    assert result["status"] == "INVALID"
+    assert result["diagnostics"] == {
+        "missing_candidate_ids": [missing_id],
+        "duplicate_candidate_ids": [duplicated_id],
+        "over_allocations": [
+            {"candidate_id": duplicated_id, "expected": 1, "allocated": 2}
+        ],
+        "price_conflict_candidate_ids": [duplicated_id],
+        "unmapped_quote_row_ids": [],
+    }
+    persisted = fixture.connection.execute(
+        "SELECT diagnostics_json FROM order_validation_results WHERE id = ?",
+        (result["validation_id"],),
+    ).fetchone()
+    assert persisted is not None
+    assert (
+        fixture.connection.execute(
+            "SELECT COUNT(*) FROM order_revisions WHERE workspace_id = ?",
+            (fixture.workspace_id,),
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_advanced_split_uses_remembered_vendor_templates_and_complete_allocations(
+    tmp_path,
+) -> None:
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from suseoro.workflow.orders import (
+        OrderRuleError,
+        OrderService,
+        OrderTemplateService,
+    )
+    from suseoro.workflow.quotes import QuoteService
+
+    fixture = make_workflow_fixture(tmp_path)
+    first_id = fixture.add_candidate(
+        title="첫 책",
+        author="저자",
+        isbn="9788937464010",
+        quantity=1,
+        unit_price=10_000,
+    )
+    second_id = fixture.add_candidate(
+        title="둘째 책",
+        author="저자",
+        isbn="9788936434267",
+        quantity=2,
+        unit_price=10_000,
+    )
+    approved = _approved(fixture)
+    quotes = QuoteService(fixture.connection)
+    quote_a = quotes.ingest(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        approval_revision_id=approved["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        vendor_name="업체 A",
+        rows=[
+            {
+                "isbn": "9788937464010",
+                "title": "첫 책",
+                "author": "저자",
+                "quantity": 1,
+                "unit_price": 9_000,
+            }
+        ],
+        reason="A 견적",
+        idempotency_key="quote-a",
+        request_id=str(uuid.uuid4()),
+    )
+    quote_b = quotes.ingest(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        approval_revision_id=approved["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        vendor_name="업체 B",
+        rows=[
+            {
+                "isbn": "9788936434267",
+                "title": "둘째 책",
+                "author": "저자",
+                "quantity": 2,
+                "unit_price": 8_000,
+            }
+        ],
+        reason="B 견적",
+        idempotency_key="quote-b",
+        request_id=str(uuid.uuid4()),
+    )
+    templates = OrderTemplateService(fixture.connection)
+    templates.save(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        vendor_name="업체 A",
+        columns=(("title", "A 도서명"), ("quantity", "A 수량")),
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="A 양식 기억",
+        idempotency_key="template-a",
+        request_id=str(uuid.uuid4()),
+    )
+    templates.save(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        vendor_name="업체 B",
+        columns=(("isbn", "B ISBN"), ("quantity", "B 수량")),
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="B 양식 기억",
+        idempotency_key="template-b",
+        request_id=str(uuid.uuid4()),
+    )
+    allocations = [
+        {
+            "quote_id": quote_a["quote_id"],
+            "quote_row_id": quote_a["rows"][0]["quote_row_id"],
+            "quantity": 1,
+        },
+        {
+            "quote_id": quote_b["quote_id"],
+            "quote_row_id": quote_b["rows"][0]["quote_row_id"],
+            "quantity": 2,
+        },
+    ]
+    order_service = OrderService(fixture.connection, tmp_path / "split-artifacts")
+    with pytest.raises(OrderRuleError) as disabled:
+        order_service.generate_revision(
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            approval_revision_id=approved["revision_id"],
+            quote_id=quote_a["quote_id"],
+            allocations=allocations,
+            advanced_split_enabled=False,
+            actor_id=fixture.operator_id,
+            actor_roles=("OPERATOR",),
+            workspace_version=fixture.workspace_version(),
+            reason="비활성 분할 발주",
+            idempotency_key="split-disabled",
+            request_id=str(uuid.uuid4()),
+        )
+    assert disabled.value.code == "ADVANCED_SPLIT_ORDER_DISABLED"
+    order = order_service.generate_revision(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        approval_revision_id=approved["revision_id"],
+        quote_id=quote_a["quote_id"],
+        allocations=allocations,
+        advanced_split_enabled=True,
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="분할 발주",
+        idempotency_key="split-order",
+        request_id=str(uuid.uuid4()),
+    )
+    assert order["status"] == "READY"
+    assert {item["vendor_name"] for item in order["artifacts"]} == {"업체 A", "업체 B"}
+    assert {row["candidate_id"] for row in order["allocations"]} == {
+        first_id,
+        second_id,
+    }
+    workbooks = {
+        item["vendor_name"]: load_workbook(BytesIO(item["path"].read_bytes()))["발주서"]
+        for item in order["artifacts"]
+    }
+    assert [cell.value for cell in workbooks["업체 A"][1]] == ["A 도서명", "A 수량"]
+    assert [cell.value for cell in workbooks["업체 B"][1]] == ["B ISBN", "B 수량"]
+    assert (
+        fixture.connection.execute(
+            "SELECT COUNT(*) FROM order_vendor_artifacts WHERE order_revision_id = ?",
+            (order["revision_id"],),
+        ).fetchone()[0]
+        == 2
+    )
+
+
 def test_order_revision_revalidates_scope_and_never_overwrites_artifact(
     tmp_path,
 ) -> None:
@@ -243,7 +612,7 @@ def test_order_revision_revalidates_scope_and_never_overwrites_artifact(
         actor_id=fixture.operator_id,
         actor_roles=("OPERATOR",),
         workspace_version=fixture.workspace_version(),
-        vendor_name="업체",
+        vendor_name="../../escaped-vendor",
         rows=[
             {
                 "isbn": "9788937464010",
@@ -272,6 +641,10 @@ def test_order_revision_revalidates_scope_and_never_overwrites_artifact(
     )
     first_bytes = first["path"].read_bytes()
     assert hashlib.sha256(first_bytes).hexdigest() == first["sha256"]
+    artifact_scope = (
+        tmp_path / "artifacts" / fixture.school_id / fixture.workspace_id
+    ).resolve()
+    assert first["path"].resolve().is_relative_to(artifact_scope)
     service.mark_sent(
         school_id=fixture.school_id,
         workspace_id=fixture.workspace_id,
@@ -299,6 +672,76 @@ def test_order_revision_revalidates_scope_and_never_overwrites_artifact(
     assert second["path"] != first["path"]
     assert first["path"].read_bytes() == first_bytes
     assert first["path"].exists() and second["path"].exists()
+    assert second["state"] == "ORDER_READY"
+    with pytest.raises(OrderRuleError) as stale_first:
+        service.mark_sent(
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            order_revision_id=first["revision_id"],
+            actor_id=fixture.operator_id,
+            actor_roles=("OPERATOR",),
+            workspace_version=fixture.workspace_version(),
+            reason="과거 r1 재전달 시도",
+            idempotency_key="stale-r1-send",
+            request_id=str(uuid.uuid4()),
+        )
+    assert stale_first.value.code == "ORDER_REVISION_NOT_CURRENT"
+    service.mark_sent(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        order_revision_id=second["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="r2 전달",
+        idempotency_key="send-r2",
+        request_id=str(uuid.uuid4()),
+    )
+    third = service.generate_revision(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        approval_revision_id=approved["revision_id"],
+        quote_id=quote["quote_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="전달 뒤 r3",
+        idempotency_key="order-3",
+        request_id=str(uuid.uuid4()),
+    )
+    assert third["revision_number"] == 3
+    assert third["state"] == "ORDER_READY"
+    with pytest.raises(OrderRuleError) as stale_second:
+        service.mark_sent(
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            order_revision_id=second["revision_id"],
+            actor_id=fixture.operator_id,
+            actor_roles=("OPERATOR",),
+            workspace_version=fixture.workspace_version(),
+            reason="과거 r2 재전달 시도",
+            idempotency_key="stale-r2-send",
+            request_id=str(uuid.uuid4()),
+        )
+    assert stale_second.value.code == "ORDER_REVISION_NOT_CURRENT"
+    sent_third = service.mark_sent(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        order_revision_id=third["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="r3 전달",
+        idempotency_key="send-r3",
+        request_id=str(uuid.uuid4()),
+    )
+    assert sent_third["state"] == "ORDER_SENT"
+    current = fixture.connection.execute(
+        "SELECT order_revision_id, transmission_id FROM workspace_current_orders WHERE workspace_id = ?",
+        (fixture.workspace_id,),
+    ).fetchone()
+    assert current["order_revision_id"] == third["revision_id"]
+    assert current["transmission_id"] == sent_third["transmission_id"]
 
     with pytest.raises(sqlite3.IntegrityError, match="immutable"):
         fixture.connection.execute(
@@ -334,20 +777,20 @@ def test_order_revision_revalidates_scope_and_never_overwrites_artifact(
         request_id=str(uuid.uuid4()),
     )
     over_service = OrderService(over_fixture.connection, tmp_path / "over-artifacts")
-    with pytest.raises(OrderRuleError) as scope:
-        over_service.generate_revision(
-            school_id=over_fixture.school_id,
-            workspace_id=over_fixture.workspace_id,
-            approval_revision_id=over_approved["revision_id"],
-            quote_id=over_quote["quote_id"],
-            actor_id=over_fixture.operator_id,
-            actor_roles=("OPERATOR",),
-            workspace_version=over_fixture.workspace_version(),
-            reason="범위 초과",
-            idempotency_key="order-over",
-            request_id=str(uuid.uuid4()),
-        )
-    assert scope.value.code == "APPROVAL_SCOPE_EXCEEDED"
+    scope = over_service.generate_revision(
+        school_id=over_fixture.school_id,
+        workspace_id=over_fixture.workspace_id,
+        approval_revision_id=over_approved["revision_id"],
+        quote_id=over_quote["quote_id"],
+        actor_id=over_fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=over_fixture.workspace_version(),
+        reason="범위 초과",
+        idempotency_key="order-over",
+        request_id=str(uuid.uuid4()),
+    )
+    assert scope["status"] == "INVALID"
+    assert scope["diagnostics"]["over_allocations"]
 
 
 def test_order_file_is_removed_when_idempotency_completion_rolls_back(
@@ -510,7 +953,7 @@ def test_order_rejects_artifacts_from_an_older_approval_after_reapproval(
 
 def test_order_honors_current_downward_scope_after_approval(tmp_path) -> None:
     from suseoro.workflow.approvals import ApprovalService
-    from suseoro.workflow.orders import OrderRuleError, OrderService
+    from suseoro.workflow.orders import OrderService
     from suseoro.workflow.quotes import QuoteService
 
     fixture = make_workflow_fixture(tmp_path)
@@ -557,17 +1000,19 @@ def test_order_honors_current_downward_scope_after_approval(tmp_path) -> None:
         idempotency_key="exclude-after-quote",
         request_id=str(uuid.uuid4()),
     )
-    with pytest.raises(OrderRuleError) as current_scope:
-        OrderService(fixture.connection, tmp_path / "artifacts").generate_revision(
-            school_id=fixture.school_id,
-            workspace_id=fixture.workspace_id,
-            approval_revision_id=approved["revision_id"],
-            quote_id=quote["quote_id"],
-            actor_id=fixture.operator_id,
-            actor_roles=("OPERATOR",),
-            workspace_version=fixture.workspace_version(),
-            reason="제외 전 견적으로 발주 시도",
-            idempotency_key="order-after-exclusion",
-            request_id=str(uuid.uuid4()),
-        )
-    assert current_scope.value.code == "APPROVAL_SCOPE_EXCEEDED"
+    current_scope = OrderService(
+        fixture.connection, tmp_path / "artifacts"
+    ).generate_revision(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        approval_revision_id=approved["revision_id"],
+        quote_id=quote["quote_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="제외 전 견적으로 발주 시도",
+        idempotency_key="order-after-exclusion",
+        request_id=str(uuid.uuid4()),
+    )
+    assert current_scope["status"] == "INVALID"
+    assert current_scope["diagnostics"]["unmapped_quote_row_ids"]
