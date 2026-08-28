@@ -316,6 +316,175 @@ git diff --check
 exit 0
 ```
 
+## 독립 검토 수정 라운드 5/5 (2026-08-29, 기준 `e6eec8d`)
+
+### focused RED/GREEN 증거
+
+남은 Important upload replay finding을 제품 코드보다 먼저 여섯 개의 실제 HTTP/SQLite/filesystem
+회귀 테스트로 고정했다. accepted 재시도의 exact 202 replay, partial 재시도의 exact 207 replay,
+accepted/rejected body mismatch, same-key concurrency, durable row/blob 단일성, 실제 인접 uniqueness
+오류의 비공개 envelope를 각각 독립 assertion으로 검증했다. 독립 검토에서 SQLite timeout을 넘는
+slow-winner wait와 failed-winner rollback/takeover publication race 두 개를 추가해 총 여덟 개의
+회귀 테스트로 최종 동시성 경계를 고정했다.
+
+최초 RED:
+
+```text
+uv run pytest \
+  tests/test_api_contract.py::test_accepted_upload_retry_replays_exact_202_without_duplicate_mutation \
+  tests/test_api_contract.py::test_partial_upload_retry_replays_exact_207_items_without_duplicate_mutation \
+  tests/test_api_contract.py::test_upload_key_reuse_with_changed_accepted_bytes_conflicts_without_blob_leak \
+  tests/test_api_contract.py::test_partial_upload_fingerprint_includes_changed_rejected_file_bytes \
+  tests/test_api_contract.py::test_concurrent_identical_uploads_commit_once_and_both_return_exact_202 \
+  tests/test_api_contract.py::test_adjacent_upload_integrity_conflict_never_exposes_sqlite_identifiers \
+  -q --tb=short
+6 failed in 7.71s
+```
+
+- identical accepted upload가 `202 -> 409`, identical partial upload가 `207 -> 409`였다.
+- concurrent identical 요청은 한쪽만 202이고 다른 쪽은 source-document constraint 409였다.
+- 같은 key의 다른 accepted bytes는 DB rollback 뒤에도 두 번째 content-addressed blob을 남겼다.
+- rejected bytes만 바뀐 partial 요청은 rejected body digest가 fingerprint에 없어 idempotency conflict
+  전에 source-document constraint로 진입했다.
+- 실제 인접 uniqueness 409의 message에 `UNIQUE constraint failed`와
+  `source_documents.source_file_id`/`role`/`parser_version`이 그대로 노출됐다.
+
+최소 구현 및 format 뒤 fresh regression GREEN:
+
+```text
+......                                                                   [100%]
+6 passed in 5.24s
+```
+
+독립 검토가 추가한 두 동시성 probe는 각각 실제 결함을 RED로 재현했다.
+
+```text
+uv run pytest \
+  tests/test_api_contract.py::test_concurrent_identical_upload_waits_past_sqlite_timeout_then_replays \
+  -q --tb=short
+1 failed in 9.72s  # 202/409
+
+uv run pytest \
+  tests/test_api_contract.py::test_failed_upload_cleanup_cannot_delete_takeover_winners_blob \
+  -q --tb=short
+1 failed in 4.10s  # committed storage path absent
+```
+
+in-progress claim 재시도와 lock-fenced cleanup 수정 뒤 두 probe의 fresh GREEN:
+
+```text
+..                                                                       [100%]
+2 passed in 9.00s
+```
+
+최종 독립 재검토 결과는 `Ready: Yes`였다.
+
+인접 upload/file-store/idempotency 회귀 세트와 최종 suite:
+
+```text
+uv run pytest tests/test_api_contract.py tests/test_ingestion_safety.py \
+  tests/test_concurrency_idempotency.py -q --tb=short
+........................................................................ [ 90%]
+........                                                                 [100%]
+80 passed in 53.53s
+
+uv run pytest tests/test_api_contract.py tests/test_sse_jobs.py \
+  tests/test_v1_migration.py tests/test_backup_restore.py -q --tb=short
+........................................................................ [ 94%]
+....                                                                     [100%]
+76 passed in 72.42s (0:01:12)
+
+uv run pytest -q --tb=short
+........................................................................ [ 18%]
+........................................................................ [ 37%]
+........................................................................ [ 56%]
+........................................................................ [ 75%]
+........................................................................ [ 94%]
+......................                                                   [100%]
+382 passed in 104.15s (0:01:44)
+```
+
+### 수정 설계와 제품 동작
+
+- `ImmutableFileStore.stage()`는 `.staging` private temp에 stream을 쓰면서 모든 byte를 SHA-256에
+  반영한다. per-file limit를 넘은 뒤에도 disk에는 더 쓰지 않지만 stream을 끝까지 hash/drain해
+  aggregate limit와 rejected-file fingerprint를 모두 정확히 유지한다. executable/unknown/unsafe
+  archive도 digest/size를 가진 rejection으로 반환하며 temp는 모든 경로에서 제거한다.
+- upload request fingerprint는 순서별 filename, content type, full SHA-256, byte count, rejection
+  code와 role/vendor/delta window를 포함한다. 모든 파일의 staging/validation이 끝난 뒤, durable blob,
+  `source_files`, `source_documents`, workspace/config link, job/audit/event보다 먼저 scoped
+  idempotency key를 reserve한다.
+- completed identical key는 staged temp를 버리고 저장된 status/body를 그대로 반환하므로 accepted는
+  `202 -> 202`, partial은 accepted/rejected item과 source/job ID까지 동일한 `207 -> 207`이다.
+- 다른 body는 publication 전에 structured `IDEMPOTENCY_KEY_REUSED` 409가 되며 DB/job/blob 상태가
+  첫 요청 직후와 byte-for-byte 동일하다. rejected bytes만 다른 경우도 full digest 때문에 충돌한다.
+- 동일 key 동시 요청은 SQLite claim write-lock에서 직렬화된다. winner만 publish/mutate/complete/commit하고,
+  waiter는 각 SQLite busy timeout 뒤 `IDEMPOTENCY_REQUEST_IN_PROGRESS` claim을 다시 시도해 winner commit의
+  durable response를 replay하거나 winner rollback 뒤 claim을 takeover한다. body mismatch는 기다리지 않고
+  즉시 structured 409가 된다.
+- winner가 claim 뒤 실패하면 원래 write claim/lock으로 waiter를 계속 fence한 상태에서 이번 요청이 새로
+  publish했으나 committed `source_files`가 참조하지 않는 path만 삭제한 뒤 transaction을 rollback한다.
+  따라서 takeover waiter는 cleanup 뒤 안전하게 다시 publish하며, pre-existing content-addressed blob은
+  삭제하지 않는다.
+- `sqlite3.IntegrityError` handler는 내부 오류 문자열을 status 선택에만 사용하고 response에는 고정된
+  한국어 `INTEGRITY_CONFLICT`/generic operation message만 보낸다. table/index/column/constraint text는
+  message와 fields 어느 곳에도 포함되지 않는다.
+
+주요 변경 파일은 `ingestion/file_store.py`, `api/routes/sources.py`, `api/errors.py`,
+`tests/test_api_contract.py`와 이 보고서다. schema/OpenAPI contract 변경은 없고 migration은 추가하거나
+수정하지 않았다.
+
+### migration/checksum 및 최종 gate 증거
+
+```text
+git diff --exit-code e6eec8d -- backend/src/suseoro/db/migrations
+exit 0
+
+0006_api_operations.sql
+CE06C0866F14A1E2932CC21CE18C80F239B97E927AC14FB6C9E32E7CB1797EBF
+
+0006a_api_hardening.sql
+4E18920AA31AA5129CC23E123681062CDDE79E9329EB7B90307C27C80A021F86
+
+uv run --with ruff ruff format --check src tests
+102 files already formatted
+
+uv run --with ruff ruff check src tests
+All checks passed!
+
+uv run python -m compileall -q src tests
+exit 0
+
+uv lock --check
+Resolved 36 packages in 5ms
+
+uv build --out-dir .task7-round5-build
+Successfully built .task7-round5-build\suseoro_v2-0.1.0.tar.gz
+Successfully built .task7-round5-build\suseoro_v2-0.1.0-py3-none-any.whl
+
+uv run python -m suseoro.api.export_openapi  # twice
+first=4DC3F6ADA23693DD3C9AB84E18364887105640E9027185F0DC6962E77F37BD3F
+second=4DC3F6ADA23693DD3C9AB84E18364887105640E9027185F0DC6962E77F37BD3F
+git diff --exit-code -- backend/openapi.json
+exit 0
+
+npx --yes openapi-typescript openapi.json -o .task7-round5-ts/schema.d.ts
+openapi-typescript 7.13.0
+npx --yes --package typescript tsc --noEmit --skipLibCheck \
+  .task7-round5-ts/schema.d.ts
+exit 0
+
+dangerous added-code matches=0
+embedded secret added-code matches=0
+merge marker matches=0
+
+git diff --check
+exit 0
+```
+
+round-5 build/TypeScript 검증 산출물은 명시 경로에서 제거했다. 기존 migration 13개 전체 SHA-256도
+재계산했으며 기준 commit과 diff가 없어 byte-for-byte 보존됐다.
+
 build 산출물은 검증 후 명시 경로에서 제거했다. OpenAPI 두 번 생성의 SHA256이 동일해
 generator stability도 확인했다.
 

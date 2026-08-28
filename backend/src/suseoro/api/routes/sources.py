@@ -54,13 +54,15 @@ from suseoro.ingestion.contracts import DocumentRole
 from suseoro.ingestion.file_store import (
     FileTooLarge,
     ImmutableFileStore,
-    UnsupportedFileType,
+    StagedFile,
+    StagedUploadRejected,
 )
 from suseoro.jobs.handlers import parser_version_for_format
 from suseoro.jobs.repository import JobRepository
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.audit import record_audit_event
 from suseoro.services.idempotency import (
+    IdempotencyConflict,
     complete_idempotent_request,
     reserve_idempotency_key,
 )
@@ -240,6 +242,31 @@ def _source(row) -> dict[str, Any]:
     }
 
 
+def _remove_unreferenced_source_paths(database_path: Path, paths: list[Path]) -> None:
+    """Remove only newly published blobs that no committed row references."""
+    for path in paths:
+        check = connect(database_path)
+        try:
+            referenced = check.execute(
+                "SELECT 1 FROM source_files WHERE storage_path = ?", (str(path),)
+            ).fetchone()
+        finally:
+            check.close()
+        if referenced is None:
+            path.unlink(missing_ok=True)
+
+
+def _reserve_upload_idempotency_key(connection: sqlite3.Connection, **scope):
+    """Wait through a concurrent claim, then replay or take over after rollback."""
+    while True:
+        try:
+            return reserve_idempotency_key(connection, **scope)
+        except IdempotencyConflict as error:
+            if error.detail.get("code") != "IDEMPOTENCY_REQUEST_IN_PROGRESS":
+                raise
+            connection.rollback()
+
+
 @router.post(
     "/workspaces/{workspace_id}/sources",
     status_code=202,
@@ -299,8 +326,8 @@ def upload_sources(
         settings.sources_dir, max_bytes=settings.upload_max_file_bytes
     )
     now = format_utc(utc_now())
-    items: list[dict[str, Any]] = []
-    accepted_ids: list[str] = []
+    prepared: list[dict[str, Any]] = []
+    staged_files: list[StagedFile] = []
     fingerprints: list[dict[str, Any]] = []
     newly_published: list[Path] = []
     aggregate_bytes = 0
@@ -320,16 +347,89 @@ def upload_sources(
                 )
             yield chunk
 
-    for upload in files:
-        filename = upload.filename or "unnamed"
-        try:
-            stored = store.store(
-                counted_chunks(upload),
-                filename=filename,
-            )
+    try:
+        for upload in files:
+            filename = upload.filename or "unnamed"
+            content_type = upload.content_type
+            try:
+                staged = store.stage(counted_chunks(upload), filename=filename)
+                staged_files.append(staged)
+                fingerprints.append(
+                    {
+                        "filename": filename,
+                        "content_type": content_type,
+                        "sha256": staged.sha256,
+                        "size_bytes": staged.size,
+                        "error": None,
+                    }
+                )
+                prepared.append({"filename": filename, "staged": staged, "error": None})
+            except StagedUploadRejected as rejected:
+                error = rejected.cause
+                code = (
+                    "FILE_TOO_LARGE"
+                    if isinstance(error, FileTooLarge)
+                    else "UNSUPPORTED_FILE_TYPE"
+                )
+                fingerprints.append(
+                    {
+                        "filename": filename,
+                        "content_type": content_type,
+                        "sha256": rejected.sha256,
+                        "size_bytes": rejected.size,
+                        "error": code,
+                    }
+                )
+                prepared.append(
+                    {
+                        "filename": filename,
+                        "staged": None,
+                        "error": {"code": code, "message": str(error)},
+                    }
+                )
+            finally:
+                upload.file.close()
+
+        route = f"POST /api/v2/workspaces/{workspace_id}/sources"
+        request_body = {
+            "workspace_id": workspace_id,
+            "role": role,
+            "vendor_scope": vendor_scope.strip() or "*",
+            "requested_start_local_date": requested_start_local_date,
+            "requested_through_local_date": requested_through_local_date,
+            "files": fingerprints,
+        }
+        replay = _reserve_upload_idempotency_key(
+            connection,
+            school_id=user.school_id,
+            actor_id=user.id,
+            route=route,
+            key=idempotency_key,
+            request_body=request_body,
+        )
+        if replay is not None:
+            connection.rollback()
+            response.status_code = replay.status
+            return replay.body
+
+        items: list[dict[str, Any]] = []
+        accepted_ids: list[str] = []
+        for item in prepared:
+            staged = item["staged"]
+            if staged is None:
+                items.append(
+                    {
+                        "filename": item["filename"],
+                        "status": "FAILED",
+                        "source_id": None,
+                        "error": item["error"],
+                    }
+                )
+                continue
+
+            stored = store.publish(staged)
             if stored.created:
                 newly_published.append(stored.path)
-            fingerprints.append({"filename": filename, "sha256": stored.sha256})
             existing = connection.execute(
                 "SELECT id FROM source_files WHERE sha256 = ?", (stored.sha256,)
             ).fetchone()
@@ -347,7 +447,7 @@ def upload_sources(
                         stored.sha256,
                         stored.size,
                         str(stored.path),
-                        filename,
+                        stored.original_filename,
                         stored.detected_format,
                         now,
                     ),
@@ -393,118 +493,73 @@ def upload_sources(
             accepted_ids.append(source_id)
             items.append(
                 {
-                    "filename": filename,
+                    "filename": item["filename"],
                     "status": "ACCEPTED",
                     "source_id": source_id,
                     "error": None,
                 }
             )
-        except HTTPException:
-            connection.rollback()
-            for path in newly_published:
-                path.unlink(missing_ok=True)
-            raise
-        except (FileTooLarge, UnsupportedFileType, ValueError) as error:
-            if isinstance(error, FileTooLarge):
-                try:
-                    for _ in counted_chunks(upload):
-                        pass
-                except HTTPException:
-                    connection.rollback()
-                    for path in newly_published:
-                        path.unlink(missing_ok=True)
-                    raise
-            code = (
-                "FILE_TOO_LARGE"
-                if isinstance(error, FileTooLarge)
-                else "UNSUPPORTED_FILE_TYPE"
+
+        job = None
+        if accepted_ids:
+            job = JobRepository(connection).create(
+                school_id=user.school_id,
+                workspace_id=workspace_id,
+                job_type="INGEST",
+                payload={"source_document_ids": accepted_ids, "role": role},
+                progress_total=len(accepted_ids),
             )
-            fingerprints.append({"filename": filename, "error": code})
-            items.append(
-                {
-                    "filename": filename,
-                    "status": "FAILED",
-                    "source_id": None,
-                    "error": {"code": code, "message": str(error)},
-                }
-            )
-        finally:
-            upload.file.close()
-    request_body = {
-        "workspace_id": workspace_id,
-        "role": role,
-        "vendor_scope": vendor_scope.strip() or "*",
-        "requested_start_local_date": requested_start_local_date,
-        "requested_through_local_date": requested_through_local_date,
-        "files": fingerprints,
-    }
-    replay = reserve_idempotency_key(
-        connection,
-        school_id=user.school_id,
-        actor_id=user.id,
-        route=f"POST /api/v2/workspaces/{workspace_id}/sources",
-        key=idempotency_key,
-        request_body=request_body,
-    )
-    if replay is not None:
-        connection.rollback()
-        for path in newly_published:
-            with connect(request.app.state.settings.database_path) as check:
-                exists = check.execute(
-                    "SELECT 1 FROM source_files WHERE storage_path = ?", (str(path),)
-                ).fetchone()
-            if exists is None:
-                path.unlink(missing_ok=True)
-        response.status_code = replay.status
-        return replay.body
-    job = None
-    if accepted_ids:
-        job = JobRepository(connection).create(
+        result = {"job_id": job.id if job else None, "items": items}
+        status_code = 207 if any(item["status"] == "FAILED" for item in items) else 202
+        record_audit_event(
+            connection,
+            actor_id=user.id,
             school_id=user.school_id,
-            workspace_id=workspace_id,
-            job_type="INGEST",
-            payload={"source_document_ids": accepted_ids, "role": role},
-            progress_total=len(accepted_ids),
+            action="SOURCES_UPLOADED",
+            entity_type="durable_job",
+            entity_id=job.id if job else None,
+            before=None,
+            after={
+                "accepted": len(accepted_ids),
+                "failed": len(items) - len(accepted_ids),
+            },
+            request_id=request_id,
         )
-    result = {"job_id": job.id if job else None, "items": items}
-    status_code = 207 if any(item["status"] == "FAILED" for item in items) else 202
-    record_audit_event(
-        connection,
-        actor_id=user.id,
-        school_id=user.school_id,
-        action="SOURCES_UPLOADED",
-        entity_type="durable_job",
-        entity_id=job.id if job else None,
-        before=None,
-        after={"accepted": len(accepted_ids), "failed": len(items) - len(accepted_ids)},
-        request_id=request_id,
-    )
-    if job:
-        publish_event(
+        if job:
+            publish_event(
+                connection,
+                school_id=user.school_id,
+                workspace_id=workspace_id,
+                event_type="job.progress",
+                data={
+                    "job_id": job.id,
+                    "status": job.status,
+                    "stage": job.stage,
+                    "current": 0,
+                    "total": len(accepted_ids),
+                },
+            )
+        complete_idempotent_request(
             connection,
             school_id=user.school_id,
-            workspace_id=workspace_id,
-            event_type="job.progress",
-            data={
-                "job_id": job.id,
-                "status": job.status,
-                "stage": job.stage,
-                "current": 0,
-                "total": len(accepted_ids),
-            },
+            actor_id=user.id,
+            route=route,
+            key=idempotency_key,
+            status=status_code,
+            body=result,
         )
-    complete_idempotent_request(
-        connection,
-        school_id=user.school_id,
-        actor_id=user.id,
-        route=f"POST /api/v2/workspaces/{workspace_id}/sources",
-        key=idempotency_key,
-        status=status_code,
-        body=result,
-    )
-    connection.commit()
-    response.status_code = status_code
-    return result
+        connection.commit()
+        response.status_code = status_code
+        return result
+    except Exception:
+        try:
+            _remove_unreferenced_source_paths(settings.database_path, newly_published)
+        finally:
+            connection.rollback()
+        raise
+    finally:
+        for staged in staged_files:
+            store.discard(staged)
 
 
 @router.get(

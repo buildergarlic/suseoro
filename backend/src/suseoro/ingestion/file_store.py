@@ -21,6 +21,25 @@ class UnsupportedFileType(ValueError):
     pass
 
 
+class StagedUploadRejected(Exception):
+    """Carry a complete content fingerprint for a rejected staged upload."""
+
+    def __init__(self, cause: ValueError, *, sha256: str, size: int) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+        self.sha256 = sha256
+        self.size = size
+
+
+@dataclass(frozen=True)
+class StagedFile:
+    sha256: str
+    size: int
+    temporary_path: Path
+    detected_format: str
+    original_filename: str
+
+
 @dataclass(frozen=True)
 class StoredFile:
     sha256: str
@@ -36,12 +55,17 @@ class ImmutableFileStore:
         self.root = Path(root)
         self.max_bytes = max_bytes
         self.root.mkdir(parents=True, exist_ok=True)
+        self.staging_root = self.root / ".staging"
+        self.staging_root.mkdir(parents=True, exist_ok=True)
 
-    def store(self, chunks: Iterable[bytes], *, filename: str) -> StoredFile:
-        """Hash a stream while writing, validate it, then publish by exclusive link."""
+    def stage(self, chunks: Iterable[bytes], *, filename: str) -> StagedFile:
+        """Hash and validate a stream privately without publishing durable bytes."""
         digest = hashlib.sha256()
         size = 0
-        descriptor, temporary_name = tempfile.mkstemp(suffix=".tmp", dir=self.root)
+        too_large = False
+        descriptor, temporary_name = tempfile.mkstemp(
+            suffix=".tmp", dir=self.staging_root
+        )
         temporary = Path(temporary_name)
         try:
             with os.fdopen(descriptor, "wb") as target:
@@ -49,14 +73,22 @@ class ImmutableFileStore:
                     if not isinstance(chunk, bytes):
                         raise TypeError("upload chunks must be bytes")
                     size += len(chunk)
-                    if size > self.max_bytes:
-                        raise FileTooLarge(f"upload exceeds {self.max_bytes} bytes")
                     digest.update(chunk)
-                    target.write(chunk)
-                target.flush()
-                os.fsync(target.fileno())
+                    if size > self.max_bytes:
+                        too_large = True
+                    elif not too_large:
+                        target.write(chunk)
+                if not too_large:
+                    target.flush()
+                    os.fsync(target.fileno())
 
             sha256 = digest.hexdigest()
+            if too_large:
+                raise StagedUploadRejected(
+                    FileTooLarge(f"upload exceeds {self.max_bytes} bytes"),
+                    sha256=sha256,
+                    size=size,
+                )
             with temporary.open("rb") as source:
                 signature = source.read(4)
                 if signature.startswith(b"MZ"):
@@ -68,22 +100,57 @@ class ImmutableFileStore:
                 raise UnsupportedFileType(
                     "upload signature is not an allowed tabular format"
                 )
-            destination = self.root / sha256[:2] / sha256[2:4] / sha256
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            created = True
-            try:
-                os.link(temporary, destination)
-            except FileExistsError:
-                created = False
-                if destination.stat().st_size != size:
-                    raise RuntimeError("immutable source hash collision")
-            return StoredFile(
+            return StagedFile(
                 sha256=sha256,
                 size=size,
-                path=destination,
+                temporary_path=temporary,
                 detected_format=detected.format,
-                created=created,
                 original_filename=filename,
             )
-        finally:
+        except StagedUploadRejected:
             temporary.unlink(missing_ok=True)
+            raise
+        except ValueError as error:
+            temporary.unlink(missing_ok=True)
+            raise StagedUploadRejected(
+                error,
+                sha256=digest.hexdigest(),
+                size=size,
+            ) from error
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+
+    def publish(self, staged: StagedFile) -> StoredFile:
+        """Publish one validated staged upload by an exclusive immutable link."""
+        destination = self.root / staged.sha256[:2] / staged.sha256[2:4] / staged.sha256
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        created = True
+        try:
+            os.link(staged.temporary_path, destination)
+        except FileExistsError:
+            created = False
+            if destination.stat().st_size != staged.size:
+                raise RuntimeError("immutable source hash collision")
+        return StoredFile(
+            sha256=staged.sha256,
+            size=staged.size,
+            path=destination,
+            detected_format=staged.detected_format,
+            created=created,
+            original_filename=staged.original_filename,
+        )
+
+    def discard(self, staged: StagedFile) -> None:
+        staged.temporary_path.unlink(missing_ok=True)
+
+    def store(self, chunks: Iterable[bytes], *, filename: str) -> StoredFile:
+        """Hash a stream while writing, validate it, then publish by exclusive link."""
+        try:
+            staged = self.stage(chunks, filename=filename)
+        except StagedUploadRejected as rejected:
+            raise rejected.cause from rejected
+        try:
+            return self.publish(staged)
+        finally:
+            self.discard(staged)
