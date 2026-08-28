@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import type { SuseoroApi, User, Workspace } from "../../api/client";
 import { CandidatePanel } from "../candidates/CandidatePanel";
 import { IngestionPanel } from "../ingestion/IngestionPanel";
+import { canOperate, workflowPolicy } from "./workflowPolicy";
 
 interface WorkroomScreenProps {
   api: SuseoroApi;
@@ -11,22 +12,6 @@ interface WorkroomScreenProps {
 }
 
 const STAGE_TITLES = ["1. 후보 만들기", "2. 승인·발주", "3. 납품 검수"] as const;
-
-function stageFor(status: string): number {
-  if (["DRAFT", "ANALYZING", "CANDIDATE_REVIEW"].includes(status)) return 0;
-  if (
-    [
-      "APPROVAL_PENDING",
-      "CHANGES_REQUESTED",
-      "APPROVED",
-      "QUOTE_REVIEW",
-      "ORDER_READY",
-    ].includes(status)
-  ) {
-    return 1;
-  }
-  return 2;
-}
 
 function completedSummary(stage: number): string {
   return stage === 0
@@ -39,24 +24,74 @@ function CurrentStage({
   user,
   workspace,
   stage,
+  onWorkspaceChange,
+  analysisPollError,
+  onRetryAnalysis,
 }: {
   api: SuseoroApi;
   user: User;
   workspace: Workspace;
   stage: number;
+  onWorkspaceChange: (workspace: Workspace) => void;
+  analysisPollError: string;
+  onRetryAnalysis: () => void;
 }) {
   if (stage === 0) {
-    return workspace.status === "CANDIDATE_REVIEW" ? (
-      <CandidatePanel api={api} user={user} workspace={workspace} />
+    const mode = workflowPolicy(workspace.status).mode;
+    if (mode === "CANDIDATES") {
+      return (
+        <CandidatePanel
+          api={api}
+          onWorkspaceChange={onWorkspaceChange}
+          user={user}
+          workspace={workspace}
+        />
+      );
+    }
+    if (mode === "ANALYZING") {
+      return (
+        <div className="calm-placeholder" role="status">
+          <h3>도서 비교 중</h3>
+          <p>도서관 장서와 추천자료를 비교하고 있습니다.</p>
+          <p>이 화면을 그대로 두어도 완료되면 후보가 열립니다.</p>
+          {analysisPollError ? (
+            <>
+              <p role="alert">{analysisPollError}</p>
+              <button
+                className="button button-secondary"
+                onClick={onRetryAnalysis}
+                type="button"
+              >
+                비교 상태 다시 확인
+              </button>
+            </>
+          ) : null}
+        </div>
+      );
+    }
+    return canOperate(user) ? (
+      <IngestionPanel
+        api={api}
+        key={workspace.id}
+        onWorkspaceChange={onWorkspaceChange}
+        workspace={workspace}
+      />
     ) : (
-      <IngestionPanel api={api} workspace={workspace} />
+      <div className="calm-placeholder">
+        <h3>추천자료 준비</h3>
+        <p>담당자가 추천자료를 준비하고 있습니다.</p>
+      </div>
     );
   }
   if (stage === 1) {
     return (
       <div className="calm-placeholder">
         <h3>승인과 발주 진행</h3>
-        <p>현재 승인 상태와 발주 준비 내용을 이 자리에서 확인합니다.</p>
+        {workspace.status === "APPROVAL_PENDING" ? (
+          <p role="status">승인을 요청했습니다. 검토 담당자에게 전달했습니다.</p>
+        ) : (
+          <p>현재 승인 상태와 발주 준비 내용을 이 자리에서 확인합니다.</p>
+        )}
       </div>
     );
   }
@@ -71,22 +106,30 @@ function CurrentStage({
 export function WorkroomScreen({ api, user }: WorkroomScreenProps) {
   const { workspaceId = "" } = useParams();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ workspaceId: string; message: string } | null>(null);
+  const [analysisPollError, setAnalysisPollError] = useState("");
+  const [analysisRefresh, setAnalysisRefresh] = useState(0);
 
   useEffect(() => {
     let active = true;
     void api
       .getWorkspace(workspaceId)
       .then((result) => {
-        if (active) setWorkspace(result.data);
+        if (active) {
+          setWorkspace(result.data);
+          setError(null);
+          setAnalysisPollError("");
+        }
       })
       .catch((reason: unknown) => {
         if (active) {
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "작업실을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
-          );
+          setError({
+            workspaceId,
+            message:
+              reason instanceof Error
+                ? reason.message
+                : "작업실을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+          });
         }
       });
     return () => {
@@ -94,17 +137,54 @@ export function WorkroomScreen({ api, user }: WorkroomScreenProps) {
     };
   }, [api, workspaceId]);
 
-  if (error) {
+  useEffect(() => {
+    if (workspace?.status !== "ANALYZING") return;
+    let active = true;
+    let timer = 0;
+    let attempt = 0;
+    const schedule = () => {
+      timer = window.setTimeout(poll, Math.min(250 * 2 ** attempt, 2_000));
+    };
+    const poll = () => {
+      void api
+        .getWorkspace(workspaceId)
+        .then((result) => {
+          if (!active) return;
+          attempt = 0;
+          setAnalysisPollError("");
+          setWorkspace(result.data);
+          if (result.data.status === "ANALYZING") schedule();
+        })
+        .catch(() => {
+          if (!active) return;
+          attempt += 1;
+          if (attempt >= 5) {
+            setAnalysisPollError(
+              "진행 상태를 계속 불러오지 못했습니다. 연결을 확인한 뒤 다시 확인해 주세요.",
+            );
+          } else {
+            schedule();
+          }
+        });
+    };
+    poll();
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [analysisRefresh, api, workspace?.status, workspaceId]);
+
+  if (error?.workspaceId === workspaceId) {
     return (
       <section className="page-shell">
         <h1>수서 작업실</h1>
-        <p role="alert">{error}</p>
+        <p role="alert">{error.message}</p>
         <Link to="/workspaces">내 수서 업무로 돌아가기</Link>
       </section>
     );
   }
 
-  if (!workspace) {
+  if (!workspace || workspace.id !== workspaceId) {
     return (
       <p className="loading-state" role="status">
         작업실을 불러오고 있습니다…
@@ -112,7 +192,7 @@ export function WorkroomScreen({ api, user }: WorkroomScreenProps) {
     );
   }
 
-  const currentStage = stageFor(workspace.status);
+  const currentStage = workflowPolicy(workspace.status).stage;
 
   return (
     <section aria-labelledby="workroom-title" className="page-shell workroom-shell">
@@ -147,7 +227,18 @@ export function WorkroomScreen({ api, user }: WorkroomScreenProps) {
                 </span>
               </div>
               {current ? (
-                <CurrentStage api={api} stage={index} user={user} workspace={workspace} />
+                <CurrentStage
+                  analysisPollError={analysisPollError}
+                  api={api}
+                  onWorkspaceChange={setWorkspace}
+                  onRetryAnalysis={() => {
+                    setAnalysisPollError("");
+                    setAnalysisRefresh((current) => current + 1);
+                  }}
+                  stage={index}
+                  user={user}
+                  workspace={workspace}
+                />
               ) : (
                 <p className="stage-summary">
                   {complete ? completedSummary(index) : "앞 과정이 끝나면 이곳이 열립니다."}

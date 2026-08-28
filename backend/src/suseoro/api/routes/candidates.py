@@ -81,6 +81,11 @@ def _candidate(row) -> dict[str, Any]:
     }
 
 
+def _literal_like_pattern(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 @router.get(
     "/workspaces/{workspace_id}/candidates",
     summary="수서 후보 목록 보기",
@@ -96,14 +101,51 @@ def list_candidates(
     limit: int = Query(default=50, ge=1, le=100),
 ):
     decoded = decode_cursor(cursor, 1)
-    clauses = ["candidate.school_id = ?", "candidate.workspace_id = ?"]
-    parameters: list[object] = [user.school_id, workspace_id]
+    filter_clauses = ["candidate.school_id = ?", "candidate.workspace_id = ?"]
+    filter_parameters: list[object] = [user.school_id, workspace_id]
     if outcome:
-        clauses.append("candidate.outcome = ?")
-        parameters.append(outcome)
+        filter_clauses.append("candidate.outcome = ?")
+        filter_parameters.append(outcome)
     if search:
-        clauses.append("recommendation.original_title LIKE ?")
-        parameters.append(f"%{search}%")
+        filter_clauses.append(
+            """
+            (recommendation.original_title LIKE ? ESCAPE '\\'
+             OR recommendation.original_authors_json LIKE ? ESCAPE '\\'
+             OR recommendation.isbn13 LIKE ? ESCAPE '\\')
+            """
+        )
+        pattern = _literal_like_pattern(search)
+        filter_parameters.extend((pattern, pattern, pattern))
+    total_count = connection.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM candidate_decisions candidate
+        JOIN recommendations recommendation
+          ON recommendation.id = candidate.recommendation_id
+        WHERE {" AND ".join(filter_clauses)}
+        """,
+        filter_parameters,
+    ).fetchone()[0]
+    summary_row = connection.execute(
+        """
+        SELECT COUNT(*) AS total_count,
+               SUM(CASE WHEN outcome = 'CANDIDATE' THEN 1 ELSE 0 END)
+                 AS candidate_count,
+               SUM(CASE WHEN outcome = 'NEEDS_REVIEW' THEN 1 ELSE 0 END)
+                 AS needs_review_count,
+               SUM(CASE WHEN outcome = 'EXCLUDED' THEN 1 ELSE 0 END)
+                 AS excluded_count,
+               COALESCE(SUM(
+                   CASE WHEN outcome = 'CANDIDATE'
+                        THEN quantity * COALESCE(unit_price, 0) ELSE 0 END
+               ), 0) AS expected_total_won
+        FROM candidate_decisions
+        WHERE school_id = ? AND workspace_id = ?
+        """,
+        (user.school_id, workspace_id),
+    ).fetchone()
+    clauses = list(filter_clauses)
+    parameters = list(filter_parameters)
     if decoded:
         clauses.append("candidate.id > ?")
         parameters.append(decoded[0])
@@ -120,7 +162,51 @@ def list_candidates(
         (*parameters, limit + 1),
     ).fetchall()
     items = [_candidate(row) for row in rows]
-    return page(items, limit=limit, cursor_values=lambda item: (item["id"],))
+    result = page(items, limit=limit, cursor_values=lambda item: (item["id"],))
+    needs_review_count = int(summary_row["needs_review_count"] or 0)
+    result.update(
+        total_count=int(total_count),
+        summary={
+            "total_count": int(summary_row["total_count"] or 0),
+            "candidate_count": int(summary_row["candidate_count"] or 0),
+            "needs_review_count": needs_review_count,
+            "excluded_count": int(summary_row["excluded_count"] or 0),
+            "unresolved_count": needs_review_count,
+            "expected_total_won": int(summary_row["expected_total_won"] or 0),
+        },
+    )
+    return result
+
+
+@router.get(
+    "/candidates/{candidate_id}",
+    summary="수서 후보 현재 내용 보기",
+    operation_id="getCandidate",
+)
+def get_candidate(
+    candidate_id: str,
+    response: Response,
+    workspace_id: str = Query(...),
+    user: AuthenticatedUser = Depends(current_user),
+    connection: sqlite3.Connection = Depends(database_connection),
+):
+    row = connection.execute(
+        """
+        SELECT candidate.*, recommendation.original_title,
+               recommendation.original_authors_json, recommendation.isbn13,
+               recommendation.original_edition
+        FROM candidate_decisions candidate
+        JOIN recommendations recommendation
+          ON recommendation.id = candidate.recommendation_id
+        WHERE candidate.id = ? AND candidate.school_id = ?
+          AND candidate.workspace_id = ?
+        """,
+        (candidate_id, user.school_id, workspace_id),
+    ).fetchone()
+    if row is None:
+        raise domain_not_found("CANDIDATE_NOT_FOUND")
+    response.headers["ETag"] = f'"{row["row_version"]}"'
+    return _candidate(row)
 
 
 @router.patch(

@@ -1,23 +1,24 @@
 import { useMemo, useState } from "react";
 
+import type { components } from "../../api/types";
 import { ModalDialog } from "../../components/ModalDialog";
 
+type MappingRequired = components["schemas"]["MappingRequired"];
+
 interface MappingDialogProps {
-  previewText: string;
+  mappingRequired: MappingRequired;
   onApply: (mapping: Record<string, string>, remember: boolean) => Promise<void>;
   onClose: () => void;
 }
 
-function rowsFrom(text: string): string[][] {
-  return text
-    .split(/\r?\n/u)
-    .filter((line) => line.trim().length > 0)
-    .slice(0, 21)
-    .map((line) => line.split(/[\t,]/u).map((cell) => cell.trim()));
-}
-
-function likelyHeader(headers: string[], choices: string[]): string {
+function likelyHeader(
+  headers: string[],
+  suggested: Record<string, string | null>,
+  canonicalField: string,
+  choices: string[],
+): string {
   return (
+    headers.find((header) => suggested[header] === canonicalField) ??
     headers.find((header) => choices.some((choice) => header.includes(choice))) ??
     headers[0] ??
     ""
@@ -25,41 +26,47 @@ function likelyHeader(headers: string[], choices: string[]): string {
 }
 
 export function MappingDialog({
-  previewText,
+  mappingRequired,
   onApply,
   onClose,
 }: MappingDialogProps) {
-  const rows = useMemo(() => rowsFrom(previewText), [previewText]);
-  const headers = rows[0] ?? [];
+  const headers = mappingRequired.headers;
   const [titleColumn, setTitleColumn] = useState(() =>
-    likelyHeader(headers, ["책이름", "제목", "도서명"]),
+    likelyHeader(
+      headers,
+      mappingRequired.suggested_mapping,
+      "title",
+      ["책이름", "제목", "도서명"],
+    ),
   );
   const [authorColumn, setAuthorColumn] = useState(() =>
-    likelyHeader(headers, ["쓴이", "저자", "지은이"]),
+    likelyHeader(
+      headers,
+      mappingRequired.suggested_mapping,
+      "author",
+      ["쓴이", "저자", "지은이"],
+    ),
   );
   const [remember, setRemember] = useState(true);
   const [applying, setApplying] = useState(false);
+  const mapping = useMemo(() => {
+    const next: Record<string, string> = {};
+    if (titleColumn) next[titleColumn] = "title";
+    if (authorColumn && authorColumn !== titleColumn) next[authorColumn] = "author";
+    return next;
+  }, [authorColumn, titleColumn]);
 
   async function apply() {
     setApplying(true);
     try {
-      await onApply(
-        {
-          [titleColumn]: "title",
-          [authorColumn]: "author",
-        },
-        remember,
-      );
+      await onApply(mapping, remember);
     } finally {
       setApplying(false);
     }
   }
 
   return (
-    <ModalDialog
-      labelledBy="mapping-dialog-title"
-      onClose={onClose}
-    >
+    <ModalDialog labelledBy="mapping-dialog-title" onClose={onClose}>
       <div className="dialog-heading">
         <p className="eyebrow">한 번만 확인해 주세요</p>
         <h2 id="mapping-dialog-title">열 연결 확인</h2>
@@ -115,10 +122,14 @@ export function MappingDialog({
             </tr>
           </thead>
           <tbody>
-            {rows.slice(1, 21).map((row, rowIndex) => (
-              <tr key={`${row.join("-")}-${rowIndex}`}>
+            {mappingRequired.preview_rows.slice(0, 20).map((row, rowIndex) => (
+              <tr key={rowIndex}>
                 {headers.map((header, columnIndex) => (
-                  <td key={`${header}-${columnIndex}`}>{row[columnIndex] ?? ""}</td>
+                  <td key={`${header}-${columnIndex}`}>
+                    {row[columnIndex] === null || row[columnIndex] === undefined
+                      ? ""
+                      : String(row[columnIndex])}
+                  </td>
                 ))}
               </tr>
             ))}

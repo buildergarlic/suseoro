@@ -226,13 +226,47 @@ def test_failed_job_records_structured_error_and_can_be_retried(tmp_path) -> Non
     assert failed.status == "FAILED"
     assert failed.stage == "FAILED"
     assert failed.error == {
-        "type": "RuntimeError",
-        "message": "temporary parser failure",
+        "type": "JobFailure",
+        "code": "JOB_FAILED",
+        "message": "작업을 처리하지 못했습니다. 다시 시도해 주세요.",
     }
     assert recovered.status == "SUCCEEDED"
     assert recovered.retry_count == 1
     assert recovered.error is None
     assert attempts == 2
+
+
+def test_database_job_failure_never_persists_internal_schema_details(tmp_path) -> None:
+    api = _api()
+    now = datetime(2026, 8, 28, 3, 30, tzinfo=UTC)
+    with _database(tmp_path) as connection:
+        repository = api.JobRepository(connection)
+        repository.create(
+            school_id=SCHOOL_ID,
+            workspace_id=WORKSPACE_ID,
+            job_type="COMPARE",
+            payload={},
+            now=now,
+        )
+
+        def fail_with_database_detail(_context, _payload):
+            raise sqlite3.OperationalError(
+                "no such table: private_patron_export_at_C:/secret/library.sqlite3"
+            )
+
+        failed = api.DurableJobRunner(
+            repository,
+            handlers={"COMPARE": fail_with_database_detail},
+            clock=lambda: now,
+        ).run_once()
+
+    assert failed.error == {
+        "type": "JobFailure",
+        "code": "JOB_FAILED",
+        "message": "작업을 처리하지 못했습니다. 다시 시도해 주세요.",
+    }
+    assert "private_patron" not in json.dumps(failed.error)
+    assert "library.sqlite3" not in json.dumps(failed.error)
 
 
 def test_stale_running_job_is_requeued_once_with_checkpoint_intact(tmp_path) -> None:

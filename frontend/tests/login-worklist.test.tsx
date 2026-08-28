@@ -130,6 +130,23 @@ describe("역할별 내 수서 업무", () => {
     expect(screen.queryByRole("link", { name: "이어 하기" })).not.toBeInTheDocument();
   });
 
+  test("자동 분석과 완료 작업만 있으면 담당자 차례인 것처럼 이어 하기를 권하지 않는다", async () => {
+    const api = createFixtureApi({
+      getCurrentUser: async () => operator,
+      listWorkspaces: async () => ({
+        items: [
+          workspace("analyzing", "자동 비교 중", "ANALYZING"),
+          workspace("completed", "끝난 작업", "COMPLETED"),
+        ],
+        next_cursor: null,
+      }),
+    });
+    renderApp(api);
+
+    await screen.findByRole("table", { name: "수서 업무 목록" });
+    expect(screen.queryByRole("link", { name: "이어 하기" })).not.toBeInTheDocument();
+  });
+
   test("세 shell 밖의 화면 제목이나 화면 전환용 저장·다음 버튼을 만들지 않는다", async () => {
     const api = createFixtureApi({
       getCurrentUser: async () => operator,

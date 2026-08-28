@@ -27,6 +27,8 @@ _MESSAGES = {
     "IF_MATCH_REQUIRED": "현재 버전 정보가 필요합니다.",
     "INVALID_IF_MATCH": "현재 버전 정보가 올바르지 않습니다.",
     "ROW_VERSION_CONFLICT": "다른 사용자가 먼저 수정했습니다. 현재 내용과 변경 내용을 확인해 주세요.",
+    "EDIT_LOCK_REQUIRED": "편집 잠금을 다시 확인해 주세요.",
+    "EDIT_LOCKED": "다른 담당자가 편집 중입니다. 잠시 후 다시 확인해 주세요.",
     "VALIDATION_ERROR": "입력 내용을 확인해 주세요.",
     "ENTITY_NOT_FOUND": "요청한 항목을 찾을 수 없습니다.",
     "WORKSPACE_NOT_FOUND": "요청한 수서 작업을 찾을 수 없습니다.",

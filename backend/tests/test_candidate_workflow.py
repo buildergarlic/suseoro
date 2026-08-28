@@ -3,9 +3,97 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from workflow_fixtures import NOW, make_workflow_fixture
+
+
+def _lock_candidates(fixture, *candidate_ids: str, actor_id: str | None = None) -> None:
+    from suseoro.services.concurrency import acquire_edit_lock
+
+    for candidate_id in candidate_ids:
+        acquire_edit_lock(
+            fixture.connection,
+            school_id=fixture.school_id,
+            entity_type="candidate_decision",
+            entity_id=candidate_id,
+            actor_id=actor_id or fixture.operator_id,
+        )
+    fixture.connection.commit()
+
+
+def test_candidate_autosave_requires_owned_unexpired_edit_lease(tmp_path) -> None:
+    from suseoro.services.concurrency import EditLockRequired
+    from suseoro.workflow.candidates import CandidateService
+
+    fixture = make_workflow_fixture(tmp_path)
+    candidate_id = fixture.add_candidate(title="잠금 없는 책", author="저자", isbn=None)
+
+    with pytest.raises(EditLockRequired) as denied:
+        CandidateService(fixture.connection).autosave(
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            candidate_id=candidate_id,
+            actor_id=fixture.operator_id,
+            actor_roles=("OPERATOR",),
+            submitted_version=1,
+            changes={"quantity": 2},
+            reason="잠금 없이 변경",
+            idempotency_key="missing-edit-lease",
+            request_id=str(uuid.uuid4()),
+        )
+
+    assert denied.value.status_code == 409
+    assert denied.value.detail == {"code": "EDIT_LOCK_REQUIRED"}
+
+
+def test_expired_candidate_lease_cannot_mutate_after_another_operator_takes_over(
+    tmp_path,
+) -> None:
+    from suseoro.services.concurrency import EditLockConflict, acquire_edit_lock
+    from suseoro.workflow.candidates import CandidateService
+
+    fixture = make_workflow_fixture(tmp_path)
+    candidate_id = fixture.add_candidate(title="인계된 책", author="저자", isbn=None)
+    acquired = datetime.now(UTC)
+    acquire_edit_lock(
+        fixture.connection,
+        school_id=fixture.school_id,
+        entity_type="candidate_decision",
+        entity_id=candidate_id,
+        actor_id=fixture.operator_id,
+        now=acquired,
+    )
+    takeover = acquire_edit_lock(
+        fixture.connection,
+        school_id=fixture.school_id,
+        entity_type="candidate_decision",
+        entity_id=candidate_id,
+        actor_id=fixture.dual_role_id,
+        now=acquired + timedelta(minutes=3),
+    )
+    fixture.connection.commit()
+
+    with pytest.raises(EditLockConflict) as denied:
+        CandidateService(fixture.connection).autosave(
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            candidate_id=candidate_id,
+            actor_id=fixture.operator_id,
+            actor_roles=("OPERATOR",),
+            submitted_version=1,
+            changes={"quantity": 2},
+            reason="만료된 잠금으로 변경",
+            idempotency_key="expired-edit-lease",
+            request_id=str(uuid.uuid4()),
+        )
+
+    assert denied.value.detail == {
+        "code": "EDIT_LOCKED",
+        "actor_id": fixture.dual_role_id,
+        "expires_at": takeover.expires_at.isoformat().replace("+00:00", "Z"),
+    }
 
 
 def test_exact_state_table_allows_only_the_documented_edges() -> None:
@@ -229,6 +317,7 @@ def test_candidate_autosave_and_bulk_return_final_outcomes_and_conflicts(
     second_id = fixture.add_candidate(
         title="아몬드", author="손원평", isbn="9788936434267", outcome="NEEDS_REVIEW"
     )
+    _lock_candidates(fixture, first_id, second_id)
     service = CandidateService(fixture.connection)
     saved = service.autosave(
         school_id=fixture.school_id,
@@ -364,6 +453,7 @@ def test_bulk_candidate_decision_is_state_guarded_and_reports_missing_items(
     candidate_id = fixture.add_candidate(
         title="남은 책", author="저자", isbn="9788937464010", outcome="NEEDS_REVIEW"
     )
+    _lock_candidates(fixture, candidate_id)
     service = CandidateService(fixture.connection)
     missing_id = str(uuid.uuid4())
     results = service.bulk_decide(
@@ -456,6 +546,7 @@ def test_bulk_candidate_decision_keeps_valid_items_when_other_targets_are_invali
     invalid_reason_id = fixture.add_candidate(
         title="사유 없음", author="저자", isbn=None, outcome="NEEDS_REVIEW"
     )
+    _lock_candidates(fixture, valid_id, invalid_outcome_id, invalid_reason_id)
     service = CandidateService(fixture.connection)
     items = [
         {
@@ -532,6 +623,7 @@ def test_bulk_reports_malformed_items_then_applies_later_valid_target(tmp_path) 
         isbn="9788937464010",
         outcome="NEEDS_REVIEW",
     )
+    _lock_candidates(fixture, candidate_id)
     service = CandidateService(fixture.connection)
     items = [
         None,

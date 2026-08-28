@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import sqlite3
 import uuid
 from collections.abc import Callable
@@ -20,7 +21,7 @@ from suseoro.ingestion.contracts import (
     Provenance,
     RowStatus,
 )
-from suseoro.ingestion.mapping import canonical_field_for_header
+from suseoro.ingestion.mapping import canonical_field_for_header, infer_mapping
 from suseoro.ingestion.parsers.docx import parse_docx
 from suseoro.ingestion.parsers.hwp import parse_hwp
 from suseoro.ingestion.parsers.hwpx import parse_hwpx
@@ -28,10 +29,13 @@ from suseoro.ingestion.parsers.marc import MarcParseResult, parse_marc
 from suseoro.ingestion.parsers.pdf import parse_pdf
 from suseoro.ingestion.parsers.tabular import parse_tabular
 from suseoro.ingestion.templates import MappingTemplateStore, ParserCache
+from suseoro.jobs.public_errors import parser_failure
 from suseoro.jobs.repository import JobRepository
 from suseoro.jobs.runner import DurableJobRunner, JobContext
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.comparison import ComparisonService
+
+logger = logging.getLogger(__name__)
 
 
 def _chunks(values: tuple[str, ...], size: int):
@@ -232,6 +236,12 @@ def _required_fields(role: DocumentRole) -> set[str]:
     }:
         return {"title"}
     return set()
+
+
+def _preview_scalar(value: Any) -> str | int | float | bool | None:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 def _apply_mapping(
@@ -451,6 +461,67 @@ def build_ingestion_handler(
                     if template
                     else {}
                 )
+                preview_rows = [
+                    [_preview_scalar(row.raw_values.get(header)) for header in headers]
+                    for row in base_result.rows[:20]
+                ]
+                inference = infer_mapping(headers, preview_rows)
+                available_semantics = {
+                    str(semantic) for semantic in effective_mapping.values() if semantic
+                }
+                available_semantics.update(
+                    semantic
+                    for header in headers
+                    if (
+                        semantic := canonical_field_for_header(header.split("__", 1)[0])
+                    )
+                )
+                available_semantics.update(
+                    field for row in base_result.rows for field in row.fields
+                )
+                missing_required = sorted(required - available_semantics)
+                tabular_low_confidence = (
+                    base_result.detected_format
+                    in {"CSV", "TSV", "TXT", "XLS", "XLSX", "XLSB", "ODS"}
+                    and inference.confidence < 0.75
+                )
+                if (
+                    base_result.rows
+                    and headers
+                    and (
+                        missing_required
+                        or (
+                            required
+                            and not configured_mapping
+                            and template is None
+                            and tabular_low_confidence
+                        )
+                    )
+                ):
+                    JobRepository(connection).record_file_result(
+                        job_id=context.job.id,
+                        claim_token=context.job.claim_token,
+                        claim_generation=context.job.claim_generation,
+                        source_document_id=document_id,
+                        status="PARTIAL",
+                        total_rows=len(base_result.rows),
+                        processed_rows=0,
+                        error={
+                            "code": "MAPPING_REQUIRED",
+                            "message": "열 이름과 자료 내용을 확인해 연결해 주세요.",
+                            "mapping_required": {
+                                "headers": headers,
+                                "preview_rows": preview_rows,
+                                "suggested_mapping": inference.mapping,
+                                "required_fields": sorted(required),
+                                "confidence": inference.confidence,
+                                "questions": inference.questions,
+                            },
+                        },
+                    )
+                    connection.commit()
+                    context.checkpoint(stage="PARSING", current=current, total=total)
+                    continue
                 result = _apply_mapping(
                     base_result,
                     role=role,
@@ -496,7 +567,9 @@ def build_ingestion_handler(
                     processed_rows=len(result.rows),
                     error=item_error,
                 )
-            except Exception as error:  # noqa: BLE001 - one file must not drop peers
+            except Exception:  # One file must not drop successfully parsed peers.
+                logger.exception("Source document %s parsing failed", document_id)
+                public_error = parser_failure()
                 connection.execute(
                     """
                     UPDATE source_documents SET status = 'FAILED', completed_at = ?
@@ -516,7 +589,7 @@ def build_ingestion_handler(
                     status="FAILED",
                     total_rows=1,
                     processed_rows=1,
-                    error={"type": type(error).__name__, "message": str(error)},
+                    error=public_error,
                 )
                 connection.execute(
                     """
@@ -530,7 +603,7 @@ def build_ingestion_handler(
                     (
                         str(uuid.uuid4()),
                         document_id,
-                        str(error),
+                        public_error["message"],
                         format_utc(context.clock()),
                     ),
                 )

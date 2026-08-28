@@ -2,41 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { SuseoroApi, User, Workspace } from "../../api/client";
-
-const stateCopy: Record<string, string> = {
-  DRAFT: "자료 준비 중",
-  ANALYZING: "도서 비교 중",
-  CANDIDATE_REVIEW: "후보 확인 중",
-  APPROVAL_PENDING: "승인 기다리는 중",
-  CHANGES_REQUESTED: "수정 요청됨",
-  APPROVED: "승인됨",
-  QUOTE_REVIEW: "견적·예산 조정 중",
-  ORDER_READY: "발주파일 준비됨",
-  ORDER_SENT: "납품 기다리는 중",
-  RECEIVING: "납품 검수 중",
-  COMPLETED: "완료",
-};
-
-const operatorPriority = new Map([
-  ["CHANGES_REQUESTED", 0],
-  ["CANDIDATE_REVIEW", 1],
-  ["DRAFT", 2],
-  ["APPROVED", 3],
-  ["QUOTE_REVIEW", 4],
-  ["ORDER_READY", 5],
-  ["ORDER_SENT", 6],
-  ["RECEIVING", 7],
-  ["ANALYZING", 8],
-  ["APPROVAL_PENDING", 9],
-  ["COMPLETED", 10],
-]);
-
-function nextOwner(status: string): string {
-  if (status === "APPROVAL_PENDING") return "검토자";
-  if (status === "ANALYZING") return "자동 처리";
-  if (status === "COMPLETED") return "완료";
-  return "담당자";
-}
+import {
+  isReviewerOnly,
+  primaryPriority,
+  workflowPolicy,
+} from "./workflowPolicy";
 
 function savedAt(value: string): string {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -57,7 +27,7 @@ export function WorklistScreen({ api, user }: WorklistScreenProps) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const reviewer = user.roles.includes("REVIEWER") && !user.roles.includes("OPERATOR");
+  const reviewer = isReviewerOnly(user);
 
   useEffect(() => {
     document.title = "내 수서 업무 · 수서로";
@@ -80,28 +50,16 @@ export function WorklistScreen({ api, user }: WorklistScreenProps) {
 
   const sorted = useMemo(() => {
     return [...workspaces].sort((left, right) => {
-      const leftRank = reviewer
-        ? left.status === "APPROVAL_PENDING"
-          ? 0
-          : left.status === "COMPLETED"
-            ? 2
-            : 1
-        : (operatorPriority.get(left.status) ?? 20);
-      const rightRank = reviewer
-        ? right.status === "APPROVAL_PENDING"
-          ? 0
-          : right.status === "COMPLETED"
-            ? 2
-            : 1
-        : (operatorPriority.get(right.status) ?? 20);
+      const leftRank = primaryPriority(user, left.status) ?? 20;
+      const rightRank = primaryPriority(user, right.status) ?? 20;
       if (leftRank !== rightRank) return leftRank - rightRank;
       return right.updated_at.localeCompare(left.updated_at);
     });
-  }, [reviewer, workspaces]);
+  }, [user, workspaces]);
 
-  const primary = reviewer
-    ? sorted.find((item) => item.status === "APPROVAL_PENDING")
-    : sorted.find((item) => !["APPROVAL_PENDING", "COMPLETED"].includes(item.status));
+  const primary = sorted.find(
+    (item) => primaryPriority(user, item.status) !== null,
+  );
 
   if (loading) {
     return (
@@ -121,7 +79,7 @@ export function WorklistScreen({ api, user }: WorklistScreenProps) {
       {primary ? (
         <aside className="next-action" aria-label="가장 먼저 할 일">
           <div>
-            <span className="status-chip">{stateCopy[primary.status] ?? primary.status}</span>
+            <span className="status-chip">{workflowPolicy(primary.status).label}</span>
             <p>{reviewer ? "승인을 기다리는 목록이 있습니다." : "이 작업부터 이어가면 됩니다."}</p>
           </div>
           <Link className="button button-primary" to={`/workspaces/${primary.id}`}>
@@ -148,8 +106,8 @@ export function WorklistScreen({ api, user }: WorklistScreenProps) {
                   <th scope="row">
                     <Link to={`/workspaces/${item.id}`}>{item.name}</Link>
                   </th>
-                  <td>{stateCopy[item.status] ?? item.status}</td>
-                  <td>{nextOwner(item.status)}</td>
+                  <td>{workflowPolicy(item.status).label}</td>
+                  <td>{workflowPolicy(item.status).owner}</td>
                   <td>{savedAt(item.updated_at)}</td>
                 </tr>
               ))}

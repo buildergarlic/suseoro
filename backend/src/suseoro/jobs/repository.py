@@ -473,17 +473,25 @@ class JobRepository:
             """,
             (job_id,),
         ).fetchall()
-        return [
-            {
-                "source_document_id": row["source_document_id"],
-                "filename": row["original_filename"],
-                "status": row["status"],
-                "total_rows": row["total_rows"],
-                "processed_rows": row["processed_rows"],
-                "error": json.loads(row["error_json"]) if row["error_json"] else None,
-            }
-            for row in rows
-        ]
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            error = json.loads(row["error_json"]) if row["error_json"] else None
+            mapping_required = None
+            if isinstance(error, dict):
+                error = dict(error)
+                mapping_required = error.pop("mapping_required", None)
+            results.append(
+                {
+                    "source_document_id": row["source_document_id"],
+                    "filename": row["original_filename"],
+                    "status": row["status"],
+                    "total_rows": row["total_rows"],
+                    "processed_rows": row["processed_rows"],
+                    "error": error,
+                    "mapping_required": mapping_required,
+                }
+            )
+        return results
 
     def item_terminal_status(self, job_id: str) -> str | None:
         job = self.get(job_id)

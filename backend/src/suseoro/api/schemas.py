@@ -131,6 +131,15 @@ class CatalogDeltaResponse(PublicSchema):
     idempotent: bool
 
 
+class MappingRequired(PublicSchema):
+    headers: list[str]
+    preview_rows: list[list[str | int | float | bool | None]]
+    suggested_mapping: dict[str, str | None]
+    required_fields: list[str]
+    confidence: float
+    questions: list[str]
+
+
 class JobFileResult(PublicSchema):
     source_document_id: str
     filename: str
@@ -138,6 +147,7 @@ class JobFileResult(PublicSchema):
     total_rows: int
     processed_rows: int
     error: JobError | None
+    mapping_required: MappingRequired | None
 
 
 class JobError(PublicSchema):
@@ -186,9 +196,20 @@ class CandidateResponse(PublicSchema):
     updated_at: str
 
 
+class CandidateSummary(PublicSchema):
+    total_count: int
+    candidate_count: int
+    needs_review_count: int
+    excluded_count: int
+    unresolved_count: int
+    expected_total_won: int
+
+
 class CandidatePage(PublicSchema):
     items: list[CandidateResponse]
     next_cursor: str | None
+    total_count: int
+    summary: CandidateSummary
 
 
 class CandidateMutationResponse(PublicSchema):
@@ -624,6 +645,7 @@ OPERATION_RESPONSE_MODELS: dict[str, type[BaseModel]] = {
     "retryJob": JobCommandResponse,
     "cancelJob": JobCommandResponse,
     "listCandidates": CandidatePage,
+    "getCandidate": CandidateResponse,
     "updateCandidate": CandidateMutationResponse,
     "bulkDecideCandidates": CandidateBulkResponse,
     "lockCandidate": CandidateLockResponse,

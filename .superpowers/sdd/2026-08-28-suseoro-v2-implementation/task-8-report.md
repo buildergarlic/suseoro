@@ -160,3 +160,147 @@ mutation을 막되 textarea/수량 state는 메모리에 그대로 둔다. 이 �
 Vite entry/router, package lock, generated API type, API client, 공통 shell/dialog, auth/workspace/ingestion/
 candidate feature와 세 Testing Library suite를 `frontend/` 아래에 추가했다. 별도 admin dashboard나 기술
 용어 중심 화면을 만들지 않았다. plan과 progress ledger는 수정하지 않았다. 최종 blocker는 없다.
+
+## 검토 수정 라운드 1 (2026-08-29)
+
+초기 Task 8 commit `c1bef5adca062858df60f6238297275777f87e94`에 대한 1 Critical + 10
+Important 검토를 다시 TDD로 닫았다. 이 라운드에서는 기존 migration을 한 byte도 바꾸지 않았다. 특히
+이미 배포 가능한 `0006b_upload_idempotency_fencing.sql`은 그대로 유지했다. 독립 최종 diff 검토에서
+완료 key의 replay probe를 과거 request shape/size로 제한해야 한다는 경계를 발견해, 기존 claim을
+재작성하지 않고 nullable request metadata만 더하는 forward-only
+`0007_upload_replay_metadata.sql`을 추가했다.
+
+### Backend 계약과 RED/GREEN
+
+- upload 완료 claim은 저장된 filename 순서와 과거 file/aggregate byte bound 안에서 body를 drain/hash한
+  뒤 exact replay한다. 저장 shape와 다른 file count에는 현재 정책을 즉시 적용하고, 같은 filename을
+  이용한 임의 대용량 changed body도 과거 bound를 확장하지 않는다. 새 claim에는 현재 정책을 적용한다.
+- 실제 0006a 구버전 모양인 accepted `{filename, sha256}` / rejected `{filename, error}` fingerprint를
+  canonical claim으로 안전하게 bridge한다. accepted content digest나 accepted/rejected 분류가 달라지면
+  영구 409여서 changed-body 충돌을 숨기지 않는다. legacy `FILE_TOO_LARGE`는 blanket replay allowance로
+  성공 파일처럼 바꾸지 않고 현재 stream limit에서 같은 rejection 분류를 보존한다.
+- cleanup은 원래 contention deadline 안에서 generation/owner를 다시 fence하고 각 DB/path 단계마다
+  deadline을 확인하는 best effort다. cleanup 자체가 기본 SQLite timeout을 다시 소비해
+  `UPLOAD_RESERVATION_BUSY`를 `DATABASE_UNAVAILABLE`로 바꾸지 않는다.
+- mapping 필요 상태를 `JobFileResult.mapping_required`로 명시하고 server parser가 만든 header와 최대
+  20 preview row를 durable result에 둔다. mapping 저장 뒤 cached parse를 새 PARSE job으로 재개한다.
+- 후보 목록은 cursor, literal title/author/ISBN search, server filter와 authoritative 전체 summary/count를
+  제공한다. `%`와 `_`도 SQL wildcard가 아닌 검색 문자로 취급한다. 단건 후보 GET은 full row와 ETag를
+  제공한다.
+- job/parser 내부 예외는 `JOB_FAILED`/`PARSER_FAILURE`의 고정된 사람말 envelope로 변환한다. private
+  table 이름, schema, DB path를 durable job/source/API 응답에 저장하지 않는다.
+- candidate mutation은 이제 같은 actor가 소유한 unexpired `edit_locks` lease를 mutation transaction 안에서
+  원자적으로 확인한다. 만료 뒤 다른 operator가 인수하면 이전 actor의 autosave/bulk decision은 409다.
+  이미 완료된 idempotent replay는 lock 재검사보다 먼저 반환된다.
+
+검토 시작 시 작성한 backend behavior 묶음은 8개 실패였고, 이후 좁혀 낸 경계도 각각 실제 RED로
+확인했다.
+
+```text
+초기 round-1 backend behavior 묶음                 8 failed
+author/ISBN server search                           1 failed
+정확한 0006a accepted/partial upgrade bridge         2 failed
+job/API 내부 DB 오류 비공개                          2 failed
+edit lease 없음 / 만료 뒤 takeover                   2 failed
+literal LIKE wildcard                                1 failed
+독립 최종 검토: legacy changed-first + replay bound    2 failed
+최종 재검토: legacy FILE_TOO_LARGE 분류 보존             1 failed
+forward 0007 integration latest assertions            3 failed, 395 passed
+```
+
+최종 결과는 다음과 같다.
+
+```text
+historical 0006a bridge focused                      2 passed
+changed-first / bounded / FILE_TOO_LARGE focused      5 passed
+populated 0006b -> 0007 migration focused             3 passed
+DB failure sanitization focused                      3 passed
+candidate workflow + lease                          13 passed
+candidate/mapping/replay/cleanup focused             10 passed
+job recovery                                         13 passed
+uv run pytest -q                                    400 passed in 77.35s
+uvx ruff format --check src tests                   104 files already formatted
+uvx ruff check src tests                            All checks passed
+uv run python -m compileall -q src tests            exit 0
+uv lock --check                                     exit 0
+uv build --out-dir .task8-round1-build              sdist + wheel built
+```
+
+build 산출물은 확인 뒤 검증된 전용 임시 directory만 삭제했다. diff 대상의 dangerous execution과 private
+key/token signature scan, `git diff --check`도 모두 0건/exit 0이었다.
+
+### Frontend 흐름, concurrency와 RED/GREEN
+
+CTA `우리 도서관에 없는 책 찾기`는 이제 upload만 기다리지 않는다. accepted source별 durable 결과를
+합쳐 ingest/parse를 완료하고, mapping이 필요하면 server preview dialog queue를 모두 처리한 뒤 명시적으로
+comparison command를 만든다. comparison job 성공과 workspace 재조회가 끝나야 `CANDIDATE_REVIEW`를
+연다. comparison 성공 뒤 workspace 조회만 실패한 경우 완료 job을 retry하지 않고 `후보 화면 다시
+불러오기`만 제공한다. StrictMode setup-cleanup-setup에서도 mounted fence를 다시 세워 실제 dev build가
+중간에 멈추지 않는다.
+
+파일 status는 source identity의 최신 parser 결과를 합치며 batch progress/action과 file retry를 구분한다.
+usable `PARTIAL` 결과도 비교에 포함하고, 실패/누락 source를 완료라고 말하지 않는다. 서로 다른 여러
+mapping dialog는 source id key로 local select state를 초기화한다. mapping 저장/재처리 실패는 aria-live의
+자연어로 남고 dialog를 닫거나 parse/poll이 실패해도 같은 파일에서 다시 열 수 있다. multi-file 207은
+모든 rejected local file이 재접수되고 accepted source가 준비될 때까지 성공 subset만으로 비교하지 않는다.
+rejected file의 `다시 올리기`는 같은 immutable bytes를 되풀이하지 않고 수정한 replacement file을 다시
+선택하게 하며 filename이 달라도 이전 실패 item을 교체한다. mapping source 상세 조회가 일시 실패해도
+row의 `열 연결 다시 확인`이 source/version을 다시 조회해 dialog를 복구한다.
+workspace id가 바뀌면 선택 파일, upload item, source/result ref와 진행 상태를 모두 비워 이전 작업 자료가
+새 작업에 섞이지 않는다. polling은 bounded exponential retry 뒤 멈춘 사실과 수동 재확인 행동을 보여준다.
+
+후보 화면은 100개에서 자르지 않고 cursor page를 이어 붙인다. tab 수, 미해결 gate, 예상 금액은 loaded
+row가 아니라 server summary를 쓴다. autosave는 candidate별 generation/queue로 직렬화하고, blur 직후 판정은
+quantity 저장과 새 row version을 기다린다. input/판정/제외 되돌리기는 lease를 먼저 얻고 lease expiry 때
+input을 다시 잠근다. 412는 단건 authoritative GET으로 server/local 값을 비교한다. mutation response의
+row/version/quantity와 outcome 이동을 panel summary에 반영한다.
+
+API client는 login/upload/autosave/approve/retry/cancel 등의 logical action + payload fingerprint별 key를
+유지한다. network/retryable 응답뿐 아니라 malformed/HTML/truncated 2xx도 ambiguous로 보고 성공 확정 전에
+같은 key를 보존한다. 동시에 같은 payload가 나가더라도 한 response가 다른 in-flight action의 key를 먼저
+지우지 않는다. payload가 달라질 때만 새 key다. approval transition response의 state/row version은 즉시
+적용하고, 후속 workspace refresh 실패를 이미 commit된 mutation 실패로 말하지 않는다.
+
+초기 round-1 Testing Library 추가분은 production 변경 전에 다음 RED였다.
+
+```text
+npm test -- --run (초기 round-1)                    19 failed, 12 passed
+StrictMode + 완료 후 refresh + malformed 2xx          3 failed, 27 passed
+blur/decision + lease expiry + restore lock            3 failed
+ANALYZING poll exhaustion/retry                         1 failed
+최종 검토 mapping recovery / partial gate / workspace   3 failed
+최종 재검토 real replacement / mapping detail recovery   2 failed
+```
+
+최종 clean install 결과는 다음과 같다.
+
+```text
+npm ci                                                audited 265, 0 vulnerabilities
+npm test -- --run                                     3 files, 44 passed
+npm run typecheck                                     exit 0
+npm run lint                                          exit 0, warning 0
+npm run build                                         36 modules, exit 0
+dist JS                                               282.71 kB / 88.35 kB gzip
+```
+
+### 생성 계약과 보존 증거
+
+OpenAPI와 TypeScript client type을 각각 연속 두 번 생성해 deterministic hash를 확인했다.
+
+```text
+backend/openapi.json SHA-256
+A9D008B0815A051AC0C2EBFD56CAFCF16C788DF85B474DDFE9ECA26FE2893ECF
+
+frontend/src/api/types.ts SHA-256
+6EBC009BF992098ADECC007178830145EA842A832A7F6CACE0CB12309DB4D38E
+```
+
+`0007_upload_replay_metadata.sql`만 새 forward migration이며 SHA-256은
+`E882B0E68B302829CE4BAD50955CB93404A50163E434491182D46C55CF35B28B`이다. 이를 제외한
+`git diff --exit-code c1bef5ad... -- backend/src/suseoro/db/migrations
+':(exclude)backend/src/suseoro/db/migrations/0007_upload_replay_metadata.sql'`는 exit 0이었다.
+`0006b_upload_idempotency_fencing.sql` SHA-256은
+`5DF3A11F75D27E4BE6E490FBD93F574756D456D4AA225F743314FD285D492710`으로 baseline과 같다.
+populated 0006b claim의 fingerprint/generation/terminal response를 그대로 보존하고 새 metadata를 NULL로
+올리는 forward upgrade test도 통과했다.
+plan/progress ledger는 수정하지 않았고, Task 10으로 미룬 ASGI pre-parser cap도 건드리지 않았다.

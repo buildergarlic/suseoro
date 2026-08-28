@@ -31,6 +31,7 @@ export interface FixtureApi {
   getJob(jobId: string): Promise<Job>;
   retryJob(jobId: string): Promise<Schemas["JobCommandResponse"]>;
   cancelJob(jobId: string): Promise<Schemas["JobCommandResponse"]>;
+  parseSource(sourceId: string): Promise<Schemas["QueuedJobResponse"]>;
   getSource(sourceId: string): Promise<Versioned<Source>>;
   updateSourceMapping(
     sourceId: string,
@@ -44,8 +45,9 @@ export interface FixtureApi {
   ): Promise<Schemas["ComparisonJobResponse"]>;
   listCandidates(
     workspaceId: string,
-    filters: { outcome: string; search?: string },
+    filters: { outcome: string; search?: string; cursor?: string; limit?: number },
   ): Promise<CandidatePage>;
+  getCandidate(candidateId: string, workspaceId: string): Promise<Versioned<Candidate>>;
   lockCandidate(
     candidateId: string,
     workspaceId: string,
@@ -147,7 +149,7 @@ export const sourceFixture: Source = {
   sha256: "a".repeat(64),
   size_bytes: 120,
   role: "PURCHASE_REQUEST",
-  status: "NEEDS_MAPPING",
+  status: "PENDING",
   detected_format: "CSV",
   mapping: {},
   row_version: 1,
@@ -218,6 +220,10 @@ export function createFixtureApi(
       error: null,
       retry_count: 0,
     }),
+    parseSource: async (_sourceId) => ({
+      job_id: "parse-job",
+      status: "QUEUED",
+    }),
     getSource: async (_sourceId) => ({ data: sourceFixture, etag: '"1"' }),
     updateSourceMapping: async (_sourceId, input, version) => ({
       data: {
@@ -237,6 +243,19 @@ export function createFixtureApi(
     listCandidates: async (_workspaceId, _filters) => ({
       items: [],
       next_cursor: null,
+      total_count: 0,
+      summary: {
+        total_count: 0,
+        candidate_count: 0,
+        needs_review_count: 0,
+        excluded_count: 0,
+        unresolved_count: 0,
+        expected_total_won: 0,
+      },
+    }),
+    getCandidate: async (_candidateId, _workspaceId) => ({
+      data: candidate("candidate-ok", "새로 살 책", "CANDIDATE"),
+      etag: '"1"',
     }),
     lockCandidate: async (candidateId, _workspaceId) => ({
       candidate_id: candidateId,

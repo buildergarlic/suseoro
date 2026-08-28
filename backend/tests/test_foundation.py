@@ -161,6 +161,7 @@ def test_upload_claim_forward_migration_has_durable_generation_and_lease_fencing
         "state",
         "response_status",
         "response_body",
+        "request_metadata_json",
     } <= columns.keys()
     assert columns["request_fingerprint"] == {"type": "TEXT", "not_null": True}
     assert columns["generation"] == {"type": "INTEGER", "not_null": True}
@@ -264,6 +265,81 @@ def test_foundation_constraints_upgrade_preserves_valid_linked_data(
                 """,
                 ("not-a-uuid", "Invalid", VALID_TIMESTAMP, VALID_TIMESTAMP),
             )
+
+
+def test_0007_adds_replay_metadata_without_rewriting_populated_claims(
+    tmp_path: Path,
+) -> None:
+    """The replay-bound migration must preserve every committed 0006b claim."""
+    current_dir = Path(__file__).parents[1] / "src" / "suseoro" / "db" / "migrations"
+    old_dir = tmp_path / "0006b-migrations"
+    old_dir.mkdir()
+    for source in current_dir.glob("*.sql"):
+        if source.stem != "0007_upload_replay_metadata":
+            shutil.copy2(source, old_dir / source.name)
+
+    database_path = tmp_path / "0006b-upgrade.sqlite3"
+    school_id = VALID_UUID
+    actor_id = "550e8400-e29b-41d4-a716-446655440001"
+    claim_id = "550e8400-e29b-41d4-a716-446655440002"
+    with connect(database_path) as connection:
+        apply_migrations(connection, old_dir)
+        connection.execute(
+            "INSERT INTO schools (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (school_id, "업그레이드 학교", VALID_TIMESTAMP, VALID_TIMESTAMP),
+        )
+        connection.execute(
+            """
+            INSERT INTO users (
+                id, school_id, username, password_hash, display_name,
+                created_at, updated_at
+            ) VALUES (?, ?, 'operator', 'hash', '담당자', ?, ?)
+            """,
+            (actor_id, school_id, VALID_TIMESTAMP, VALID_TIMESTAMP),
+        )
+        connection.execute(
+            """
+            INSERT INTO upload_idempotency_claims (
+                id, school_id, actor_id, route, key, request_fingerprint,
+                generation, state, response_status, response_body,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, 'POST /sources', 'stable-key', ?, 3, 'COMPLETED',
+                      202, '{"items":[]}', ?, ?)
+            """,
+            (
+                claim_id,
+                school_id,
+                actor_id,
+                "a" * 64,
+                VALID_TIMESTAMP,
+                VALID_TIMESTAMP,
+            ),
+        )
+        connection.commit()
+
+        apply_migrations(connection, current_dir)
+        preserved = connection.execute(
+            """
+            SELECT id, request_fingerprint, generation, state, response_status,
+                   response_body, request_metadata_json
+            FROM upload_idempotency_claims WHERE id = ?
+            """,
+            (claim_id,),
+        ).fetchone()
+        latest = connection.execute(
+            "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
+        ).fetchone()[0]
+
+    assert dict(preserved) == {
+        "id": claim_id,
+        "request_fingerprint": "a" * 64,
+        "generation": 3,
+        "state": "COMPLETED",
+        "response_status": 202,
+        "response_body": '{"items":[]}',
+        "request_metadata_json": None,
+    }
+    assert latest == "0007_upload_replay_metadata"
 
 
 def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
@@ -537,7 +613,7 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
         fixture.connection.execute(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
         ).fetchone()[0]
-        == "0006b_upload_idempotency_fencing"
+        == "0007_upload_replay_metadata"
     )
 
 

@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from suseoro.security.sessions import format_utc, utc_now
+from suseoro.security.sessions import format_utc, parse_utc, utc_now
 
 EDIT_LOCK_TTL = timedelta(minutes=2)
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -48,6 +48,11 @@ class EditLockConflict(HTTPException):
 class EditLockAuthorizationError(HTTPException):
     def __init__(self) -> None:
         super().__init__(status_code=403, detail={"code": "EDIT_LOCK_ROLE_REQUIRED"})
+
+
+class EditLockRequired(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(status_code=409, detail={"code": "EDIT_LOCK_REQUIRED"})
 
 
 @dataclass(frozen=True)
@@ -171,4 +176,36 @@ def acquire_edit_lock(
         actor_id=actor_id,
         acquired_at=acquired_at,
         expires_at=expires_at,
+    )
+
+
+def require_edit_lock(
+    connection: sqlite3.Connection,
+    *,
+    school_id: str,
+    entity_type: str,
+    entity_id: str,
+    actor_id: str,
+    now: datetime | None = None,
+) -> EditLock:
+    """Require the caller to own the entity's current unexpired edit lease."""
+    checked_at = now or utc_now()
+    existing = connection.execute(
+        """
+        SELECT actor_id, acquired_at, expires_at FROM edit_locks
+        WHERE school_id = ? AND entity_type = ? AND entity_id = ?
+        """,
+        (school_id, entity_type, entity_id),
+    ).fetchone()
+    if existing is None or parse_utc(existing["expires_at"]) <= checked_at:
+        raise EditLockRequired()
+    if existing["actor_id"] != actor_id:
+        raise EditLockConflict(existing["actor_id"], existing["expires_at"])
+    return EditLock(
+        school_id=school_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        actor_id=actor_id,
+        acquired_at=parse_utc(existing["acquired_at"]),
+        expires_at=parse_utc(existing["expires_at"]),
     )

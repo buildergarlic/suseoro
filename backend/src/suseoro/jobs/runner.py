@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from suseoro.jobs.public_errors import job_failure
 from suseoro.jobs.repository import Job, JobRepository
 from suseoro.security.sessions import utc_now
 
 
 class JobCancelled(RuntimeError):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 class JobContext:
@@ -98,12 +103,13 @@ class DurableJobRunner:
             self.repository.connection.commit()
             return cancelled
         # A job boundary must persist every ordinary handler failure for retry.
-        except Exception as error:  # noqa: BLE001
+        except Exception:
+            logger.exception("Durable job %s failed", job.id)
             self.repository.connection.rollback()
             failed = self.repository.mark_failed(
                 job.id,
                 claim_token=job.claim_token,
-                error={"type": type(error).__name__, "message": str(error)},
+                error=job_failure(),
                 now=self.clock(),
             )
             self.repository.connection.commit()

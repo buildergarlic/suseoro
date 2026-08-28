@@ -250,7 +250,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** 수서 후보 현재 내용 보기 */
+        get: operations["getCandidate"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1172,6 +1173,9 @@ export interface components {
             items: components["schemas"]["CandidateResponse"][];
             /** Next Cursor */
             next_cursor: string | null;
+            summary: components["schemas"]["CandidateSummary"];
+            /** Total Count */
+            total_count: number;
         };
         /** CandidateResponse */
         CandidateResponse: {
@@ -1199,6 +1203,21 @@ export interface components {
             updated_at: string;
             /** Workspace Id */
             workspace_id: string;
+        };
+        /** CandidateSummary */
+        CandidateSummary: {
+            /** Candidate Count */
+            candidate_count: number;
+            /** Excluded Count */
+            excluded_count: number;
+            /** Expected Total Won */
+            expected_total_won: number;
+            /** Needs Review Count */
+            needs_review_count: number;
+            /** Total Count */
+            total_count: number;
+            /** Unresolved Count */
+            unresolved_count: number;
         };
         /** CandidateUpdate */
         CandidateUpdate: {
@@ -1460,6 +1479,7 @@ export interface components {
             error: components["schemas"]["JobError"] | null;
             /** Filename */
             filename: string;
+            mapping_required: components["schemas"]["MappingRequired"] | null;
             /** Processed Rows */
             processed_rows: number;
             /** Source Document Id */
@@ -1521,6 +1541,23 @@ export interface components {
             school_id: string;
             /** Username */
             username: string;
+        };
+        /** MappingRequired */
+        MappingRequired: {
+            /** Confidence */
+            confidence: number;
+            /** Headers */
+            headers: string[];
+            /** Preview Rows */
+            preview_rows: (string | number | boolean | null)[][];
+            /** Questions */
+            questions: string[];
+            /** Required Fields */
+            required_fields: string[];
+            /** Suggested Mapping */
+            suggested_mapping: {
+                [key: string]: string | null;
+            };
         };
         /** OrderAllocation */
         OrderAllocation: {
@@ -3513,6 +3550,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    getCandidate: {
+        parameters: {
+            query: {
+                workspace_id: string;
+            };
+            header?: never;
+            path: {
+                candidate_id: string;
+            };
+            cookie?: {
+                suseoro_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateResponse"];
                 };
             };
             /** @description 구조화된 오류 */

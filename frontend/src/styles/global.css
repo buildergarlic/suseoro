@@ -427,6 +427,11 @@ tbody tr:last-child > * {
   display: block;
 }
 
+.file-picker:focus-within .button {
+  outline: 0.2rem solid var(--color-focus);
+  outline-offset: 0.2rem;
+}
+
 .support-list {
   max-width: 46rem;
   color: var(--color-muted);
@@ -507,8 +512,26 @@ progress {
 
 .primary-action-row {
   display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
   justify-content: flex-end;
   margin-top: 1rem;
+}
+
+.batch-progress {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem;
+  border: 0.0625rem solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-soft);
+}
+
+.batch-progress .progress-copy {
+  width: min(100%, 30rem);
+  flex: 1;
 }
 
 .approval-action-row {
@@ -627,6 +650,16 @@ progress {
   width: 5.2rem;
 }
 
+.candidate-table input[readonly] {
+  background: var(--color-surface-soft);
+  cursor: wait;
+}
+
+.load-more {
+  display: block;
+  margin: 1rem auto 0;
+}
+
 .book-byline,
 .field-note,
 .saved-copy {
@@ -688,7 +721,8 @@ progress {
   .section-intro,
   .selected-files li,
   .excluded-list li,
-  .approval-action-row {
+  .approval-action-row,
+  .batch-progress {
     align-items: stretch;
     flex-direction: column;
   }

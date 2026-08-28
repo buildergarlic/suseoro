@@ -1079,11 +1079,20 @@
               }
             ],
             "title": "Next Cursor"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/CandidateSummary"
+          },
+          "total_count": {
+            "title": "Total Count",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "next_cursor",
+          "total_count",
+          "summary"
         ],
         "title": "CandidatePage",
         "type": "object"
@@ -1186,6 +1195,45 @@
           "updated_at"
         ],
         "title": "CandidateResponse",
+        "type": "object"
+      },
+      "CandidateSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_count": {
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "excluded_count": {
+            "title": "Excluded Count",
+            "type": "integer"
+          },
+          "expected_total_won": {
+            "title": "Expected Total Won",
+            "type": "integer"
+          },
+          "needs_review_count": {
+            "title": "Needs Review Count",
+            "type": "integer"
+          },
+          "total_count": {
+            "title": "Total Count",
+            "type": "integer"
+          },
+          "unresolved_count": {
+            "title": "Unresolved Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_count",
+          "candidate_count",
+          "needs_review_count",
+          "excluded_count",
+          "unresolved_count",
+          "expected_total_won"
+        ],
+        "title": "CandidateSummary",
         "type": "object"
       },
       "CandidateUpdate": {
@@ -1949,6 +1997,16 @@
             "title": "Filename",
             "type": "string"
           },
+          "mapping_required": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MappingRequired"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "processed_rows": {
             "title": "Processed Rows",
             "type": "integer"
@@ -1972,7 +2030,8 @@
           "status",
           "total_rows",
           "processed_rows",
-          "error"
+          "error",
+          "mapping_required"
         ],
         "title": "JobFileResult",
         "type": "object"
@@ -2141,6 +2200,86 @@
           "password"
         ],
         "title": "LoginRequest",
+        "type": "object"
+      },
+      "MappingRequired": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "headers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "array"
+          },
+          "preview_rows": {
+            "items": {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "title": "Preview Rows",
+            "type": "array"
+          },
+          "questions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "required_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Fields",
+            "type": "array"
+          },
+          "suggested_mapping": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Suggested Mapping",
+            "type": "object"
+          }
+        },
+        "required": [
+          "headers",
+          "preview_rows",
+          "suggested_mapping",
+          "required_fields",
+          "confidence",
+          "questions"
+        ],
+        "title": "MappingRequired",
         "type": "object"
       },
       "OrderAllocation": {
@@ -6399,6 +6538,106 @@
       }
     },
     "/api/v2/candidates/{candidate_id}": {
+      "get": {
+        "operationId": "getCandidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "suseoro_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suseoro Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "수서 후보 현재 내용 보기",
+        "tags": [
+          "candidates"
+        ]
+      },
       "patch": {
         "operationId": "updateCandidate",
         "parameters": [

@@ -26,6 +26,13 @@ export interface UploadInput {
   requestedThroughLocalDate?: string;
 }
 
+export interface CandidateFilters {
+  outcome: string;
+  search?: string;
+  cursor?: string;
+  limit?: number;
+}
+
 export interface SuseoroApi {
   getCurrentUser(): Promise<User>;
   login(input: Schemas["LoginRequest"]): Promise<User>;
@@ -40,6 +47,7 @@ export interface SuseoroApi {
   getJob(jobId: string): Promise<Job>;
   retryJob(jobId: string): Promise<Schemas["JobCommandResponse"]>;
   cancelJob(jobId: string): Promise<Schemas["JobCommandResponse"]>;
+  parseSource(sourceId: string): Promise<Schemas["QueuedJobResponse"]>;
   getSource(sourceId: string): Promise<Versioned<Source>>;
   updateSourceMapping(
     sourceId: string,
@@ -53,8 +61,12 @@ export interface SuseoroApi {
   ): Promise<Schemas["ComparisonJobResponse"]>;
   listCandidates(
     workspaceId: string,
-    filters: { outcome: string; search?: string },
+    filters: CandidateFilters,
   ): Promise<Schemas["CandidatePage"]>;
+  getCandidate(
+    candidateId: string,
+    workspaceId: string,
+  ): Promise<Versioned<Candidate>>;
   lockCandidate(
     candidateId: string,
     workspaceId: string,
@@ -99,10 +111,32 @@ interface RequestOptions<TBody = unknown> {
   mutation?: boolean;
   csrf?: boolean;
   command?: MutationOptions;
+  logicalAction?: string;
+  logicalPayload?: unknown;
 }
 
 function commandId(): string {
   return crypto.randomUUID();
+}
+
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, stableValue(item)]),
+    );
+  }
+  return value;
+}
+
+async function payloadFingerprint(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(stableValue(value)));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
 }
 
 function csrfToken(): string | null {
@@ -151,18 +185,39 @@ function errorDetail(
   return fallbackDetail(status);
 }
 
-async function responseBody(response: Response): Promise<unknown> {
-  if (response.status === 204) return undefined;
+async function responseBody(
+  response: Response,
+): Promise<{ body: unknown; valid: boolean }> {
+  if (response.status === 204) return { body: undefined, valid: true };
   const text = await response.text();
-  if (!text) return undefined;
+  if (!text) return { body: undefined, valid: false };
   try {
-    return JSON.parse(text) as unknown;
+    return { body: JSON.parse(text) as unknown, valid: true };
   } catch {
-    return undefined;
+    return { body: undefined, valid: false };
   }
 }
 
 export function createApiClient(baseUrl = ""): SuseoroApi {
+  const logicalCommands = new Map<
+    string,
+    { fingerprint: string; commandKey: string; active: number }
+  >();
+  const fileDigests = new WeakMap<File, Promise<string>>();
+
+  async function fileDigest(file: File): Promise<string> {
+    const existing = fileDigests.get(file);
+    if (existing) return await existing;
+    const pending = file.arrayBuffer().then(async (bytes) => {
+      const digest = await crypto.subtle.digest("SHA-256", bytes);
+      return Array.from(new Uint8Array(digest), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
+    });
+    fileDigests.set(file, pending);
+    return await pending;
+  }
+
   async function request<T>(
     path: string,
     options: RequestOptions = {},
@@ -171,12 +226,35 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
     if (options.mutation && navigator.onLine === false) {
       throw new OfflineMutationError();
     }
+    let logicalCommand:
+      | { scope: string; fingerprint: string; commandKey: string }
+      | undefined;
+    if (
+      options.mutation &&
+      !options.command?.commandKey &&
+      options.logicalAction
+    ) {
+      const fingerprint = await payloadFingerprint(options.logicalPayload);
+      const current = logicalCommands.get(options.logicalAction);
+      const commandKey =
+        current?.fingerprint === fingerprint ? current.commandKey : commandId();
+      const active = current?.commandKey === commandKey ? current.active + 1 : 1;
+      logicalCommands.set(options.logicalAction, { fingerprint, commandKey, active });
+      logicalCommand = {
+        scope: options.logicalAction,
+        fingerprint,
+        commandKey,
+      };
+    }
     const headers = new Headers({ Accept: "application/json" });
     if (options.form === undefined && options.body !== undefined) {
       headers.set("Content-Type", "application/json");
     }
     if (options.mutation) {
-      headers.set("Idempotency-Key", options.command?.commandKey ?? commandId());
+      headers.set(
+        "Idempotency-Key",
+        options.command?.commandKey ?? logicalCommand?.commandKey ?? commandId(),
+      );
       headers.set("X-Request-ID", options.command?.requestId ?? commandId());
     }
     if (options.csrf) {
@@ -186,18 +264,50 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
     if (options.version !== undefined) {
       headers.set("If-Match", quoteVersion(options.version));
     }
-    const response = await fetch(`${baseUrl}${path}`, {
-      method,
-      credentials: "include",
-      headers,
-      body:
-        options.form ??
-        (options.body === undefined ? undefined : JSON.stringify(options.body)),
-    });
-    const body = await responseBody(response);
-    if (!response.ok) {
-      throw new ApiClientError(response.status, errorDetail(response.status, body));
+    const settleLogicalCommand = (conclusive: boolean) => {
+      if (!logicalCommand) return;
+      const current = logicalCommands.get(logicalCommand.scope);
+      if (current?.commandKey !== logicalCommand.commandKey) return;
+      current.active = Math.max(0, current.active - 1);
+      if (conclusive && current.active === 0) {
+        logicalCommands.delete(logicalCommand.scope);
+      }
+    };
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}${path}`, {
+        method,
+        credentials: "include",
+        headers,
+        body:
+          options.form ??
+          (options.body === undefined ? undefined : JSON.stringify(options.body)),
+      });
+    } catch (error) {
+      settleLogicalCommand(false);
+      throw error;
     }
+    const parsed = await responseBody(response);
+    const body = parsed.body;
+    if (!response.ok) {
+      const failure = new ApiClientError(
+        response.status,
+        errorDetail(response.status, body),
+      );
+      const retryable =
+        response.status >= 500 ||
+        (response.status === 409 &&
+          failure.detail.code === "IDEMPOTENCY_REQUEST_IN_PROGRESS");
+      settleLogicalCommand(!retryable);
+      throw failure;
+    }
+    if (!parsed.valid) {
+      settleLogicalCommand(false);
+      throw new Error(
+        "서버 응답을 확인할 수 없습니다. 같은 요청으로 다시 시도해 주세요.",
+      );
+    }
+    settleLogicalCommand(true);
     return { data: body as T, etag: response.headers.get("ETag") };
   }
 
@@ -219,6 +329,8 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
           method: "POST",
           body: input,
           mutation: true,
+          logicalAction: "auth:login",
+          logicalPayload: input,
         })
       ).data,
     logout: async () => {
@@ -226,6 +338,8 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
         method: "POST",
         mutation: true,
         csrf: true,
+        logicalAction: "auth:logout",
+        logicalPayload: {},
       });
     },
     listWorkspaces: async () =>
@@ -252,10 +366,32 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
       if (input.requestedThroughLocalDate) {
         form.set("requested_through_local_date", input.requestedThroughLocalDate);
       }
+      const files = await Promise.all(
+        input.files.map(async (file) => ({
+          filename: file.name,
+          content_type: file.type,
+          size_bytes: file.size,
+          sha256: await fileDigest(file),
+        })),
+      );
       return (
         await request<Schemas["UploadResponse"]>(
           `/api/v2/workspaces/${workspaceId}/sources`,
-          { method: "POST", form, mutation: true, csrf: true },
+          {
+            method: "POST",
+            form,
+            mutation: true,
+            csrf: true,
+            logicalAction: `sources:upload:${workspaceId}`,
+            logicalPayload: {
+              files,
+              role: input.role,
+              vendor_scope: input.vendorScope ?? "*",
+              requested_start_local_date: input.requestedStartLocalDate ?? null,
+              requested_through_local_date:
+                input.requestedThroughLocalDate ?? null,
+            },
+          },
         )
       ).data;
     },
@@ -265,14 +401,39 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
       (
         await request<Schemas["JobCommandResponse"]>(
           `/api/v2/jobs/${jobId}/retry`,
-          { method: "POST", mutation: true, csrf: true },
+          {
+            method: "POST",
+            mutation: true,
+            csrf: true,
+            logicalAction: `jobs:retry:${jobId}`,
+            logicalPayload: { job_id: jobId },
+          },
         )
       ).data,
     cancelJob: async (jobId) =>
       (
         await request<Schemas["JobCommandResponse"]>(
           `/api/v2/jobs/${jobId}/cancel`,
-          { method: "POST", mutation: true, csrf: true },
+          {
+            method: "POST",
+            mutation: true,
+            csrf: true,
+            logicalAction: `jobs:cancel:${jobId}`,
+            logicalPayload: { job_id: jobId },
+          },
+        )
+      ).data,
+    parseSource: async (sourceId) =>
+      (
+        await request<Schemas["QueuedJobResponse"]>(
+          `/api/v2/sources/${sourceId}/parse`,
+          {
+            method: "POST",
+            mutation: true,
+            csrf: true,
+            logicalAction: `sources:parse:${sourceId}`,
+            logicalPayload: { source_id: sourceId },
+          },
         )
       ).data,
     getSource: async (sourceId) =>
@@ -285,6 +446,8 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
           version,
           mutation: true,
           csrf: true,
+          logicalAction: `sources:mapping:${sourceId}`,
+          logicalPayload: { ...input, row_version: version },
         }),
       ),
     createComparisonJob: async (workspaceId, sourceDocumentIds, version) =>
@@ -297,17 +460,34 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             version,
             mutation: true,
             csrf: true,
+            logicalAction: `workspaces:compare:${workspaceId}`,
+            logicalPayload: {
+              source_document_ids: sourceDocumentIds,
+              row_version: version,
+            },
           },
         )
       ).data,
     listCandidates: async (workspaceId, filters) => {
-      const query = new URLSearchParams({ outcome: filters.outcome, limit: "100" });
+      const query = new URLSearchParams({
+        outcome: filters.outcome,
+        limit: String(filters.limit ?? 100),
+      });
       if (filters.search) query.set("search", filters.search);
+      if (filters.cursor) query.set("cursor", filters.cursor);
       return (
         await request<Schemas["CandidatePage"]>(
           `/api/v2/workspaces/${workspaceId}/candidates?${query.toString()}`,
         )
       ).data;
+    },
+    getCandidate: async (candidateId, workspaceId) => {
+      const query = new URLSearchParams({ workspace_id: workspaceId });
+      return versioned(
+        await request<Candidate>(
+          `/api/v2/candidates/${candidateId}?${query.toString()}`,
+        ),
+      );
     },
     lockCandidate: async (candidateId, workspaceId) =>
       (
@@ -318,6 +498,8 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             body: { workspace_id: workspaceId },
             mutation: true,
             csrf: true,
+            logicalAction: `candidates:lock:${candidateId}`,
+            logicalPayload: { candidate_id: candidateId, workspace_id: workspaceId },
           },
         )
       ).data,
@@ -332,6 +514,8 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             mutation: true,
             csrf: true,
             command,
+            logicalAction: `candidates:update:${candidateId}`,
+            logicalPayload: { ...input, row_version: version },
           },
         ),
       ),
@@ -345,6 +529,8 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             version,
             mutation: true,
             csrf: true,
+            logicalAction: `workspaces:approval:${workspaceId}`,
+            logicalPayload: { ...input, row_version: version },
           },
         )
       ).data,

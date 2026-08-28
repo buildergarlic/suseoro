@@ -7,6 +7,7 @@ import sqlite3
 import uuid
 from datetime import date
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from fastapi import (
@@ -20,6 +21,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from suseoro.api.common import decode_cursor, page
@@ -70,6 +72,9 @@ from suseoro.services.upload_idempotency import (
     begin_upload_mutation,
     cleanup_and_release_upload_claim,
     complete_upload_claim,
+    reserve_upload_idempotency_key,
+    upload_scope_replay_allowance,
+    validate_existing_upload_idempotency_key,
 )
 
 router = APIRouter(prefix="/api/v2", tags=["sources"])
@@ -278,7 +283,17 @@ def upload_sources(
     if not _workspace_exists(connection, user.school_id, workspace_id):
         raise domain_not_found("WORKSPACE_NOT_FOUND")
     settings = request.app.state.settings
-    if len(files) > settings.upload_max_files:
+    route = f"POST /api/v2/workspaces/{workspace_id}/sources"
+    replay_allowance = upload_scope_replay_allowance(
+        settings.database_path,
+        school_id=user.school_id,
+        actor_id=user.id,
+        route=route,
+        key=idempotency_key,
+    )
+    filenames = [upload.filename or "unnamed" for upload in files]
+    replay_shape = replay_allowance is not None and replay_allowance.matches(filenames)
+    if len(files) > settings.upload_max_files and not replay_shape:
         raise HTTPException(
             status_code=413, detail={"code": "UPLOAD_BATCH_LIMIT_EXCEEDED"}
         )
@@ -305,8 +320,14 @@ def upload_sources(
             )
     elif requested_start_local_date or requested_through_local_date:
         raise HTTPException(status_code=422, detail={"code": "INVALID_DELTA_WINDOW"})
+    replay_max_batch_bytes = (
+        max(settings.upload_max_batch_bytes, replay_allowance.max_batch_bytes)
+        if replay_shape and replay_allowance is not None
+        else settings.upload_max_batch_bytes
+    )
     store = ImmutableFileStore(
-        settings.sources_dir, max_bytes=settings.upload_max_file_bytes
+        settings.sources_dir,
+        max_bytes=settings.upload_max_file_bytes,
     )
     now = format_utc(utc_now())
     prepared: list[dict[str, Any]] = []
@@ -315,16 +336,16 @@ def upload_sources(
     newly_published: list[Path] = []
     aggregate_bytes = 0
     upload_lease: UploadClaimLease | None = None
+    claim_deadline: float | None = None
 
     def counted_chunks(upload: UploadFile):
         nonlocal aggregate_bytes
         while True:
-            remaining = settings.upload_max_batch_bytes - aggregate_bytes
-            chunk = upload.file.read(min(64 * 1024, max(1, remaining + 1)))
+            chunk = upload.file.read(64 * 1024)
             if not chunk:
                 return
             aggregate_bytes += len(chunk)
-            if aggregate_bytes > settings.upload_max_batch_bytes:
+            if aggregate_bytes > replay_max_batch_bytes:
                 raise HTTPException(
                     status_code=413,
                     detail={"code": "UPLOAD_BATCH_LIMIT_EXCEEDED"},
@@ -332,9 +353,16 @@ def upload_sources(
             yield chunk
 
     try:
-        for upload in files:
+        for upload_index, upload in enumerate(files):
             filename = upload.filename or "unnamed"
             content_type = upload.content_type
+            store.max_bytes = (
+                replay_allowance.stage_limit(
+                    upload_index, settings.upload_max_file_bytes
+                )
+                if replay_shape and replay_allowance is not None
+                else settings.upload_max_file_bytes
+            )
             try:
                 staged = store.stage(counted_chunks(upload), filename=filename)
                 staged_files.append(staged)
@@ -372,7 +400,6 @@ def upload_sources(
             finally:
                 upload.file.close()
 
-        route = f"POST /api/v2/workspaces/{workspace_id}/sources"
         request_body = {
             "workspace_id": workspace_id,
             "role": role.value,
@@ -385,6 +412,18 @@ def upload_sources(
             ),
             "files": client_files,
         }
+        validate_existing_upload_idempotency_key(
+            connection,
+            school_id=user.school_id,
+            actor_id=user.id,
+            route=route,
+            key=idempotency_key,
+            request_body=request_body,
+            current_file_errors=[
+                item["error"]["code"] if item["error"] else None for item in prepared
+            ],
+        )
+        claim_deadline = monotonic() + UPLOAD_CLAIM_WAIT_DEADLINE_SECONDS
         claim = acquire_upload_claim(
             settings.database_path,
             school_id=user.school_id,
@@ -396,21 +435,26 @@ def upload_sources(
             lease_seconds=UPLOAD_CLAIM_LEASE_SECONDS,
         )
         if not isinstance(claim, UploadClaimLease):
+            if claim.status >= 400:
+                return JSONResponse(status_code=claim.status, content=claim.body)
             response.status_code = claim.status
             return claim.body
         upload_lease = claim
         begin_upload_mutation(
             connection,
             upload_lease,
-            wait_deadline_seconds=UPLOAD_CLAIM_WAIT_DEADLINE_SECONDS,
+            wait_deadline_seconds=max(0.0, claim_deadline - monotonic()),
         )
-        legacy_replay = reserve_idempotency_key(
+        legacy_replay = reserve_upload_idempotency_key(
             connection,
             school_id=user.school_id,
             actor_id=user.id,
             route=route,
             key=idempotency_key,
             request_body=request_body,
+            current_file_errors=[
+                item["error"]["code"] if item["error"] else None for item in prepared
+            ],
         )
         if legacy_replay is not None:
             complete_upload_claim(
@@ -421,6 +465,10 @@ def upload_sources(
             )
             connection.commit()
             upload_lease = None
+            if legacy_replay.status >= 400:
+                return JSONResponse(
+                    status_code=legacy_replay.status, content=legacy_replay.body
+                )
             response.status_code = legacy_replay.status
             return legacy_replay.body
 
@@ -574,7 +622,14 @@ def upload_sources(
         connection.rollback()
         if upload_lease is not None:
             cleanup_and_release_upload_claim(
-                settings.database_path, upload_lease, newly_published
+                settings.database_path,
+                upload_lease,
+                newly_published,
+                wait_deadline_seconds=(
+                    max(0.0, claim_deadline - monotonic())
+                    if claim_deadline is not None
+                    else 0.0
+                ),
             )
         raise
     finally:

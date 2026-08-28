@@ -25,6 +25,7 @@ _BUSY_TIMEOUT_MILLISECONDS = 25
 _INITIAL_BACKOFF_SECONDS = 0.01
 _MAX_BACKOFF_SECONDS = 0.1
 _RETRY_HEADERS = {"Retry-After": "1"}
+_UNKNOWN_REJECTED_REPLAY_MAX_BYTES = 100 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,24 @@ class UploadClaimLease:
     request_fingerprint: str
     generation: int
     owner: str
+
+
+@dataclass(frozen=True)
+class UploadReplayAllowance:
+    """Bounded stream limits for probing one known terminal upload shape."""
+
+    filenames: tuple[str, ...]
+    file_max_bytes: tuple[int, ...]
+    preserve_too_large: tuple[bool, ...]
+    max_batch_bytes: int
+
+    def matches(self, filenames: list[str]) -> bool:
+        return tuple(filenames) == self.filenames
+
+    def stage_limit(self, index: int, current_limit: int) -> int:
+        if self.preserve_too_large[index]:
+            return current_limit
+        return max(current_limit, self.file_max_bytes[index])
 
 
 def _is_locked(error: sqlite3.OperationalError) -> bool:
@@ -84,6 +103,255 @@ def _retry_or_raise(
         )
     time.sleep(min(delay, remaining))
     return min(delay * 2, _MAX_BACKOFF_SECONDS)
+
+
+def upload_scope_replay_allowance(
+    database_path: Path,
+    *,
+    school_id: str,
+    actor_id: str,
+    route: str,
+    key: str,
+) -> UploadReplayAllowance | None:
+    """Return only the historical shape and byte bounds needed for exact replay."""
+    connection = connect(database_path)
+    try:
+        claim = connection.execute(
+            """
+            SELECT state, response_body, request_metadata_json
+            FROM upload_idempotency_claims
+            WHERE school_id = ? AND actor_id = ? AND route = ? AND key = ?
+            """,
+            (school_id, actor_id, route, key),
+        ).fetchone()
+        response_body: Any = None
+        metadata: Any = None
+        if claim is not None and claim["state"] == "COMPLETED":
+            response_body = json.loads(claim["response_body"])
+            if claim["request_metadata_json"]:
+                metadata = json.loads(claim["request_metadata_json"])
+        else:
+            legacy = connection.execute(
+                """
+                SELECT response_status, response_body FROM idempotency_keys
+                WHERE school_id = ? AND actor_id = ? AND route = ? AND key = ?
+                """,
+                (school_id, actor_id, route, key),
+            ).fetchone()
+            if (
+                legacy is None
+                or legacy["response_status"] is None
+                or not legacy["response_body"]
+            ):
+                return None
+            response_body = json.loads(legacy["response_body"])
+
+        metadata_files = metadata.get("files") if isinstance(metadata, dict) else None
+        if isinstance(metadata_files, list) and metadata_files:
+            filenames: list[str] = []
+            sizes: list[int] = []
+            for item in metadata_files:
+                if not isinstance(item, dict) or not isinstance(
+                    item.get("filename"), str
+                ):
+                    return None
+                size = item.get("size_bytes")
+                if not isinstance(size, int) or size < 0:
+                    return None
+                filenames.append(item["filename"])
+                sizes.append(size)
+            return UploadReplayAllowance(
+                filenames=tuple(filenames),
+                file_max_bytes=tuple(sizes),
+                preserve_too_large=tuple(False for _ in sizes),
+                max_batch_bytes=sum(sizes),
+            )
+
+        stored_items = (
+            response_body.get("items") if isinstance(response_body, dict) else None
+        )
+        if not isinstance(stored_items, list) or not stored_items:
+            return None
+        filenames = []
+        sizes = []
+        preserve_too_large = []
+        for item in stored_items:
+            if not isinstance(item, dict) or not isinstance(item.get("filename"), str):
+                return None
+            filenames.append(item["filename"])
+            source_id = item.get("source_id")
+            size_row = None
+            if isinstance(source_id, str):
+                size_row = connection.execute(
+                    """
+                    SELECT file.size_bytes
+                    FROM source_documents AS source
+                    JOIN source_files AS file ON file.id = source.source_file_id
+                    WHERE source.id = ? AND source.school_id = ?
+                    """,
+                    (source_id, school_id),
+                ).fetchone()
+            sizes.append(
+                int(size_row["size_bytes"])
+                if size_row is not None
+                else _UNKNOWN_REJECTED_REPLAY_MAX_BYTES
+            )
+            error = item.get("error")
+            preserve_too_large.append(
+                isinstance(error, dict) and error.get("code") == "FILE_TOO_LARGE"
+            )
+        return UploadReplayAllowance(
+            filenames=tuple(filenames),
+            file_max_bytes=tuple(sizes),
+            preserve_too_large=tuple(preserve_too_large),
+            max_batch_bytes=sum(sizes),
+        )
+    finally:
+        connection.close()
+
+
+def _existing_upload_idempotency_response(
+    connection: sqlite3.Connection,
+    *,
+    school_id: str,
+    actor_id: str,
+    route: str,
+    key: str,
+    request_body: dict[str, Any],
+    current_file_errors: list[str | None],
+) -> StoredResponse | None:
+    canonical_digest = request_hash(request_body)
+    row = connection.execute(
+        """
+        SELECT request_hash, response_status, response_body
+        FROM idempotency_keys
+        WHERE school_id = ? AND actor_id = ? AND route = ? AND key = ?
+        """,
+        (school_id, actor_id, route, key),
+    ).fetchone()
+    if row is None:
+        return None
+
+    stored_body = json.loads(row["response_body"]) if row["response_body"] else None
+    compatible_digests = {canonical_digest}
+    client_files = request_body.get("files")
+    stored_items = stored_body.get("items") if isinstance(stored_body, dict) else None
+    if (
+        isinstance(client_files, list)
+        and isinstance(stored_items, list)
+        and len(client_files) == len(stored_items)
+        and len(client_files) == len(current_file_errors)
+    ):
+        legacy_files: list[dict[str, Any]] = []
+        compatible = True
+        for client_file, stored_item, current_error in zip(
+            client_files,
+            stored_items,
+            current_file_errors,
+            strict=True,
+        ):
+            if (
+                not isinstance(client_file, dict)
+                or not isinstance(stored_item, dict)
+                or client_file.get("filename") != stored_item.get("filename")
+            ):
+                compatible = False
+                break
+            error = stored_item.get("error")
+            error_code = error.get("code") if isinstance(error, dict) else None
+            if error_code != current_error:
+                compatible = False
+                break
+            legacy_files.append(
+                {"filename": client_file["filename"], "error": error_code}
+                if error_code
+                else {
+                    "filename": client_file["filename"],
+                    "sha256": client_file["sha256"],
+                }
+            )
+        if compatible:
+            compatible_digests.add(
+                request_hash({**request_body, "files": legacy_files})
+            )
+
+    if row["request_hash"] not in compatible_digests:
+        raise IdempotencyConflict()
+    if row["response_status"] is None or stored_body is None:
+        raise IdempotencyConflict("IDEMPOTENCY_REQUEST_IN_PROGRESS")
+    return StoredResponse(status=int(row["response_status"]), body=stored_body)
+
+
+def validate_existing_upload_idempotency_key(
+    connection: sqlite3.Connection,
+    *,
+    school_id: str,
+    actor_id: str,
+    route: str,
+    key: str,
+    request_body: dict[str, Any],
+    current_file_errors: list[str | None],
+) -> StoredResponse | None:
+    """Validate a pre-existing ledger row before a canonical claim can be bound."""
+    return _existing_upload_idempotency_response(
+        connection,
+        school_id=school_id,
+        actor_id=actor_id,
+        route=route,
+        key=key,
+        request_body=request_body,
+        current_file_errors=current_file_errors,
+    )
+
+
+def reserve_upload_idempotency_key(
+    connection: sqlite3.Connection,
+    *,
+    school_id: str,
+    actor_id: str,
+    route: str,
+    key: str,
+    request_body: dict[str, Any],
+    current_file_errors: list[str | None],
+) -> StoredResponse | None:
+    """Reserve the legacy ledger and safely bridge pre-0006b upload fingerprints.
+
+    Pre-0006b accepted entries contained only filename/digest, while rejected
+    entries contained only filename/server error code.  Reconstruct that exact
+    representation, and require the policy-exempt current classification to match
+    the historical response before accepting the compatibility digest.
+    """
+    canonical_digest = request_hash(request_body)
+    inserted = connection.execute(
+        """
+        INSERT OR IGNORE INTO idempotency_keys (
+            id, school_id, actor_id, route, key, request_hash, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(uuid.uuid4()),
+            school_id,
+            actor_id,
+            route,
+            key,
+            canonical_digest,
+            format_utc(utc_now()),
+        ),
+    )
+    if inserted.rowcount == 1:
+        return None
+    replay = _existing_upload_idempotency_response(
+        connection,
+        school_id=school_id,
+        actor_id=actor_id,
+        route=route,
+        key=key,
+        request_body=request_body,
+        current_file_errors=current_file_errors,
+    )
+    if replay is None:
+        raise IdempotencyConflict("IDEMPOTENCY_REQUEST_IN_PROGRESS")
+    return replay
 
 
 def acquire_upload_claim(
@@ -180,8 +448,8 @@ def acquire_upload_claim(
                     INSERT INTO upload_idempotency_claims (
                         id, school_id, actor_id, route, key, request_fingerprint,
                         generation, lease_owner, lease_expires_at, state,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'IN_PROGRESS', ?, ?)
+                        created_at, updated_at, request_metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'IN_PROGRESS', ?, ?, ?)
                     """,
                     (
                         claim_id,
@@ -194,6 +462,23 @@ def acquire_upload_claim(
                         format_utc(now + timedelta(seconds=lease_seconds)),
                         format_utc(now),
                         format_utc(now),
+                        json.dumps(
+                            {
+                                "files": [
+                                    {
+                                        "filename": item.get("filename"),
+                                        "size_bytes": item.get("size_bytes"),
+                                    }
+                                    for item in request_body.get("files", [])
+                                    if isinstance(item, dict)
+                                ]
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        if isinstance(request_body, dict)
+                        else None,
                     ),
                 )
                 connection.commit()
@@ -295,45 +580,86 @@ def cleanup_and_release_upload_claim(
     database_path: Path,
     lease: UploadClaimLease,
     paths: list[Path],
-) -> None:
-    """Fence cleanup with the claim generation, then release only that generation."""
-    connection = connect(database_path)
+    *,
+    wait_deadline_seconds: float = 0.0,
+) -> bool:
+    """Best-effort fenced cleanup that never outlives its bounded deadline."""
+    deadline = time.monotonic() + max(0.0, wait_deadline_seconds)
+    delay = _INITIAL_BACKOFF_SECONDS
+    connection: sqlite3.Connection | None = None
     try:
-        connection.execute("BEGIN IMMEDIATE")
-        current = connection.execute(
-            """
-            SELECT generation, lease_owner, state
-            FROM upload_idempotency_claims WHERE id = ?
-            """,
-            (lease.id,),
-        ).fetchone()
-        if (
-            current is None
-            or current["state"] != "IN_PROGRESS"
-            or int(current["generation"]) != lease.generation
-            or current["lease_owner"] != lease.owner
-        ):
-            connection.rollback()
-            return
-        for path in paths:
-            referenced = connection.execute(
-                "SELECT 1 FROM source_files WHERE storage_path = ?", (str(path),)
-            ).fetchone()
-            if referenced is None:
-                path.unlink(missing_ok=True)
-        connection.execute(
-            """
-            UPDATE upload_idempotency_claims
-            SET lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
-            WHERE id = ? AND generation = ? AND lease_owner = ?
-              AND state = 'IN_PROGRESS'
-            """,
-            (format_utc(utc_now()), lease.id, lease.generation, lease.owner),
-        )
-        connection.commit()
-    except BaseException:
-        if connection.in_transaction:
-            connection.rollback()
-        raise
+        while True:
+            try:
+                connection = sqlite3.connect(
+                    Path(database_path).resolve(),
+                    timeout=0,
+                    check_same_thread=False,
+                )
+                connection.row_factory = sqlite3.Row
+                connection.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MILLISECONDS}")
+                connection.execute("PRAGMA foreign_keys=ON")
+                connection.execute("BEGIN IMMEDIATE")
+                if time.monotonic() >= deadline:
+                    connection.rollback()
+                    return False
+                current = connection.execute(
+                    """
+                    SELECT generation, lease_owner, state
+                    FROM upload_idempotency_claims WHERE id = ?
+                    """,
+                    (lease.id,),
+                ).fetchone()
+                if (
+                    current is None
+                    or current["state"] != "IN_PROGRESS"
+                    or int(current["generation"]) != lease.generation
+                    or current["lease_owner"] != lease.owner
+                ):
+                    connection.rollback()
+                    return True
+                for path in paths:
+                    if time.monotonic() >= deadline:
+                        connection.rollback()
+                        return False
+                    referenced = connection.execute(
+                        "SELECT 1 FROM source_files WHERE storage_path = ?",
+                        (str(path),),
+                    ).fetchone()
+                    if referenced is None:
+                        path.unlink(missing_ok=True)
+                if time.monotonic() >= deadline:
+                    connection.rollback()
+                    return False
+                connection.execute(
+                    """
+                    UPDATE upload_idempotency_claims
+                    SET lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+                    WHERE id = ? AND generation = ? AND lease_owner = ?
+                      AND state = 'IN_PROGRESS'
+                    """,
+                    (format_utc(utc_now()), lease.id, lease.generation, lease.owner),
+                )
+                if time.monotonic() >= deadline:
+                    connection.rollback()
+                    return False
+                connection.commit()
+                return True
+            except sqlite3.OperationalError as error:
+                if connection is not None and connection.in_transaction:
+                    connection.rollback()
+                if not _is_locked(error) or time.monotonic() >= deadline:
+                    return False
+                remaining = deadline - time.monotonic()
+                time.sleep(min(delay, max(0.0, remaining)))
+                delay = min(delay * 2, _MAX_BACKOFF_SECONDS)
+            except Exception:  # noqa: BLE001 -- cleanup must never mask the original request failure.
+                if connection is not None and connection.in_transaction:
+                    connection.rollback()
+                return False
+            finally:
+                if connection is not None:
+                    connection.close()
+                    connection = None
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()

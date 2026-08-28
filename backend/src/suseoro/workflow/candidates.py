@@ -8,7 +8,11 @@ from typing import Any
 
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.audit import record_audit_event
-from suseoro.services.concurrency import VersionConflict, update_with_version
+from suseoro.services.concurrency import (
+    VersionConflict,
+    require_edit_lock,
+    update_with_version,
+)
 from suseoro.workflow._common import (
     WorkflowDomainError,
     idempotent_mutation,
@@ -103,6 +107,13 @@ class CandidateService:
             if not reason.strip():
                 raise CandidateWorkflowError("MODIFICATION_REASON_REQUIRED")
             before = self._candidate(school_id, workspace_id, candidate_id)
+            require_edit_lock(
+                self.connection,
+                school_id=school_id,
+                entity_type="candidate_decision",
+                entity_id=candidate_id,
+                actor_id=actor_id,
+            )
             workspace = self.connection.execute(
                 "SELECT status FROM acquisition_workspaces WHERE id = ? AND school_id = ?",
                 (workspace_id, school_id),
@@ -222,6 +233,13 @@ class CandidateService:
                         }
                     )
                     continue
+                require_edit_lock(
+                    self.connection,
+                    school_id=school_id,
+                    entity_type="candidate_decision",
+                    entity_id=candidate_id,
+                    actor_id=actor_id,
+                )
                 try:
                     reason = str(item.get("reason") or "").strip()
                     if not reason:

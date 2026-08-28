@@ -254,6 +254,79 @@ def _source_and_candidates(settings: Settings) -> tuple[str, list[str]]:
     return source_document_id, candidate_ids
 
 
+def _extend_candidate_fixture(
+    settings: Settings, source_document_id: str, *, through: int
+) -> None:
+    with connect(settings.database_path) as connection:
+        for index in range(4, through):
+            source_row_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"source-row-{index}"))
+            recommendation_id = str(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"recommendation-{index}")
+            )
+            candidate_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"candidate-{index}"))
+            outcome = (
+                "CANDIDATE"
+                if index < 130
+                else "NEEDS_REVIEW"
+                if index < 140
+                else "EXCLUDED"
+            )
+            fields = json.dumps(
+                {"title": f"책 {index}", "author": "저자", "isbn": None},
+                ensure_ascii=False,
+            )
+            connection.execute(
+                """
+                INSERT INTO source_rows (
+                    id, source_document_id, source_row, status, raw_json,
+                    fields_json, warnings_json, created_at
+                ) VALUES (?, ?, ?, 'SUCCESS', ?, ?, '[]', ?)
+                """,
+                (source_row_id, source_document_id, index + 1, fields, fields, NOW),
+            )
+            connection.execute(
+                """
+                INSERT INTO recommendations (
+                    id, school_id, workspace_id, source_document_id, source_row_id,
+                    original_title, original_authors_json, original_json,
+                    title_key, subtitle_key, author_key, publisher_key,
+                    volume_key, edition_key, series_key, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, '["저자"]', ?, ?, '', '저자', '', '', '', '', ?)
+                """,
+                (
+                    recommendation_id,
+                    SCHOOL_ID,
+                    WORKSPACE_ID,
+                    source_document_id,
+                    source_row_id,
+                    f"책 {index}",
+                    fields,
+                    f"책{index}",
+                    NOW,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO candidate_decisions (
+                    id, school_id, workspace_id, recommendation_id, outcome,
+                    reason, quantity, unit_price, modified_by_user_id,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'fixture', 2, 5000, ?, ?, ?)
+                """,
+                (
+                    candidate_id,
+                    SCHOOL_ID,
+                    WORKSPACE_ID,
+                    recommendation_id,
+                    outcome,
+                    OPERATOR_ID,
+                    NOW,
+                    NOW,
+                ),
+            )
+        connection.commit()
+
+
 def _catalog_source_document(
     settings: Settings,
     *,
@@ -623,6 +696,134 @@ def test_workspace_and_candidate_lists_use_stable_filtered_cursor_pages(
     assert "items" in candidate_second.json()
 
 
+def test_candidate_pages_report_authoritative_totals_and_reach_beyond_one_hundred(
+    data_dir: Path,
+) -> None:
+    client, settings, _ = _client(data_dir)
+    source_id, _ = _source_and_candidates(settings)
+    _extend_candidate_fixture(settings, source_id, through=150)
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            UPDATE recommendations
+            SET original_authors_json = '["마법사 저자"]',
+                isbn13 = '9788937464041'
+            WHERE workspace_id = ? AND original_title = '책 42'
+            """,
+            (WORKSPACE_ID,),
+        )
+        connection.commit()
+
+    with client:
+        first = client.get(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/candidates",
+            params={"outcome": "CANDIDATE", "limit": 100},
+        )
+        second = client.get(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/candidates",
+            params={
+                "outcome": "CANDIDATE",
+                "limit": 100,
+                "cursor": first.json()["next_cursor"],
+            },
+        )
+        searched = client.get(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/candidates",
+            params={"outcome": "CANDIDATE", "search": "책 12", "limit": 10},
+        )
+        searched_author = client.get(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/candidates",
+            params={"outcome": "CANDIDATE", "search": "마법사 저자"},
+        )
+        searched_isbn = client.get(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/candidates",
+            params={"outcome": "CANDIDATE", "search": "9788937464041"},
+        )
+        searched_literal_wildcard = client.get(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/candidates",
+            params={"outcome": "CANDIDATE", "search": "%_"},
+        )
+
+    assert first.status_code == second.status_code == searched.status_code == 200
+    assert first.json()["total_count"] == second.json()["total_count"] == 129
+    assert (
+        first.json()["summary"]
+        == second.json()["summary"]
+        == {
+            "total_count": 150,
+            "candidate_count": 129,
+            "needs_review_count": 10,
+            "excluded_count": 11,
+            "unresolved_count": 10,
+            "expected_total_won": 1_290_000,
+        }
+    )
+    ids = [item["id"] for item in first.json()["items"] + second.json()["items"]]
+    assert len(ids) == 129
+    assert len(ids) == len(set(ids))
+    assert first.json()["next_cursor"] is not None
+    assert second.json()["next_cursor"] is None
+    assert searched.json()["total_count"] == 11
+    assert all("책 12" in item["title"] for item in searched.json()["items"])
+    assert searched_author.json()["total_count"] == 1
+    assert searched_author.json()["items"][0]["title"] == "책 42"
+    assert searched_isbn.json()["total_count"] == 1
+    assert searched_isbn.json()["items"][0]["title"] == "책 42"
+    assert searched_literal_wildcard.json()["total_count"] == 0
+
+
+def test_get_candidate_returns_the_authoritative_full_row_etag_and_hides_scope(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    _, candidate_ids = _source_and_candidates(settings)
+    candidate_id = candidate_ids[0]
+    other_workspace = "550e8400-e29b-41d4-a716-446655449999"
+
+    with client:
+        locked = client.post(
+            f"/api/v2/candidates/{candidate_id}/lock",
+            headers=_headers(csrf, "candidate-current-row-lock"),
+            json={"workspace_id": WORKSPACE_ID},
+        )
+        updated = client.patch(
+            f"/api/v2/candidates/{candidate_id}",
+            headers=_headers(csrf, "candidate-current-row", version=1),
+            json={
+                "workspace_id": WORKSPACE_ID,
+                "changes": {"quantity": 4},
+                "reason": "현재 수량",
+            },
+        )
+        current = client.get(
+            f"/api/v2/candidates/{candidate_id}",
+            params={"workspace_id": WORKSPACE_ID},
+        )
+        hidden = client.get(
+            f"/api/v2/candidates/{candidate_id}",
+            params={"workspace_id": other_workspace},
+        )
+
+    assert locked.status_code == updated.status_code == current.status_code == 200
+    assert current.headers["etag"] == '"2"'
+    assert current.json() == {
+        "id": candidate_id,
+        "workspace_id": WORKSPACE_ID,
+        "title": "책 0",
+        "authors": ["저자"],
+        "isbn13": None,
+        "edition": None,
+        "outcome": "CANDIDATE",
+        "reason": "현재 수량",
+        "quantity": 4,
+        "unit_price": 10000,
+        "row_version": 2,
+        "updated_at": current.json()["updated_at"],
+    }
+    assert hidden.status_code == 404
+    assert hidden.json()["detail"]["code"] == "CANDIDATE_NOT_FOUND"
+
+
 def test_candidate_patch_returns_etag_and_structured_412_conflict(
     data_dir: Path,
 ) -> None:
@@ -631,6 +832,11 @@ def test_candidate_patch_returns_etag_and_structured_412_conflict(
     candidate_id = candidate_ids[0]
 
     with client:
+        locked = client.post(
+            f"/api/v2/candidates/{candidate_id}/lock",
+            headers=_headers(csrf, "candidate-update-lock"),
+            json={"workspace_id": WORKSPACE_ID},
+        )
         updated = client.patch(
             f"/api/v2/candidates/{candidate_id}",
             headers=_headers(csrf, "candidate-update", version=1),
@@ -650,7 +856,7 @@ def test_candidate_patch_returns_etag_and_structured_412_conflict(
             },
         )
 
-    assert updated.status_code == 200
+    assert locked.status_code == updated.status_code == 200
     assert updated.json()["quantity"] == 2
     assert updated.headers["etag"] == '"2"'
     assert stale.status_code == 412
@@ -919,6 +1125,426 @@ def test_upload_fingerprint_replays_across_restart_when_server_policy_changes(
     ]
 
 
+def test_completed_upload_claim_replays_before_current_file_count_and_byte_limits(
+    data_dir: Path,
+) -> None:
+    """A terminal logical action is history, so stricter policy cannot rewrite it."""
+    request_files = [
+        ("files", ("first.csv", b"title\nFirst\n", "text/csv")),
+        ("files", ("second.csv", b"title\nSecond\n", "text/csv")),
+    ]
+    client, settings, csrf = _client(data_dir, raise_server_exceptions=False)
+    session_token = client.cookies.get("suseoro_session")
+    with client:
+        first = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "completed-before-current-policy"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=request_files,
+        )
+    before_replay = _upload_durable_state(settings)
+
+    strict_settings = Settings(
+        data_dir=settings.data_dir,
+        database_path=settings.database_path,
+        secure_cookies=False,
+        upload_max_files=1,
+        upload_max_file_bytes=1,
+        upload_max_batch_bytes=1,
+    )
+    restarted = TestClient(
+        create_app(strict_settings),
+        base_url="https://testserver",
+        raise_server_exceptions=False,
+    )
+    restarted.cookies.set("suseoro_session", session_token)
+    restarted.cookies.set("suseoro_csrf", csrf)
+    with restarted:
+        replay = restarted.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "completed-before-current-policy"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=request_files,
+        )
+        assert first.status_code == replay.status_code == 202
+        assert replay.json() == first.json()
+        assert _upload_durable_state(settings) == before_replay
+        new_action = restarted.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "new-action-current-policy"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=request_files,
+        )
+
+    assert new_action.status_code == 413
+    assert new_action.json()["detail"]["code"] == "UPLOAD_BATCH_LIMIT_EXCEEDED"
+    with connect(settings.database_path) as connection:
+        rejected_claim = connection.execute(
+            """
+            SELECT state, response_status FROM upload_idempotency_claims
+            WHERE school_id = ? AND actor_id = ? AND route = ? AND key = ?
+            """,
+            (
+                SCHOOL_ID,
+                OPERATOR_ID,
+                f"POST /api/v2/workspaces/{WORKSPACE_ID}/sources",
+                "new-action-current-policy",
+            ),
+        ).fetchone()
+    assert rejected_claim is None or dict(rejected_claim) == {
+        "state": "COMPLETED",
+        "response_status": 413,
+    }
+    assert not [
+        path
+        for path in settings.sources_dir.joinpath(".staging").glob("*")
+        if path.is_file()
+    ]
+
+
+@pytest.mark.parametrize("partial", [False, True], ids=["accepted", "partial"])
+def test_pre_0006b_completed_upload_rows_bridge_to_canonical_claim_without_collision(
+    data_dir: Path,
+    partial: bool,
+) -> None:
+    """A populated 0006a row must replay, while changed bytes remain a conflict."""
+    from suseoro.services.idempotency import request_hash
+
+    accepted_content = b"title,author\nLegacy,A\n"
+    request_files = [
+        ("files", ("legacy.csv", accepted_content, "text/csv")),
+    ]
+    if partial:
+        request_files.append(
+            ("files", ("legacy.exe", b"MZ-legacy-rejected", "application/octet-stream"))
+        )
+    key = f"pre-0006b-{'partial' if partial else 'accepted'}"
+    client, settings, csrf = _client(data_dir, raise_server_exceptions=False)
+    session_token = client.cookies.get("suseoro_session")
+    with client:
+        first = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=request_files,
+        )
+
+    stored_items = first.json()["items"]
+    legacy_files = []
+    for upload, item in zip(request_files, stored_items, strict=True):
+        _, (filename, content, _content_type) = upload
+        legacy_files.append(
+            {"filename": filename, "error": item["error"]["code"]}
+            if item["error"]
+            else {
+                "filename": filename,
+                "sha256": __import__("hashlib").sha256(content).hexdigest(),
+            }
+        )
+    legacy_body = {
+        "workspace_id": WORKSPACE_ID,
+        "role": "PURCHASE_REQUEST",
+        "vendor_scope": "*",
+        "requested_start_local_date": None,
+        "requested_through_local_date": None,
+        "files": legacy_files,
+    }
+    route = f"POST /api/v2/workspaces/{WORKSPACE_ID}/sources"
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            "DELETE FROM upload_idempotency_claims WHERE key = ?", (key,)
+        )
+        connection.execute(
+            """
+            UPDATE idempotency_keys SET request_hash = ?
+            WHERE school_id = ? AND actor_id = ? AND route = ? AND key = ?
+            """,
+            (request_hash(legacy_body), SCHOOL_ID, OPERATOR_ID, route, key),
+        )
+        connection.commit()
+    before_replay = _upload_durable_state(settings)
+
+    strict_settings = Settings(
+        data_dir=settings.data_dir,
+        database_path=settings.database_path,
+        secure_cookies=False,
+        upload_max_file_bytes=1,
+    )
+    restarted = TestClient(
+        create_app(strict_settings),
+        base_url="https://testserver",
+        raise_server_exceptions=False,
+    )
+    restarted.cookies.set("suseoro_session", session_token)
+    restarted.cookies.set("suseoro_csrf", csrf)
+    changed_files = (
+        [
+            ("files", ("legacy.csv", accepted_content, "text/csv")),
+            (
+                "files",
+                ("legacy.exe", b"title,author\nNow valid,B\n", "text/csv"),
+            ),
+        ]
+        if partial
+        else [("files", ("legacy.csv", b"title,author\nChanged,B\n", "text/csv"))]
+    )
+    with restarted:
+        replay = restarted.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=request_files,
+        )
+        changed = restarted.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=changed_files,
+        )
+
+    assert replay.status_code == first.status_code
+    assert replay.json() == first.json()
+    assert changed.status_code == 409
+    assert changed.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+    assert _upload_durable_state(settings) == before_replay
+
+
+def test_pre_0006b_changed_request_cannot_poison_later_exact_replay(
+    data_dir: Path,
+) -> None:
+    """A mismatched first request must not bind a legacy key to the wrong digest."""
+    from suseoro.services.idempotency import request_hash
+
+    content = b"title,author\nLegacy,A\n"
+    key = "pre-0006b-changed-first"
+    route = f"POST /api/v2/workspaces/{WORKSPACE_ID}/sources"
+    client, settings, csrf = _client(data_dir, raise_server_exceptions=False)
+    session_token = client.cookies.get("suseoro_session")
+    with client:
+        first = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("legacy.csv", content, "text/csv"))],
+        )
+    assert first.status_code == 202
+
+    legacy_body = {
+        "workspace_id": WORKSPACE_ID,
+        "role": "PURCHASE_REQUEST",
+        "vendor_scope": "*",
+        "requested_start_local_date": None,
+        "requested_through_local_date": None,
+        "files": [
+            {
+                "filename": "legacy.csv",
+                "sha256": __import__("hashlib").sha256(content).hexdigest(),
+            }
+        ],
+    }
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            "DELETE FROM upload_idempotency_claims WHERE key = ?", (key,)
+        )
+        connection.execute(
+            """
+            UPDATE idempotency_keys SET request_hash = ?
+            WHERE school_id = ? AND actor_id = ? AND route = ? AND key = ?
+            """,
+            (request_hash(legacy_body), SCHOOL_ID, OPERATOR_ID, route, key),
+        )
+        connection.commit()
+
+    restarted = TestClient(
+        create_app(
+            Settings(
+                data_dir=settings.data_dir,
+                database_path=settings.database_path,
+                secure_cookies=False,
+            )
+        ),
+        base_url="https://testserver",
+        raise_server_exceptions=False,
+    )
+    restarted.cookies.set("suseoro_session", session_token)
+    restarted.cookies.set("suseoro_csrf", csrf)
+    with restarted:
+        changed = restarted.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                (
+                    "files",
+                    ("legacy.csv", b"title,author\nChanged,B\n", "text/csv"),
+                )
+            ],
+        )
+        exact = restarted.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("legacy.csv", content, "text/csv"))],
+        )
+
+    assert changed.status_code == 409
+    assert changed.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+    assert exact.status_code == 202
+    assert exact.json() == first.json()
+
+
+def test_pre_0006b_file_too_large_replay_preserves_rejection_classification(
+    data_dir: Path,
+) -> None:
+    """A compatibility probe must not turn a historical size rejection into acceptance."""
+    from suseoro.services.idempotency import request_hash
+
+    content = b"title\nThis row was too large\n"
+    key = "pre-0006b-file-too-large"
+    route = f"POST /api/v2/workspaces/{WORKSPACE_ID}/sources"
+    client, settings, csrf = _client(
+        data_dir,
+        raise_server_exceptions=False,
+        settings_kwargs={"upload_max_file_bytes": 8},
+    )
+    session_token = client.cookies.get("suseoro_session")
+    with client:
+        first = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("legacy.csv", content, "text/csv"))],
+        )
+    assert first.status_code == 207
+    assert first.json()["items"][0]["error"]["code"] == "FILE_TOO_LARGE"
+
+    legacy_body = {
+        "workspace_id": WORKSPACE_ID,
+        "role": "PURCHASE_REQUEST",
+        "vendor_scope": "*",
+        "requested_start_local_date": None,
+        "requested_through_local_date": None,
+        "files": [{"filename": "legacy.csv", "error": "FILE_TOO_LARGE"}],
+    }
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            "DELETE FROM upload_idempotency_claims WHERE key = ?", (key,)
+        )
+        connection.execute(
+            """
+            UPDATE idempotency_keys SET request_hash = ?
+            WHERE school_id = ? AND actor_id = ? AND route = ? AND key = ?
+            """,
+            (request_hash(legacy_body), SCHOOL_ID, OPERATOR_ID, route, key),
+        )
+        connection.commit()
+
+    restarted = TestClient(
+        create_app(
+            Settings(
+                data_dir=settings.data_dir,
+                database_path=settings.database_path,
+                secure_cookies=False,
+                upload_max_file_bytes=1,
+            )
+        ),
+        base_url="https://testserver",
+        raise_server_exceptions=False,
+    )
+    restarted.cookies.set("suseoro_session", session_token)
+    restarted.cookies.set("suseoro_csrf", csrf)
+    with restarted:
+        replay = restarted.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("legacy.csv", content, "text/csv"))],
+        )
+
+    assert replay.status_code == 207
+    assert replay.json() == first.json()
+
+
+def test_completed_upload_policy_exception_is_bounded_to_historical_shape_and_size(
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed key cannot turn a changed, unbounded body into a replay probe."""
+    from suseoro.ingestion.file_store import ImmutableFileStore
+
+    content = b"title\nOriginal\n"
+    key = "bounded-completed-replay"
+    client, settings, csrf = _client(data_dir, raise_server_exceptions=False)
+    session_token = client.cookies.get("suseoro_session")
+    with client:
+        first = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("original.csv", content, "text/csv"))],
+        )
+    assert first.status_code == 202
+
+    observed_limits: list[int] = []
+    original_stage = ImmutableFileStore.stage
+
+    def recording_stage(self, chunks, *, filename):
+        observed_limits.append(self.max_bytes)
+        return original_stage(self, chunks, filename=filename)
+
+    monkeypatch.setattr(ImmutableFileStore, "stage", recording_stage)
+    strict = TestClient(
+        create_app(
+            Settings(
+                data_dir=settings.data_dir,
+                database_path=settings.database_path,
+                secure_cookies=False,
+                upload_max_files=1,
+                upload_max_file_bytes=1,
+                upload_max_batch_bytes=1,
+            )
+        ),
+        base_url="https://testserver",
+        raise_server_exceptions=False,
+    )
+    strict.cookies.set("suseoro_session", session_token)
+    strict.cookies.set("suseoro_csrf", csrf)
+    with strict:
+        wrong_shape = strict.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                ("files", ("original.csv", content, "text/csv")),
+                ("files", ("extra.csv", b"title\nExtra\n", "text/csv")),
+            ],
+        )
+        exact = strict.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("original.csv", content, "text/csv"))],
+        )
+        oversized = strict.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, key),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                (
+                    "files",
+                    ("original.csv", content + b"X" * 4096, "text/csv"),
+                )
+            ],
+        )
+
+    assert wrong_shape.status_code == 413
+    assert exact.status_code == 202
+    assert exact.json() == first.json()
+    assert oversized.status_code in {409, 413}
+    assert observed_limits
+    assert max(observed_limits) == len(content)
+
+
 def test_concurrent_identical_uploads_commit_once_and_both_return_exact_202(
     data_dir: Path,
 ) -> None:
@@ -1156,6 +1782,71 @@ def test_unrelated_sqlite_writer_returns_bounded_upload_busy_response(
     ]
 
 
+def test_upload_cleanup_is_best_effort_within_the_original_contention_deadline(
+    data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cleanup contention must not hide the bounded, retryable reservation result."""
+    from suseoro.api.routes import sources as sources_module
+    from suseoro.services import upload_idempotency as upload_claims
+
+    client, settings, csrf = _client(data_dir, raise_server_exceptions=False)
+    original_begin = upload_claims.begin_upload_mutation
+    blocker: sqlite3.Connection | None = None
+    claim_was_acquired = Event()
+
+    def block_after_claim(connection, lease, *, wait_deadline_seconds):
+        nonlocal blocker
+        blocker = connect(settings.database_path)
+        blocker.execute("BEGIN IMMEDIATE")
+        blocker.execute(
+            "UPDATE schools SET updated_at = updated_at WHERE id = ?", (SCHOOL_ID,)
+        )
+        claim_was_acquired.set()
+        return original_begin(
+            connection,
+            lease,
+            wait_deadline_seconds=wait_deadline_seconds,
+        )
+
+    monkeypatch.setattr(
+        sources_module, "UPLOAD_CLAIM_WAIT_DEADLINE_SECONDS", 0.2, raising=False
+    )
+    monkeypatch.setattr(sources_module, "begin_upload_mutation", block_after_claim)
+    started = monotonic()
+    try:
+        with client, ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                client.post,
+                f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+                headers=_headers(csrf, "cleanup-deadline-upload"),
+                data={"role": "PURCHASE_REQUEST"},
+                files=[("files", ("cleanup.csv", b"title\nCleanup\n", "text/csv"))],
+            )
+            assert claim_was_acquired.wait(timeout=1)
+            try:
+                busy = future.result(timeout=0.8)
+            except FutureTimeoutError:
+                busy = None
+    finally:
+        if blocker is not None:
+            blocker.rollback()
+            blocker.close()
+    elapsed = monotonic() - started
+    completed = busy or future.result(timeout=10)
+
+    assert busy is not None, "cleanup waited beyond the request contention deadline"
+    assert completed.status_code == 503
+    assert completed.json()["detail"]["code"] == "UPLOAD_RESERVATION_BUSY"
+    assert completed.headers["retry-after"] == "1"
+    assert elapsed < 0.8
+    assert not [
+        path
+        for path in settings.sources_dir.joinpath(".staging").glob("*")
+        if path.is_file()
+    ]
+
+
 def test_adjacent_upload_integrity_conflict_never_exposes_sqlite_identifiers(
     data_dir: Path,
 ) -> None:
@@ -1319,6 +2010,56 @@ def test_uploaded_csv_durable_job_parses_and_persists_rows(data_dir: Path) -> No
     assert json.loads(rows[0]["fields_json"])["title"]["value"] == "A"
 
 
+def test_ingestion_job_api_never_exposes_internal_database_failure_details(
+    data_dir: Path,
+) -> None:
+    client, settings, csrf = _client(data_dir)
+    with client:
+        uploaded = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "private-database-job-error"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[("files", ("private.csv", "제목,저자\nA,B\n", "text/csv"))],
+        )
+    job_id = uploaded.json()["job_id"]
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER fail_private_source_row
+            BEFORE INSERT ON source_rows
+            FOR EACH ROW WHEN NEW.source_row > 0
+            BEGIN
+              SELECT RAISE(ABORT,
+                'private_patron_export_at_C:/secret/library.sqlite3');
+            END
+            """
+        )
+        completed = build_job_runner(connection).run_once()
+        durable_row = connection.execute(
+            """
+            SELECT error_message FROM source_rows
+            WHERE source_document_id = ? AND source_row = 0
+            """,
+            (uploaded.json()["items"][0]["source_id"],),
+        ).fetchone()
+    with client:
+        job = client.get(f"/api/v2/jobs/{job_id}")
+
+    assert completed is not None and completed.status == "FAILED"
+    assert job.status_code == 200
+    assert job.json()["items"][0]["error"] == {
+        "type": "ParserFailure",
+        "code": "PARSER_FAILURE",
+        "message": "파일 내용을 읽지 못했습니다. 다시 읽어 주세요.",
+    }
+    serialized = json.dumps(job.json(), ensure_ascii=False)
+    assert "private_patron" not in serialized
+    assert "library.sqlite3" not in serialized
+    assert (
+        durable_row["error_message"] == "파일 내용을 읽지 못했습니다. 다시 읽어 주세요."
+    )
+
+
 def test_source_mapping_and_parse_replay_idempotently(data_dir: Path) -> None:
     client, settings, csrf = _client(data_dir)
     with client:
@@ -1360,6 +2101,98 @@ def test_source_mapping_and_parse_replay_idempotently(data_dir: Path) -> None:
             ).fetchone()[0]
             == 1
         )
+
+
+def test_low_confidence_mapping_is_typed_durable_and_resumes_the_cached_parse(
+    data_dir: Path,
+) -> None:
+    """The UI must receive server-derived headers/preview and resume one source."""
+    rows = "\n".join(f"책 {index},사람 {index}" for index in range(25))
+    client, settings, csrf = _client(data_dir)
+    with client:
+        uploaded = client.post(
+            f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
+            headers=_headers(csrf, "typed-mapping-upload"),
+            data={"role": "PURCHASE_REQUEST"},
+            files=[
+                (
+                    "files",
+                    ("unknown-columns.csv", f"내부 열,쓴 사람\n{rows}\n", "text/csv"),
+                )
+            ],
+        )
+    source_id = uploaded.json()["items"][0]["source_id"]
+    ingest_job_id = uploaded.json()["job_id"]
+    with connect(settings.database_path) as connection:
+        completed = build_job_runner(connection).run_once()
+        parser_runs_before = connection.execute(
+            "SELECT COUNT(*) FROM parser_runs"
+        ).fetchone()[0]
+    with client:
+        first_read = client.get(f"/api/v2/jobs/{ingest_job_id}")
+        second_read = client.get(f"/api/v2/jobs/{ingest_job_id}")
+
+    assert completed is not None and completed.status == "PARTIAL"
+    assert first_read.status_code == 200
+    assert second_read.json() == first_read.json()
+    item = first_read.json()["items"][0]
+    assert item["status"] == "PARTIAL"
+    assert item["processed_rows"] == 0
+    assert item["error"]["code"] == "MAPPING_REQUIRED"
+    assert item["mapping_required"]["headers"] == ["내부 열", "쓴 사람"]
+    assert item["mapping_required"]["required_fields"] == ["title"]
+    assert item["mapping_required"]["confidence"] == 0.0
+    assert item["mapping_required"]["suggested_mapping"] == {
+        "내부 열": None,
+        "쓴 사람": None,
+    }
+    assert len(item["mapping_required"]["preview_rows"]) == 20
+    assert item["mapping_required"]["preview_rows"][0] == ["책 0", "사람 0"]
+
+    with client:
+        saved = client.patch(
+            f"/api/v2/sources/{source_id}/mapping",
+            headers=_headers(csrf, "typed-mapping-save", version=1),
+            json={
+                "role": "PURCHASE_REQUEST",
+                "mapping": {"내부 열": "title", "쓴 사람": "author"},
+                "remember_template": True,
+                "vendor_scope": "*",
+            },
+        )
+        resumed = client.post(
+            f"/api/v2/sources/{source_id}/parse",
+            headers=_headers(csrf, "typed-mapping-resume"),
+        )
+    with connect(settings.database_path) as connection:
+        reparsed = build_job_runner(connection).run_once()
+        parser_runs_after = connection.execute(
+            "SELECT COUNT(*) FROM parser_runs"
+        ).fetchone()[0]
+        source = connection.execute(
+            "SELECT status FROM source_documents WHERE id = ?", (source_id,)
+        ).fetchone()
+        first_row = connection.execute(
+            """
+            SELECT fields_json FROM source_rows
+            WHERE source_document_id = ? ORDER BY source_row LIMIT 1
+            """,
+            (source_id,),
+        ).fetchone()
+        templates = connection.execute(
+            "SELECT COUNT(*) FROM mapping_templates WHERE school_id = ?", (SCHOOL_ID,)
+        ).fetchone()[0]
+    with client:
+        resumed_job = client.get(f"/api/v2/jobs/{resumed.json()['job_id']}")
+
+    assert saved.status_code == 200
+    assert resumed.status_code == 202
+    assert reparsed is not None and reparsed.status == "SUCCEEDED"
+    assert resumed_job.json()["items"][0]["mapping_required"] is None
+    assert source["status"] == "SUCCESS"
+    assert json.loads(first_row["fields_json"])["title"]["value"] == "책 0"
+    assert parser_runs_before == parser_runs_after == 1
+    assert templates == 1
 
 
 def test_generated_openapi_artifact_matches_the_tested_application(
@@ -1895,12 +2728,17 @@ def test_ingestion_job_exposes_truthful_partial_per_file_results(
     with client:
         job = client.get(f"/api/v2/jobs/{job_id}")
     assert [item["status"] for item in job.json()["items"]] == [
-        "FAILED",
+        "PARTIAL",
         "SUCCESS",
     ]
-    assert all(
-        item["processed_rows"] == item["total_rows"] for item in job.json()["items"]
-    )
+    mapping_item, successful_item = job.json()["items"]
+    assert mapping_item["processed_rows"] == 0
+    assert mapping_item["total_rows"] == 1
+    assert mapping_item["error"]["code"] == "MAPPING_REQUIRED"
+    assert mapping_item["mapping_required"]["headers"] == ["foo", "bar"]
+    assert mapping_item["mapping_required"]["preview_rows"] == [["값", "값"]]
+    assert successful_item["processed_rows"] == successful_item["total_rows"]
+    assert successful_item["mapping_required"] is None
 
 
 def test_partial_compare_is_retryable_and_does_not_advance_workspace(
@@ -1993,6 +2831,7 @@ def test_empty_ingestion_is_failed_with_a_durable_zero_row_item(
             "total_rows": 0,
             "processed_rows": 0,
             "error": {"code": "NO_LOGICAL_ROWS"},
+            "mapping_required": None,
         }
     ]
 
