@@ -386,6 +386,53 @@ def test_marc_rejects_data_field_without_initial_subfield_delimiter_and_continue
     assert result.activation_allowed is False
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(b"\x1f0\x1faBroken", id="delimiter-in-indicator-1"),
+        pytest.param(b"0\x1f\x1faBroken", id="delimiter-in-indicator-2"),
+    ],
+)
+def test_marc_rejects_subfield_delimiter_in_either_indicator_and_continues(
+    tmp_path: Path,
+    value: bytes,
+) -> None:
+    """A subfield delimiter in either indicator slot must not shift field grammar."""
+    marc = _module("suseoro.ingestion.parsers.marc")
+    invalid = _record(
+        [
+            ("001", _control("BAD-INDICATOR")),
+            ("245", value),
+        ]
+    )
+    later = _record(
+        [
+            ("001", _control("AFTER-INDICATOR")),
+            ("245", _data("10", [("a", "정상 제목")])),
+            ("264", _data(" 1", [("b", "정상 출판사")])),
+        ]
+    )
+    target = tmp_path / "delimiter-indicator.mrc"
+    digest = _write(target, invalid + later)
+
+    result = marc.parse_marc(
+        target,
+        role=DocumentRole.INVENTORY,
+        sha256=digest,
+        incremental=False,
+    )
+
+    assert len(result.rows) == 2
+    assert result.rows[0].status == RowStatus.ROW_ERROR
+    assert result.rows[0].error_code == "MARC_FIELD_GRAMMAR_INVALID"
+    assert result.rows[0].raw_values["byte_offset"] == 0
+    assert result.rows[0].provenance.source_file_sha256 == digest
+    assert result.rows[1].fields["source_item_id"].value == "AFTER-INDICATOR"
+    assert result.rows[1].fields["title"].value == "정상 제목"
+    assert result.rows[1].fields["publisher"].value == "정상 출판사"
+    assert result.activation_allowed is False
+
+
 def test_untrustworthy_marc_length_fails_activation_with_positioned_error(
     tmp_path: Path,
 ) -> None:

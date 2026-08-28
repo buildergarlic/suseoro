@@ -60,6 +60,8 @@ def _validate_data_field(tag: str, value: bytes) -> None:
         raise MarcFieldGrammarError(
             f"data field {tag} lacks indicators or a complete subfield"
         )
+    if any(byte != ord(" ") and not ord("0") <= byte <= ord("9") for byte in value[:2]):
+        raise MarcFieldGrammarError(f"data field {tag} contains an invalid indicator")
     data = value[2:]
     if not data.startswith(b"\x1f"):
         raise MarcFieldGrammarError(
