@@ -790,6 +790,33 @@ def test_0018_upgrade_reconciles_normalized_delivery_and_preserves_exact_disposi
         "UPDATE delivery_batches SET sealed_at = ? WHERE id = ?",
         (NOW, batch_id),
     )
+    draft_batch_id = str(uuid.uuid4())
+    draft_delivered_id = str(uuid.uuid4())
+    fixture.connection.execute(
+        """
+        INSERT INTO delivery_batches (
+            id, school_id, workspace_id, order_revision_id, delivery_number,
+            reason, created_by_user_id, created_at, sealed_at
+        ) VALUES (?, ?, ?, ?, 2, '저장 중인 명세', ?, ?, NULL)
+        """,
+        (
+            draft_batch_id,
+            fixture.school_id,
+            fixture.workspace_id,
+            order["revision_id"],
+            fixture.operator_id,
+            NOW,
+        ),
+    )
+    fixture.connection.execute(
+        """
+        INSERT INTO delivery_rows (
+            id, delivery_batch_id, isbn13, title, author, edition,
+            quantity, unit_price, created_at
+        ) VALUES (?, ?, NULL, ?, ?, NULL, 1, 10000, ?)
+        """,
+        (draft_delivered_id, draft_batch_id, "ISBN 없는 책 하나", "김저자", NOW),
+    )
     stale_missing_id = str(uuid.uuid4())
     preserved_price_id = str(uuid.uuid4())
     fixture.connection.executemany(
@@ -839,6 +866,16 @@ def test_0018_upgrade_reconciles_normalized_delivery_and_preserves_exact_disposi
     ).fetchone()
     assert allocation is not None
     assert allocation["order_row_id"] == ordered["id"]
+    assert (
+        fixture.connection.execute(
+            """
+        SELECT COUNT(*) FROM delivery_row_order_allocations
+        WHERE delivery_row_id = ?
+        """,
+            (draft_delivered_id,),
+        ).fetchone()[0]
+        == 0
+    )
     active = fixture.connection.execute(
         """
         SELECT * FROM receiving_differences
@@ -916,6 +953,33 @@ def test_same_isbn_scan_uses_expected_order_row_hint_for_that_attempt(
     ).fetchone()["id"]
     expected = next(row["id"] for row in rows if row["id"] != arbitrary)
 
+    from suseoro.workflow.receiving import ReceivingRuleError
+
+    for suffix, invalid_hint in (
+        ("missing", None),
+        ("stale", str(uuid.uuid4())),
+    ):
+        with pytest.raises(ReceivingRuleError) as ambiguous:
+            service.scan(
+                school_id=fixture.school_id,
+                workspace_id=fixture.workspace_id,
+                session_id=session["session_id"],
+                actor_id=fixture.operator_id,
+                actor_roles=("OPERATOR",),
+                isbn=isbn,
+                expected_order_row_id=invalid_hint,
+                idempotency_key=f"duplicate-isbn-{suffix}-hint",
+                request_id=str(uuid.uuid4()),
+            )
+        assert ambiguous.value.code == "AMBIGUOUS_ORDER_ROW"
+    assert (
+        fixture.connection.execute(
+            "SELECT COUNT(*) FROM scan_events WHERE session_id = ?",
+            (session["session_id"],),
+        ).fetchone()[0]
+        == 0
+    )
+
     scanned = service.scan(
         school_id=fixture.school_id,
         workspace_id=fixture.workspace_id,
@@ -931,6 +995,48 @@ def test_same_isbn_scan_uses_expected_order_row_hint_for_that_attempt(
     assert scanned["code"] == "NORMAL"
     assert scanned["order_row_id"] == expected
     assert scanned["scanned_quantity"] == 1
+    replayed = service.scan(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        session_id=session["session_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        isbn=isbn,
+        expected_order_row_id=expected,
+        idempotency_key="duplicate-isbn-targeted-scan",
+        request_id=str(uuid.uuid4()),
+    )
+    assert replayed == scanned
+    assert (
+        fixture.connection.execute(
+            "SELECT COUNT(*) FROM scan_events WHERE session_id = ?",
+            (session["session_id"],),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_duplicate_isbn_ambiguity_has_actionable_public_conflict() -> None:
+    from suseoro.api.errors import install_error_handlers
+    from suseoro.workflow.receiving import ReceivingRuleError
+
+    app = FastAPI()
+    install_error_handlers(app)
+
+    @app.get("/ambiguous-order-row")
+    def ambiguous_order_row() -> None:
+        raise ReceivingRuleError("AMBIGUOUS_ORDER_ROW")
+
+    response = TestClient(app, raise_server_exceptions=False).get(
+        "/ambiguous-order-row",
+        headers={"X-Request-ID": str(uuid.uuid4())},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "AMBIGUOUS_ORDER_ROW"
+    assert response.json()["detail"]["message"] == (
+        "같은 ISBN의 발주 행이 여러 개입니다. 이번 책에 해당하는 예상 도서를 선택해 주세요."
+    )
 
 
 def test_procurement_public_item_suppresses_unproven_mapping_payload() -> None:

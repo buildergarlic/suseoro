@@ -76,27 +76,30 @@ SELECT delivered.id,
 FROM delivery_rows AS delivered
 JOIN delivery_batches AS batch ON batch.id = delivered.delivery_batch_id
 JOIN order_rows AS ordered ON ordered.order_revision_id = batch.order_revision_id
-WHERE (
-        delivered.isbn13 IS NOT NULL
-        AND ordered.isbn13 = delivered.isbn13
-        AND (
-            1 = (
-                SELECT COUNT(*) FROM order_rows AS same_isbn
+WHERE batch.sealed_at IS NOT NULL
+  AND (
+        (
+            delivered.isbn13 IS NOT NULL
+            AND ordered.isbn13 = delivered.isbn13
+            AND (
+                1 = (
+                    SELECT COUNT(*) FROM order_rows AS same_isbn
+                    WHERE same_isbn.order_revision_id = batch.order_revision_id
+                      AND same_isbn.isbn13 = delivered.isbn13
+                )
+                OR suseoro_normalize_key(ordered.title) =
+                   suseoro_normalize_key(delivered.title)
+            )
+        )
+        OR (
+            (delivered.isbn13 IS NULL OR NOT EXISTS (
+                SELECT 1 FROM order_rows AS same_isbn
                 WHERE same_isbn.order_revision_id = batch.order_revision_id
                   AND same_isbn.isbn13 = delivered.isbn13
-            )
-            OR suseoro_normalize_key(ordered.title) =
-               suseoro_normalize_key(delivered.title)
+            ))
+            AND suseoro_normalize_key(ordered.title) =
+                suseoro_normalize_key(delivered.title)
         )
-      )
-   OR (
-        (delivered.isbn13 IS NULL OR NOT EXISTS (
-            SELECT 1 FROM order_rows AS same_isbn
-            WHERE same_isbn.order_revision_id = batch.order_revision_id
-              AND same_isbn.isbn13 = delivered.isbn13
-        ))
-        AND suseoro_normalize_key(ordered.title) =
-            suseoro_normalize_key(delivered.title)
       )
 GROUP BY delivered.id
 HAVING COUNT(ordered.id) = 1;
@@ -196,7 +199,15 @@ WITH received AS (
            ordered.quantity AS expected,
            COALESCE(SUM(allocation.quantity), 0) AS received
     FROM order_rows AS ordered
-    LEFT JOIN delivery_row_order_allocations AS allocation
+    LEFT JOIN (
+        SELECT sealed_allocation.order_row_id, sealed_allocation.quantity
+        FROM delivery_row_order_allocations AS sealed_allocation
+        JOIN delivery_rows AS sealed_row
+          ON sealed_row.id = sealed_allocation.delivery_row_id
+        JOIN delivery_batches AS sealed_batch
+          ON sealed_batch.id = sealed_row.delivery_batch_id
+         AND sealed_batch.sealed_at IS NOT NULL
+    ) AS allocation
       ON allocation.order_row_id = ordered.id
     WHERE EXISTS (
         SELECT 1 FROM delivery_batches AS batch

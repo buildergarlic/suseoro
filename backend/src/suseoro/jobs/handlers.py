@@ -752,20 +752,20 @@ def build_ingestion_handler(
                     role=role,
                     parse=lambda storage_path=document["storage_path"], digest=document["sha256"], detected_format=document["detected_format"], configured_role=document["role"]: (
                         _parse_result_payload(
-                            _procurement_document_table(
-                                _parse_source_preserving_unknown_headers(
-                                    Path(storage_path),
-                                    digest=digest,
-                                    detected_format=detected_format,
-                                    role=configured_role,
-                                )
+                            _parse_source_preserving_unknown_headers(
+                                Path(storage_path),
+                                digest=digest,
+                                detected_format=detected_format,
+                                role=configured_role,
                             )
                         )
                     ),
                     claim_token=context.job.claim_token,
                     claim_generation=context.job.claim_generation,
                 )
-                base_result = _parse_result_from_payload(cached.result)
+                base_result = _procurement_document_table(
+                    _parse_result_from_payload(cached.result)
+                )
                 successful_base_rows = [
                     row for row in base_result.rows if row.status == RowStatus.SUCCESS
                 ]

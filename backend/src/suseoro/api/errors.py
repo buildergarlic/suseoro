@@ -48,6 +48,7 @@ _MESSAGES = {
     "PROCUREMENT_SOURCE_PARTIAL": "일부 행에 오류가 있어 파일을 반영하지 않았습니다.",
     "PROCUREMENT_FORMAT_NOT_COMPOSABLE": "원본을 보관했습니다. 표 형식으로 변환한 뒤 다시 올려 주세요.",
     "PROCUREMENT_SOURCE_ROWS_INVALID": "수량·가격·품절 열의 값을 확인해 주세요.",
+    "AMBIGUOUS_ORDER_ROW": "같은 ISBN의 발주 행이 여러 개입니다. 이번 책에 해당하는 예상 도서를 선택해 주세요.",
     "COMPARISON_SOURCE_SET_CHANGED": "추천자료 구성이 바뀌었습니다. 최신 자료를 다시 확인해 주세요.",
     "UPLOAD_REPAIR_REQUIRED": "읽지 못한 파일을 다시 올린 뒤 계속해 주세요.",
     "UPLOAD_REPAIR_SUPERSEDED": "더 최근에 선택한 교체 파일이 있어 이 요청을 반영하지 않았습니다.",
@@ -172,6 +173,7 @@ def install_error_handlers(app: FastAPI) -> None:
             "APPROVAL_REVISION_NOT_CURRENT",
             "CANDIDATE_COLLECTION_CHANGED",
             "ROW_VERSION_CONFLICT",
+            "AMBIGUOUS_ORDER_ROW",
         }:
             status_code = 409
         return error_response(

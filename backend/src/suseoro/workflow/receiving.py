@@ -768,16 +768,18 @@ class ReceivingService:
                 """,
                 (session["order_revision_id"], isbn13),
             ).fetchall()
-            ordered = exact_matches[0] if exact_matches else None
-            if expected_order_row_id is not None and len(exact_matches) > 1:
+            ordered = exact_matches[0] if len(exact_matches) == 1 else None
+            if len(exact_matches) > 1:
                 ordered = next(
                     (
                         row
                         for row in exact_matches
                         if row["id"] == expected_order_row_id
                     ),
-                    ordered,
+                    None,
                 )
+                if ordered is None:
+                    raise ReceivingRuleError("AMBIGUOUS_ORDER_ROW")
             code = "NORMAL" if ordered is not None else "UNORDERED"
             if ordered is None and expected_order_row_id is not None:
                 hinted = self.connection.execute(

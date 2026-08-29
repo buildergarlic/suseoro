@@ -17,7 +17,15 @@ from workflow_fixtures import WorkflowFixture, make_workflow_fixture
 from suseoro.api.app import create_app
 from suseoro.config import Settings
 from suseoro.db.connection import connect
-from suseoro.jobs.handlers import build_job_runner, parser_version_for_format
+from suseoro.ingestion.contracts import DocumentRole
+from suseoro.ingestion.templates import ParserCache
+from suseoro.jobs.handlers import (
+    _parse_result_payload,
+    _parse_source_preserving_unknown_headers,
+    _procurement_document_table,
+    build_job_runner,
+    parser_version_for_format,
+)
 from suseoro.repositories.auth import UserRecord, issue_session
 from suseoro.workflow.approvals import ApprovalService
 from suseoro.workflow.orders import OrderService
@@ -876,6 +884,175 @@ def test_document_table_quotes_become_durable_canonical_rows_and_compose(
         assert composed.status_code == 201
         quote = client.get(f"/api/v2/quotes/{composed.json()['result_id']}").json()
         assert quote["total_won"] == 11_000
+
+
+@pytest.mark.parametrize(
+    (
+        "filename",
+        "media_type",
+        "payload_factory",
+        "detected_format",
+        "legacy_parser_version",
+        "expected_status",
+    ),
+    [
+        (
+            "legacy.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            _docx_table_bytes,
+            "DOCX",
+            "docx-v1",
+            "READY",
+        ),
+        (
+            "legacy.hwpx",
+            "application/octet-stream",
+            _hwpx_table_bytes,
+            "HWPX",
+            "hwpx-v1",
+            "READY",
+        ),
+        (
+            "legacy.hwp",
+            "application/x-hwp",
+            lambda: _minimal_hwp(
+                unsupported=False,
+                cell_values=[
+                    "ISBN",
+                    "제목",
+                    "저자",
+                    "수량",
+                    "단가",
+                    "9788937464010",
+                    "문서 견적 도서",
+                    "김사서",
+                    "1",
+                    "11000",
+                ],
+            ),
+            "HWP",
+            "hwp-v1",
+            "READY",
+        ),
+        (
+            "legacy.pdf",
+            "application/pdf",
+            lambda: _pdf_table_bytes(
+                [
+                    "ISBN,title,author,quantity,unit_price",
+                    "9788937464010,Document quote book,Librarian,1,11000",
+                ]
+            ),
+            "PDF",
+            "pdf-v1",
+            "MAPPING_REQUIRED",
+        ),
+    ],
+)
+def test_immutable_v1_document_cache_is_transformed_after_retrieval(
+    tmp_path: Path,
+    filename: str,
+    media_type: str,
+    payload_factory,
+    detected_format: str,
+    legacy_parser_version: str,
+    expected_status: str,
+) -> None:
+    fixture = make_workflow_fixture(tmp_path)
+    fixture.add_candidate(
+        title="문서 견적 도서",
+        author="김사서",
+        isbn="9788937464010",
+        unit_price=12_000,
+    )
+    approved = _approve(fixture)
+    client, settings, csrf = _client(fixture, tmp_path)
+
+    with client:
+        uploaded = client.post(
+            f"/api/v2/workspaces/{fixture.workspace_id}/sources",
+            headers=_headers(csrf, f"legacy-cache-{detected_format.casefold()}"),
+            files={"files": (filename, payload_factory(), media_type)},
+            data={
+                "role": "VENDOR_QUOTE",
+                "vendor_scope": f"{detected_format} 이전 캐시 업체",
+                "procurement_kind": "QUOTE",
+                "target_revision_id": approved["revision_id"],
+                "reason": "이전 파서 캐시 호환성 검증",
+            },
+        )
+        assert uploaded.status_code == 202
+        source_id = uploaded.json()["items"][0]["source_id"]
+
+        with connect(settings.database_path) as connection:
+            connection.execute(
+                "DROP TRIGGER immutable_source_documents_identity_update"
+            )
+            connection.execute(
+                "UPDATE source_documents SET parser_version = ? WHERE id = ?",
+                (legacy_parser_version, source_id),
+            )
+            source = connection.execute(
+                """
+                SELECT file.sha256, file.storage_path, file.detected_format
+                FROM source_documents AS document
+                JOIN source_files AS file ON file.id = document.source_file_id
+                WHERE document.id = ?
+                """,
+                (source_id,),
+            ).fetchone()
+            legacy_result = _parse_source_preserving_unknown_headers(
+                Path(source["storage_path"]),
+                digest=source["sha256"],
+                detected_format=source["detected_format"],
+                role="VENDOR_QUOTE",
+            )
+            assert all("title" not in row.raw_values for row in legacy_result.rows)
+            canonical_result = _procurement_document_table(legacy_result)
+            assert _procurement_document_table(canonical_result) == canonical_result
+            cached = ParserCache(connection).get_or_parse(
+                sha256=source["sha256"],
+                parser_version=legacy_parser_version,
+                role=DocumentRole.VENDOR_QUOTE,
+                parse=lambda: _parse_result_payload(legacy_result),
+            )
+            assert cached.cached is False
+            connection.commit()
+
+        _run_ingestion(settings)
+        current = client.get(
+            f"/api/v2/workspaces/{fixture.workspace_id}/procurement-imports"
+        ).json()["items"][0]
+        assert current["parser_version"] == legacy_parser_version
+        assert current["status"] == expected_status
+        if expected_status == "READY":
+            assert current["processed_rows"] == current["total_rows"] == 1
+            provenance_sheet = current["rows"][0]["provenance"]["sheet"]
+            assert "#" in provenance_sheet
+            assert "table[1]" in provenance_sheet
+        else:
+            assert current["mapping_required"]["headers"] == [
+                "ISBN",
+                "title",
+                "author",
+                "quantity",
+                "unit_price",
+            ]
+
+        with connect(settings.database_path) as connection:
+            cached_run = connection.execute(
+                """
+                SELECT result_json FROM parser_runs
+                WHERE source_file_sha256 = ? AND parser_version = ?
+                  AND role = 'VENDOR_QUOTE'
+                """,
+                (source["sha256"], legacy_parser_version),
+            ).fetchone()
+            assert cached_run is not None
+            cached_payload = json.loads(cached_run["result_json"])
+            assert all(
+                "title" not in row["raw_values"] for row in cached_payload["rows"]
+            )
 
 
 @pytest.mark.parametrize(
