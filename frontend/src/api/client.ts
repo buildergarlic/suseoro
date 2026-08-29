@@ -136,109 +136,176 @@ function objectValue(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function stringField(value: Record<string, unknown>, field: string): boolean {
-  return typeof value[field] === "string";
+type Guard<T> = (value: unknown) => value is T;
+type ExactShape<T extends object> = {
+  [Key in keyof T]-?: Guard<T[Key]>;
+};
+
+const stringValue: Guard<string> = (value): value is string =>
+  typeof value === "string";
+const booleanValue: Guard<boolean> = (value): value is boolean =>
+  typeof value === "boolean";
+const finiteNumber: Guard<number> = (value): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+const integerValue: Guard<number> = (value): value is number =>
+  finiteNumber(value) && Number.isInteger(value);
+
+function nullable<T>(guard: Guard<T>): Guard<T | null> {
+  return (value): value is T | null => value === null || guard(value);
 }
 
-function numberField(value: Record<string, unknown>, field: string): boolean {
-  return typeof value[field] === "number" && Number.isFinite(value[field]);
+function arrayOf<T>(guard: Guard<T>): Guard<T[]> {
+  return (value): value is T[] => Array.isArray(value) && value.every(guard);
 }
 
-function validUser(value: unknown): boolean {
-  return (
+function recordOf<T>(guard: Guard<T>): Guard<Record<string, T>> {
+  return (value): value is Record<string, T> =>
+    objectValue(value) && Object.values(value).every(guard);
+}
+
+function exactObject<T extends object>(shape: ExactShape<T>): Guard<T> {
+  const keys = Object.keys(shape) as (keyof T & string)[];
+  return (value): value is T =>
     objectValue(value) &&
-    stringField(value, "id") &&
-    stringField(value, "school_id") &&
-    stringField(value, "username") &&
-    stringField(value, "display_name") &&
-    Array.isArray(value.roles)
-  );
+    Object.keys(value).length === keys.length &&
+    keys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(value, key) &&
+        shape[key](value[key]),
+    );
 }
 
-function validUpload(value: unknown): boolean {
-  return (
-    objectValue(value) &&
-    (value.job_id === null || typeof value.job_id === "string") &&
-    Array.isArray(value.items) &&
-    value.items.every(
-      (item) =>
-        objectValue(item) &&
-        stringField(item, "filename") &&
-        stringField(item, "status") &&
-        (item.source_id === null || typeof item.source_id === "string"),
-    )
-  );
-}
+const validJobError = exactObject<Schemas["JobError"]>({
+  type: nullable(stringValue),
+  code: nullable(stringValue),
+  message: nullable(stringValue),
+});
 
-function validJobCommand(value: unknown): boolean {
-  return (
-    objectValue(value) &&
-    stringField(value, "id") &&
-    stringField(value, "type") &&
-    stringField(value, "status") &&
-    stringField(value, "stage") &&
-    numberField(value, "progress_current") &&
-    numberField(value, "progress_total") &&
-    numberField(value, "retry_count")
-  );
-}
+const scalarValue: Guard<string | number | boolean | null> = (
+  value,
+): value is string | number | boolean | null =>
+  value === null ||
+  stringValue(value) ||
+  finiteNumber(value) ||
+  booleanValue(value);
 
-function validQueuedJob(value: unknown): boolean {
-  return objectValue(value) && stringField(value, "job_id") && stringField(value, "status");
-}
+const validMappingRequired = exactObject<Schemas["MappingRequired"]>({
+  headers: arrayOf(stringValue),
+  preview_rows: arrayOf(arrayOf(scalarValue)),
+  suggested_mapping: recordOf(nullable(stringValue)),
+  required_fields: arrayOf(stringValue),
+  confidence: finiteNumber,
+  questions: arrayOf(stringValue),
+});
 
-function validVersionedSource(value: unknown): boolean {
-  return (
-    objectValue(value) &&
-    stringField(value, "id") &&
-    stringField(value, "role") &&
-    objectValue(value.mapping) &&
-    numberField(value, "row_version")
-  );
-}
+const validJobFileResult = exactObject<Schemas["JobFileResult"]>({
+  source_document_id: stringValue,
+  filename: stringValue,
+  status: stringValue,
+  total_rows: integerValue,
+  processed_rows: integerValue,
+  row_error_count: integerValue,
+  error: nullable(validJobError),
+  mapping_required: nullable(validMappingRequired),
+});
 
-function validComparison(value: unknown): boolean {
-  return (
-    objectValue(value) &&
-    stringField(value, "job_id") &&
-    stringField(value, "status") &&
-    stringField(value, "workspace_status") &&
-    numberField(value, "row_version")
-  );
-}
+const validUser = exactObject<Schemas["UserResponse"]>({
+  id: stringValue,
+  school_id: stringValue,
+  username: stringValue,
+  display_name: stringValue,
+  roles: arrayOf(stringValue),
+});
 
-function validCandidateLock(value: unknown): boolean {
-  return (
-    objectValue(value) &&
-    stringField(value, "candidate_id") &&
-    stringField(value, "actor_id") &&
-    stringField(value, "expires_at")
-  );
-}
+const validUploadItemError = exactObject<Schemas["UploadItemError"]>({
+  code: stringValue,
+  message: stringValue,
+});
 
-function validCandidateMutation(value: unknown): boolean {
-  return (
-    objectValue(value) &&
-    stringField(value, "id") &&
-    stringField(value, "outcome") &&
-    numberField(value, "quantity") &&
-    numberField(value, "row_version") &&
-    (value.unit_price === null || numberField(value, "unit_price"))
-  );
-}
+const validUploadItem = exactObject<Schemas["UploadItem"]>({
+  filename: stringValue,
+  status: stringValue,
+  source_id: nullable(stringValue),
+  error: nullable(validUploadItemError),
+  repair_obligation_id: nullable(stringValue),
+  repair_generation: nullable(integerValue),
+});
 
-function validApproval(value: unknown): boolean {
-  return (
-    objectValue(value) &&
-    stringField(value, "revision_id") &&
-    numberField(value, "revision_number") &&
-    stringField(value, "sha256") &&
-    numberField(value, "expected_total_won") &&
-    numberField(value, "budget_won") &&
-    stringField(value, "state") &&
-    numberField(value, "row_version")
-  );
-}
+const validUpload = exactObject<Schemas["UploadResponse"]>({
+  job_id: nullable(stringValue),
+  items: arrayOf(validUploadItem),
+});
+
+const validJobCommand = exactObject<Schemas["JobCommandResponse"]>({
+  id: stringValue,
+  workspace_id: nullable(stringValue),
+  type: stringValue,
+  status: stringValue,
+  stage: stringValue,
+  progress_current: integerValue,
+  progress_total: integerValue,
+  error: nullable(validJobError),
+  retry_count: integerValue,
+});
+
+const validQueuedJob = exactObject<Schemas["QueuedJobResponse"]>({
+  job_id: stringValue,
+  status: stringValue,
+});
+
+const validVersionedSource = exactObject<Schemas["SourceResponse"]>({
+  id: stringValue,
+  filename: stringValue,
+  sha256: stringValue,
+  size_bytes: integerValue,
+  role: stringValue,
+  status: stringValue,
+  detected_format: nullable(stringValue),
+  mapping: recordOf(stringValue),
+  vendor_scope: stringValue,
+  remember_template: booleanValue,
+  requested_start_local_date: nullable(stringValue),
+  requested_through_local_date: nullable(stringValue),
+  parsed_config_version: nullable(integerValue),
+  row_version: integerValue,
+  created_at: stringValue,
+  completed_at: nullable(stringValue),
+  latest_job_id: nullable(stringValue),
+  latest_result: nullable(validJobFileResult),
+});
+
+const validComparison = exactObject<Schemas["ComparisonJobResponse"]>({
+  job_id: stringValue,
+  status: stringValue,
+  workspace_status: stringValue,
+  row_version: integerValue,
+});
+
+const validCandidateLock = exactObject<Schemas["CandidateLockResponse"]>({
+  candidate_id: stringValue,
+  actor_id: stringValue,
+  expires_at: stringValue,
+});
+
+const validCandidateMutation = exactObject<
+  Schemas["CandidateMutationResponse"]
+>({
+  id: stringValue,
+  outcome: stringValue,
+  quantity: integerValue,
+  unit_price: nullable(integerValue),
+  row_version: integerValue,
+});
+
+const validApproval = exactObject<Schemas["ApprovalRequestResponse"]>({
+  revision_id: stringValue,
+  revision_number: integerValue,
+  sha256: stringValue,
+  expected_total_won: integerValue,
+  budget_won: integerValue,
+  state: stringValue,
+  row_version: integerValue,
+});
 
 function commandId(): string {
   return crypto.randomUUID();

@@ -562,3 +562,117 @@ CF0AB91AA9B19D2233516856D09D67EDF2C70314049E882072052D0A0BE2776B
 `0009`는 `7D020CD41D6C7A3AB9FAC0F43DAA873336ACACAC889FD5FA171E19A4459D6383`, `0010`은
 `53935B8765516454A85FF1E13253180139A4E36978F575D3E562EFD05FAF9C79`로 round-2 기준과 같다.
 plan/progress ledger와 Task 10 ASGI pre-parser cap은 수정하지 않았고 blocker는 없다.
+
+## 검토 수정 라운드 4 (2026-08-29)
+
+검토 commit `30da997`의 Critical 1개와 Important 4개를 전용 RED regression으로 재현하고 닫았다.
+이미 배포된 `0011_task8_round3_integrity.sql`은 byte-for-byte 보존했다. `0011`보다 먼저 정렬되는
+checksum-safe prelude와 그 뒤의 correction/restoration만 새 forward migration으로 추가했으며,
+plan/progress ledger는 수정하지 않았다.
+
+### Critical: populated 0010의 원자적 0011 upgrade
+
+- `0010a_task8_round4_upgrade_prelude.sql`은 충돌하는 legacy
+  `job_file_results_scope_update` trigger 하나만 `DROP TRIGGER IF EXISTS`로 중립화한다.
+- migration runner는 prelude, committed `0011`, `0012`를 명시적 atomic bundle로 취급한다. 실행 전에
+  directory에 있는 모든 applied migration checksum을 먼저 검증한다. 정상 history에서는 pending member를
+  고정 순서로 실행하고, lower-sorted member가 postlude 뒤에 새로 발견된 비정상 순서에서는 idempotent
+  prelude/postlude를 필요한 만큼 같은 transaction 안에서 다시 실행해 최종 guard를 복원한다. postlude 실패 시
+  SQL, ledger row, trigger 변경이 함께 rollback된다.
+- 이미 `0011`이 기록된 DB에서도 새로 발견한 lower-sorted prelude를 건너뛰지 않는다. prelude와 postlude를
+  같은 bundle로 적용하고 기존 `0011` rowid/checksum은 그대로 둔다. 반대로 새 guard migration 중 하나만
+  배포된 불완전 directory는 present applied member checksum은 검증하되 bundle 실행은 보류하여 trigger가
+  제거된 채 stranded되지 않는다. 과거 release의 `0011` 단독 directory는 기존 동작을 유지한다.
+- `0012_task8_round4_integrity.sql`은 count를 교정한 뒤 `0006a`와 같은 scope/claim trigger를 정확히 복원한다.
+  fresh DB, populated 0010, already-applied 0011, incomplete bundle checksum drift, 0010 failure rollback,
+  already-0011 failure rollback, lower-sorted prelude 재발견과 8개 ledger subset, final trigger/foreign-key/ledger
+  checksum을 각각 검증했다. 지원할 수 없는 `0011` ledger 유실 상태는 guard를 훼손하지 않고 fail closed한다.
+- round-4 이전의 checksum-valid `0011` backup manifest는 새 lower-sorted migration이 없다는 이유만으로
+  거절하지 않는다. restore history validator는 정확히 그 historical prefix만 별도 허용하고 altered/future/
+  임의 incomplete history는 계속 거절한다.
+
+### Count truth와 response contract
+
+- `SUCCESS` file result는 `total_rows/0`, `FAILED`는 `0/total_rows`를 durable status로 복원한다.
+  `PARTIAL + MAPPING_REQUIRED`는 이후 같은 source가 성공 parse됐더라도 `0/0`을 유지한다. 다른 `PARTIAL`은
+  현재 durable SUCCESS row 증거를 사용하되 최소 한 행은 확인 필요로 남기고, 증거 없는 나머지도 read로
+  추측하지 않는다. 같은 source의 과거 SUCCESS와 PARTIAL을 최신 source row로 덮어쓰지 않는 regression을
+  추가했다.
+- mutation response guard는 generated TypeScript schema의 모든 key를 mapped type으로 열거한다. exact object,
+  required-nullable, string array/record, nested `UploadItemError`, `JobError`, `JobFileResult`, `MappingRequired`,
+  JSON scalar preview, OpenAPI integer를 재귀 검증한다. 추가 key, 잘못된 array 원소, fractional integer,
+  near-valid truncation도 성공으로 확정하지 않는다.
+- login/upload/retry/cancel/parse/mapping/comparison/lock/autosave/approval을 table-driven public API로 검증했다.
+  malformed 2xx 뒤 같은 논리 행동은 같은 `Idempotency-Key`를 쓰고, 완전한 응답으로 ambiguity를 해소한 뒤의
+  다음 행동만 새 key를 쓴다. 특히 upload item의 `error`, `repair_obligation_id`, `repair_generation` 누락과
+  source의 nested latest result 누락을 고정했다.
+- OpenAPI response model의 nullable default를 제거해 `UploadItem`, `SourceResponse`, `JobError`의 모든 property가
+  명시적 required-nullable이 되게 했다. job endpoint뿐 아니라 source discovery의 `latest_result.error`도
+  `{type, code, message}`를 항상 내보내 runtime과 generated contract를 맞췄다.
+
+### Vendor mapping과 candidate row-version reconciliation
+
+- `MappingState`는 server source detail의 role과 `vendor_scope`를 함께 보존한다. reload hydration, ingest 완료,
+  수동 reopen 세 경로가 같은 constructor를 쓰며 mapping PATCH는 더 이상 `vendor_scope: "*"`를 보내지 않는다.
+  PATCH 응답의 role/scope/version도 queue에 다시 반영한다. `bookstore-a` VENDOR_QUOTE replacement가
+  mapping-required → save → reparse를 거친 뒤에도 같은 scope를 전송하고 추천자료 비교 대상에는 들어가지 않는
+  end-to-end regression이 통과한다.
+- candidate mutation fence는 outcome 문자열만이 아니라 full candidate와 `row_version`을 저장한다. list/search/
+  load-more에서 server row가 fence보다 클 때만 local state를 대체하고, older/equal response는 local commit을
+  되돌리지 않는다. 새 server row를 받아들이면 기존 모든 tab에서 같은 id를 제거하고 authoritative outcome에
+  한 번만 넣으며 summary count, unresolved count, expected amount와 page total을 함께 맞춘다. local v2
+  CANDIDATE 뒤 server v3 EXCLUDED가 cursor에서 도착해도 숨지 않고, equal v2 stale search는 되돌리지 않는다.
+  서로 다른 outcome request가 v2/v3 row와 서로 다른 summary snapshot을 돌려주거나 cursor row가 summary보다
+  새로울 때도 summary의 기준 row에서 authoritative row로 한 번만 보정한다.
+
+### RED / GREEN과 최종 gate
+
+핵심 migration 네 경우는 처음 모두 실패했고, historical backup prefix, 같은 source의 과거 SUCCESS count,
+incomplete bundle과 historical PARTIAL도 각각 독립 RED였다. mutation contract table은 `12 failed`, vendor scope는
+`bookstore-a` 대신 `*`가 전송되어 `1 failed`, candidate fence는 v3 row가 보이지 않아 `1 failed`였다. 독립 최종
+review에서 source discovery error key 누락, deferred checksum 검증 누락, postlude 뒤 lower-sorted prelude 재발견 시
+guard 유실, initial/cursor row-summary snapshot skew를 추가로 RED로 재현한 뒤 모두 닫았다.
+구현 뒤 focused 결과와 최종 gate는 다음과 같다.
+
+```text
+tests/test_task8_round4.py                          10 passed in 3.11s
+Task 8 round2 + round3 + round4                     47 passed in 28.33s
+API contract + round4                               73 passed in 40.29s
+backend full pytest                                450 passed in 112.77s
+npm ci                                               audited 265, 0 vulnerabilities
+npm test -- --run                                   3 files, 100 passed in 53.91s
+ingestion/candidate frontend                         62 passed in 52.81s
+npm run typecheck                                    exit 0
+npm run lint                                         exit 0, warning 0
+npm run build                                        36 modules, exit 0
+dist JS                                              306.95 kB / 94.30 kB gzip
+uvx ruff@0.16.5 format --check .                     108 files already formatted
+uvx ruff@0.16.5 check .                              All checks passed
+python -m compileall -q src tests                    exit 0
+uv lock --check                                      resolved 36 packages
+uv build                                             sdist + wheel built
+npm ls --all                                         exit 0
+dangerous-execution diff scan                        0 matches
+private-key/token signature diff scan                0 matches
+merge-marker scan                                    0 matches
+```
+
+OpenAPI와 generated TypeScript type은 각각 연속 두 번 생성해 같은 SHA-256을 확인했다.
+
+```text
+backend/openapi.json
+8FCAEF6CE73F4A748A7A07DBE4136B81D208B5B17E0853BF3C102C9E6D1F0245
+
+frontend/src/api/types.ts
+8D2E1441CB5826211F579ED1BF581EB14F56E617CDC3A8B50C0D04B0B13256F9
+```
+
+새 prelude의 SHA-256은
+`4B39FE51FCCEF6105511B71CC99917CCDD3CDB54269B2D1E5DDE02DD5C80E5B9`, 새 postlude는
+`D236B01E9FC31013C5C183FF1536C5815BADD47ACCE6CE5C01DC700B77DCB462`이다. committed `0011`은
+`EB22DB853D9488C3FDC0A95AD0EAFD2E4C79884D41D6D313B272CB49822242B0`로 보존됐고,
+두 새 migration을 제외한 `git diff --exit-code 30da997 -- backend/src/suseoro/db/migrations`는 exit 0이다.
+독립 재검토 결과 남은 Critical/Important finding은 없다. server summary 자체에는 snapshot/version이 없으므로
+서로 상쇄되는 다중 concurrent 변경이 완전히 같은 aggregate를 만드는 경우는 원천적으로 판별할 수 없고,
+DDL은 있으나 committed `0011` ledger row만 유실된 비정상 DB는 self-heal 대신 fail closed한다. 둘 다 현재
+요구 범위의 data/guard를 손상하지 않는 residual risk이며 blocker는 없다.

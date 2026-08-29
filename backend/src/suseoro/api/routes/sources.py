@@ -573,7 +573,7 @@ def _source_with_discovery(
     ).fetchone()
     if latest is not None:
         result["latest_job_id"] = latest["id"]
-        result["latest_result"] = next(
+        latest_result = next(
             (
                 item
                 for item in JobRepository(connection).file_results(latest["id"])
@@ -581,6 +581,11 @@ def _source_with_discovery(
             ),
             None,
         )
+        if latest_result is not None:
+            result["latest_result"] = {
+                **latest_result,
+                "error": _public_job_error(latest_result.get("error")),
+            }
     return result
 
 
@@ -1976,6 +1981,19 @@ def _job(connection, school_id: str, job_id: str):
     return job if job is not None and job.school_id == school_id else None
 
 
+def _public_job_error(error: object) -> dict[str, str | None] | None:
+    if not isinstance(error, dict):
+        return None
+    return {
+        key: value if isinstance(value, str) else None
+        for key, value in (
+            ("type", error.get("type")),
+            ("code", error.get("code")),
+            ("message", error.get("message")),
+        )
+    }
+
+
 def _job_json(job) -> dict[str, Any]:
     error = job.error
     if job.job_type == "COMPARE" and error is not None:
@@ -1989,7 +2007,7 @@ def _job_json(job) -> dict[str, Any]:
         "stage": job.stage,
         "progress_current": job.progress_current,
         "progress_total": job.progress_total,
-        "error": error,
+        "error": _public_job_error(error),
         "retry_count": job.retry_count,
     }
 
@@ -2019,6 +2037,7 @@ def _job_with_items(connection: sqlite3.Connection, job) -> dict[str, Any]:
                     item["error"] = comparison_file_failure()
             sanitized.append(item)
         items = sanitized
+    items = [{**item, "error": _public_job_error(item.get("error"))} for item in items]
     result["items"] = items
     return result
 

@@ -1809,7 +1809,9 @@ def test_forward_migration_expands_formats_without_losing_b5fc8_rows(tmp_path) -
             "0008_upload_repair_and_job_discovery",
             "0009_repair_recovery_transition",
             "0010_source_correction_recovery",
+            "0010a_task8_round4_upgrade_prelude",
             "0011_task8_round3_integrity",
+            "0012_task8_round4_integrity",
         ):
             shutil.copy2(source, old_dir / source.name)
     connection = connect(tmp_path / "upgrade.sqlite3")
@@ -1875,7 +1877,7 @@ def test_forward_migration_expands_formats_without_losing_b5fc8_rows(tmp_path) -
         "XLSX",
     )
     assert foreign_keys == []
-    assert latest == "0011_task8_round3_integrity"
+    assert latest == "0012_task8_round4_integrity"
 
 
 def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
@@ -1895,7 +1897,9 @@ def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
             "0008_upload_repair_and_job_discovery",
             "0009_repair_recovery_transition",
             "0010_source_correction_recovery",
+            "0010a_task8_round4_upgrade_prelude",
             "0011_task8_round3_integrity",
+            "0012_task8_round4_integrity",
         ):
             shutil.copy2(source, old_dir / source.name)
     connection = connect(tmp_path / "0731aa1-upgrade.sqlite3")
@@ -1927,7 +1931,7 @@ def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
     connection.close()
 
     assert preserved == 2
-    assert latest == "0011_task8_round3_integrity"
+    assert latest == "0012_task8_round4_integrity"
     assert {
         "requested_start_local_date",
         "requested_through_local_date",

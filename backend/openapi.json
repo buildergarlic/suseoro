@@ -1997,7 +1997,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Code"
           },
           "message": {
@@ -2009,7 +2008,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Message"
           },
           "type": {
@@ -2021,10 +2019,14 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Type"
           }
         },
+        "required": [
+          "type",
+          "code",
+          "message"
+        ],
         "title": "JobError",
         "type": "object"
       },
@@ -3771,7 +3773,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Latest Job Id"
           },
           "latest_result": {
@@ -3782,8 +3783,7 @@
               {
                 "type": "null"
               }
-            ],
-            "default": null
+            ]
           },
           "mapping": {
             "additionalProperties": {
@@ -3870,7 +3870,9 @@
           "parsed_config_version",
           "row_version",
           "created_at",
-          "completed_at"
+          "completed_at",
+          "latest_job_id",
+          "latest_result"
         ],
         "title": "SourceResponse",
         "type": "object"
@@ -3910,7 +3912,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Repair Generation"
           },
           "repair_obligation_id": {
@@ -3922,7 +3923,6 @@
                 "type": "null"
               }
             ],
-            "default": null,
             "title": "Repair Obligation Id"
           },
           "source_id": {
@@ -3945,7 +3945,9 @@
           "filename",
           "status",
           "source_id",
-          "error"
+          "error",
+          "repair_obligation_id",
+          "repair_generation"
         ],
         "title": "UploadItem",
         "type": "object"

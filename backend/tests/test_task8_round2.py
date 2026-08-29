@@ -536,6 +536,8 @@ def test_source_and_workspace_job_discovery_survive_reload(data_dir) -> None:
     source = sources.json()["items"][0]
     assert source["latest_job_id"] == uploaded.json()["job_id"]
     assert source["latest_result"]["source_document_id"] == source["id"]
+    assert set(source["latest_result"]["error"]) == {"type", "code", "message"}
+    assert source["latest_result"]["error"]["type"] is None
     assert source["latest_result"]["mapping_required"]["headers"] == [
         "내부 열",
         "쓴 사람",
@@ -678,6 +680,7 @@ def test_compare_snapshot_rejects_mapping_mutation_and_fences_direct_drift(
     assert failed.status == "FAILED"
     job = client.get(f"/api/v2/jobs/{queued.json()['job_id']}").json()
     assert job["error"] == {
+        "type": None,
         "code": "JOB_FAILED",
         "message": "작업을 처리하지 못했습니다. 다시 시도해 주세요.",
     }
@@ -825,6 +828,7 @@ def test_legacy_compare_without_versioned_snapshot_fails_closed_then_recovers(
     assert stale_candidate_count == 1
     public = client.get(f"/api/v2/jobs/{legacy.id}").json()
     assert public["error"] == {
+        "type": None,
         "code": "JOB_FAILED",
         "message": "작업을 처리하지 못했습니다. 다시 시도해 주세요.",
     }
@@ -1006,6 +1010,7 @@ def test_comparison_row_failure_is_publicly_sanitized(data_dir) -> None:
     job = client.get(f"/api/v2/jobs/{queued.json()['job_id']}").json()
     serialized = str(job)
     assert job["items"][0]["error"] == {
+        "type": None,
         "code": "COMPARISON_FILE_FAILED",
         "message": "일부 책을 비교하지 못했습니다. 다시 시도해 주세요.",
     }
@@ -1034,10 +1039,12 @@ def test_comparison_row_failure_is_publicly_sanitized(data_dir) -> None:
         connection.commit()
     historical = client.get(f"/api/v2/jobs/{queued.json()['job_id']}").json()
     assert historical["error"] == {
+        "type": None,
         "code": "JOB_FAILED",
         "message": "작업을 처리하지 못했습니다. 다시 시도해 주세요.",
     }
     assert historical["items"][0]["error"] == {
+        "type": None,
         "code": "COMPARISON_FILE_FAILED",
         "message": "일부 책을 비교하지 못했습니다. 다시 시도해 주세요.",
     }

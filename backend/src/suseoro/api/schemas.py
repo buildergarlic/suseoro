@@ -80,8 +80,8 @@ class UploadItem(PublicSchema):
     status: str
     source_id: str | None
     error: UploadItemError | None
-    repair_obligation_id: str | None = None
-    repair_generation: int | None = None
+    repair_obligation_id: str | None
+    repair_generation: int | None
 
 
 class UploadResponse(PublicSchema):
@@ -127,8 +127,8 @@ class SourceResponse(PublicSchema):
     row_version: int
     created_at: str
     completed_at: str | None
-    latest_job_id: str | None = None
-    latest_result: JobFileResult | None = None
+    latest_job_id: str | None
+    latest_result: JobFileResult | None
 
 
 class SourcePage(PublicSchema):
@@ -182,9 +182,9 @@ class JobFileResult(PublicSchema):
 
 
 class JobError(PublicSchema):
-    type: str | None = None
-    code: str | None = None
-    message: str | None = None
+    type: str | None
+    code: str | None
+    message: str | None
 
 
 class JobResponse(PublicSchema):

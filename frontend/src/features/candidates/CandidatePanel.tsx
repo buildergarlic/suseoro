@@ -63,6 +63,69 @@ function candidateAmount(candidate: Candidate): number {
   return (candidate.unit_price ?? 0) * candidate.quantity;
 }
 
+function candidateOutcome(candidate: Candidate): Outcome | null {
+  return OUTCOMES.find((outcome) => outcome === candidate.outcome) ?? null;
+}
+
+function replaceCandidateInSummary(
+  summary: CandidateSummary,
+  previous: Candidate,
+  replacement: Candidate,
+): CandidateSummary {
+  const previousOutcome = candidateOutcome(previous);
+  const replacementOutcome = candidateOutcome(replacement);
+  if (!previousOutcome || !replacementOutcome) return summary;
+  const previousAmount =
+    previousOutcome === "CANDIDATE" ? candidateAmount(previous) : 0;
+  const replacementAmount =
+    replacementOutcome === "CANDIDATE" ? candidateAmount(replacement) : 0;
+  return {
+    ...summary,
+    candidate_count: Math.max(
+      0,
+      summary.candidate_count -
+        (previousOutcome === "CANDIDATE" ? 1 : 0) +
+        (replacementOutcome === "CANDIDATE" ? 1 : 0),
+    ),
+    needs_review_count: Math.max(
+      0,
+      summary.needs_review_count -
+        (previousOutcome === "NEEDS_REVIEW" ? 1 : 0) +
+        (replacementOutcome === "NEEDS_REVIEW" ? 1 : 0),
+    ),
+    excluded_count: Math.max(
+      0,
+      summary.excluded_count -
+        (previousOutcome === "EXCLUDED" ? 1 : 0) +
+        (replacementOutcome === "EXCLUDED" ? 1 : 0),
+    ),
+    unresolved_count: Math.max(
+      0,
+      summary.unresolved_count -
+        (previousOutcome === "NEEDS_REVIEW" ? 1 : 0) +
+        (replacementOutcome === "NEEDS_REVIEW" ? 1 : 0),
+    ),
+    expected_total_won: Math.max(
+      0,
+      summary.expected_total_won - previousAmount + replacementAmount,
+    ),
+  };
+}
+
+function sameSummary(
+  left: CandidateSummary,
+  right: CandidateSummary,
+): boolean {
+  return (
+    left.total_count === right.total_count &&
+    left.candidate_count === right.candidate_count &&
+    left.needs_review_count === right.needs_review_count &&
+    left.excluded_count === right.excluded_count &&
+    left.unresolved_count === right.unresolved_count &&
+    left.expected_total_won === right.expected_total_won
+  );
+}
+
 export function CandidatePanel({
   api,
   user,
@@ -82,12 +145,21 @@ export function CandidatePanel({
   const queryGenerationRef = useRef(0);
   const mutationEpochRef = useRef(0);
   const mutationInFlightRef = useRef(0);
-  const authoritativeOutcomesRef = useRef(new Map<string, Outcome>());
+  const authoritativeCandidatesRef = useRef(new Map<string, Candidate>());
   const operator = canOperate(user);
 
   useEffect(() => {
-    authoritativeOutcomesRef.current.clear();
+    authoritativeCandidatesRef.current.clear();
   }, [workspace.id]);
+
+  function reconcileCandidate(serverCandidate: Candidate): Candidate {
+    const committed = authoritativeCandidatesRef.current.get(serverCandidate.id);
+    if (!committed || serverCandidate.row_version > committed.row_version) {
+      authoritativeCandidatesRef.current.set(serverCandidate.id, serverCandidate);
+      return serverCandidate;
+    }
+    return committed;
+  }
 
   useEffect(() => {
     let active = true;
@@ -113,32 +185,69 @@ export function CandidatePanel({
             mutationWasInFlight ||
             mutationInFlightRef.current > 0
           ) return;
-          const next = Object.fromEntries(
-            results.map(([outcome, page]) => [
-              outcome,
-              {
-                items: page.items,
-                nextCursor: page.next_cursor,
-                totalCount: page.total_count,
-              },
-            ]),
-          ) as Record<Outcome, PageState>;
+          const pageState = (outcome: Outcome): PageState => {
+            const page = results.find(
+              ([resultOutcome]) => resultOutcome === outcome,
+            )?.[1];
+            return {
+              items: [],
+              nextCursor: page?.next_cursor ?? null,
+              totalCount: page?.total_count ?? 0,
+            };
+          };
+          const next: Record<Outcome, PageState> = {
+            NEEDS_REVIEW: pageState("NEEDS_REVIEW"),
+            CANDIDATE: pageState("CANDIDATE"),
+            EXCLUDED: pageState("EXCLUDED"),
+          };
           const canonical = new Map<string, Candidate>();
           for (const outcome of OUTCOMES) {
-            for (const candidate of next[outcome].items) {
+            const page = results.find(([resultOutcome]) => resultOutcome === outcome)?.[1];
+            for (const candidate of page?.items ?? []) {
               const existing = canonical.get(candidate.id);
               if (!existing || candidate.row_version >= existing.row_version) {
                 canonical.set(candidate.id, candidate);
               }
             }
-            next[outcome].items = [];
           }
-          for (const candidate of canonical.values()) {
-            const outcome = OUTCOMES.find((item) => item === candidate.outcome);
-            if (outcome) next[outcome].items.push(candidate);
+          const summaryBasis = results[0]?.[1].summary ?? EMPTY_SUMMARY;
+          const summaryBasisCandidates = new Map<string, Candidate>();
+          for (const [, page] of results) {
+            if (!sameSummary(page.summary, summaryBasis)) continue;
+            for (const candidate of page.items) {
+              const existing = summaryBasisCandidates.get(candidate.id);
+              if (!existing || candidate.row_version >= existing.row_version) {
+                summaryBasisCandidates.set(candidate.id, candidate);
+              }
+            }
+          }
+          let reconciledSummary = summaryBasis;
+          for (const serverCandidate of canonical.values()) {
+            const candidate = reconcileCandidate(serverCandidate);
+            const summaryBasisCandidate = summaryBasisCandidates.get(candidate.id);
+            if (summaryBasisCandidate) {
+              reconciledSummary = replaceCandidateInSummary(
+                reconciledSummary,
+                summaryBasisCandidate,
+                candidate,
+              );
+            } else if (candidate !== serverCandidate) {
+              reconciledSummary = replaceCandidateInSummary(
+                reconciledSummary,
+                serverCandidate,
+                candidate,
+              );
+            }
+            const outcome = candidateOutcome(candidate);
+            if (outcome && matchesSearch(candidate, search)) {
+              next[outcome].items.push(candidate);
+            }
+          }
+          for (const outcome of OUTCOMES) {
+            next[outcome].totalCount = summaryCount(reconciledSummary, outcome);
           }
           setPages(next);
-          setSummary(results[0]?.[1].summary ?? EMPTY_SUMMARY);
+          setSummary(reconciledSummary);
         })
         .catch((error: unknown) => {
           if (active) {
@@ -182,7 +291,7 @@ export function CandidatePanel({
     const newAmount = updated.outcome === "CANDIDATE" ? candidateAmount(updated) : 0;
     const previousOutcome = OUTCOMES.find((outcome) => outcome === previous.outcome);
     const updatedOutcome = OUTCOMES.find((outcome) => outcome === updated.outcome);
-    if (updatedOutcome) authoritativeOutcomesRef.current.set(updated.id, updatedOutcome);
+    if (updatedOutcome) authoritativeCandidatesRef.current.set(updated.id, updated);
     setPages((current) => {
       const next = { ...current };
       for (const outcome of OUTCOMES) {
@@ -231,7 +340,7 @@ export function CandidatePanel({
   ) {
     const authoritativeOutcome: "CANDIDATE" | "EXCLUDED" =
       candidate.outcome === "EXCLUDED" ? "EXCLUDED" : "CANDIDATE";
-    authoritativeOutcomesRef.current.set(candidate.id, authoritativeOutcome);
+    authoritativeCandidatesRef.current.set(candidate.id, candidate);
     setPages((current) => {
       const alreadyInTarget = current[authoritativeOutcome].items.some(
         (item) => item.id === candidate.id,
@@ -320,28 +429,64 @@ export function CandidatePanel({
         activeOutcome !== outcome ||
         search.trim() !== requestedSearch
       ) return;
+      const canonical = new Map<string, Candidate>();
+      for (const candidate of page.items) {
+        const existing = canonical.get(candidate.id);
+        if (!existing || candidate.row_version >= existing.row_version) {
+          canonical.set(candidate.id, candidate);
+        }
+      }
+      const reconciled = new Map<string, Candidate>();
+      let reconciledSummary = page.summary;
+      for (const serverCandidate of canonical.values()) {
+        const committed = authoritativeCandidatesRef.current.get(serverCandidate.id);
+        const candidate = reconcileCandidate(serverCandidate);
+        if (
+          committed &&
+          serverCandidate.row_version > committed.row_version &&
+          sameSummary(page.summary, summary)
+        ) {
+          reconciledSummary = replaceCandidateInSummary(
+            reconciledSummary,
+            committed,
+            serverCandidate,
+          );
+        } else if (candidate !== serverCandidate) {
+          reconciledSummary = replaceCandidateInSummary(
+            reconciledSummary,
+            serverCandidate,
+            candidate,
+          );
+        }
+        reconciled.set(candidate.id, candidate);
+      }
       setPages((current) => {
-        const merged = new Map(
-          current[outcome].items.map((candidate) => [candidate.id, candidate]),
-        );
-        for (const candidate of page.items) {
-          const committed = authoritativeOutcomesRef.current.get(candidate.id);
-          if (committed && committed !== outcome) continue;
-          if (candidate.outcome !== outcome) continue;
-          const existing = merged.get(candidate.id);
-          if (!existing || candidate.row_version >= existing.row_version) {
-            merged.set(candidate.id, candidate);
+        const incomingIds = new Set(canonical.keys());
+        const next = Object.fromEntries(
+          OUTCOMES.map((pageOutcome) => [
+            pageOutcome,
+            {
+              ...current[pageOutcome],
+              items: current[pageOutcome].items.filter(
+                (candidate) => !incomingIds.has(candidate.id),
+              ),
+              nextCursor:
+                pageOutcome === outcome
+                  ? page.next_cursor
+                  : current[pageOutcome].nextCursor,
+              totalCount: summaryCount(reconciledSummary, pageOutcome),
+            },
+          ]),
+        ) as Record<Outcome, PageState>;
+        for (const candidate of reconciled.values()) {
+          const candidatePage = candidateOutcome(candidate);
+          if (candidatePage && matchesSearch(candidate, requestedSearch)) {
+            next[candidatePage].items.push(candidate);
           }
         }
-        return {
-          ...current,
-          [outcome]: {
-            items: Array.from(merged.values()),
-            nextCursor: page.next_cursor,
-            totalCount: current[outcome].totalCount,
-          },
-        };
+        return next;
       });
+      setSummary(reconciledSummary);
     } catch (error) {
       setAnnouncement(
         error instanceof Error
@@ -375,7 +520,7 @@ export function CandidatePanel({
         };
         const restoredOutcome: "CANDIDATE" | "EXCLUDED" =
           restored.outcome === "EXCLUDED" ? "EXCLUDED" : "CANDIDATE";
-        authoritativeOutcomesRef.current.set(restored.id, restoredOutcome);
+        authoritativeCandidatesRef.current.set(restored.id, restored);
         updateCandidate(restored, candidate);
         setAnnouncement(
           restoredOutcome === "CANDIDATE"

@@ -486,6 +486,19 @@ def test_openapi_exposes_complete_stable_korean_v2_contract(data_dir: Path) -> N
     )
 
 
+def test_mutation_response_nullable_fields_are_explicitly_required(
+    data_dir: Path,
+) -> None:
+    client, _, _ = _client(data_dir)
+
+    with client:
+        schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    for schema_name in ("UploadItem", "SourceResponse", "JobError"):
+        schema = schemas[schema_name]
+        assert set(schema["required"]) == set(schema["properties"]), schema_name
+
+
 def test_login_runtime_headers_match_its_public_openapi_contract(
     data_dir: Path,
 ) -> None:
@@ -2893,7 +2906,11 @@ def test_empty_ingestion_is_failed_with_a_durable_zero_row_item(
             "total_rows": 0,
             "processed_rows": 0,
             "row_error_count": 0,
-            "error": {"code": "NO_LOGICAL_ROWS"},
+            "error": {
+                "type": None,
+                "code": "NO_LOGICAL_ROWS",
+                "message": None,
+            },
             "mapping_required": None,
         }
     ]

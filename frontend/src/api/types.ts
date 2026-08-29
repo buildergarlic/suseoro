@@ -1500,20 +1500,11 @@ export interface components {
         };
         /** JobError */
         JobError: {
-            /**
-             * Code
-             * @default null
-             */
+            /** Code */
             code: string | null;
-            /**
-             * Message
-             * @default null
-             */
+            /** Message */
             message: string | null;
-            /**
-             * Type
-             * @default null
-             */
+            /** Type */
             type: string | null;
         };
         /** JobFileResult */
@@ -2093,12 +2084,8 @@ export interface components {
             filename: string;
             /** Id */
             id: string;
-            /**
-             * Latest Job Id
-             * @default null
-             */
+            /** Latest Job Id */
             latest_job_id: string | null;
-            /** @default null */
             latest_result: components["schemas"]["JobFileResult"] | null;
             /** Mapping */
             mapping: {
@@ -2135,15 +2122,9 @@ export interface components {
             error: components["schemas"]["UploadItemError"] | null;
             /** Filename */
             filename: string;
-            /**
-             * Repair Generation
-             * @default null
-             */
+            /** Repair Generation */
             repair_generation: number | null;
-            /**
-             * Repair Obligation Id
-             * @default null
-             */
+            /** Repair Obligation Id */
             repair_obligation_id: string | null;
             /** Source Id */
             source_id: string | null;

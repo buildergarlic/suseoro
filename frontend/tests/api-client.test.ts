@@ -6,6 +6,324 @@ import {
   OfflineMutationError,
   type SuseoroApi,
 } from "../src/api/client";
+import type { components } from "../src/api/types";
+
+type Schemas = components["schemas"];
+
+const validUserResponse = {
+  id: "user-1",
+  school_id: "school-1",
+  username: "operator",
+  display_name: "담당자",
+  roles: ["OPERATOR"],
+} satisfies Schemas["UserResponse"];
+
+const validUploadResponse = {
+  job_id: "job-upload",
+  items: [
+    {
+      filename: "books.csv",
+      status: "ACCEPTED",
+      source_id: "source-upload",
+      error: null,
+      repair_obligation_id: null,
+      repair_generation: null,
+    },
+  ],
+} satisfies Schemas["UploadResponse"];
+
+const validUploadErrorResponse = {
+  job_id: null,
+  items: [
+    {
+      filename: "broken.exe",
+      status: "FAILED",
+      source_id: null,
+      error: { code: "UNSUPPORTED_FILE_TYPE", message: "지원하지 않는 형식입니다." },
+      repair_obligation_id: "repair-1",
+      repair_generation: 1,
+    },
+  ],
+} satisfies Schemas["UploadResponse"];
+
+const validJobCommandResponse = {
+  id: "job-command",
+  workspace_id: "workspace-1",
+  type: "INGEST",
+  status: "QUEUED",
+  stage: "QUEUED",
+  progress_current: 0,
+  progress_total: 1,
+  error: null,
+  retry_count: 1,
+} satisfies Schemas["JobCommandResponse"];
+
+const validErroredJobCommandResponse = {
+  ...validJobCommandResponse,
+  status: "FAILED",
+  stage: "FAILED",
+  error: { type: "JobFailure", code: "JOB_FAILED", message: "다시 시도해 주세요." },
+} satisfies Schemas["JobCommandResponse"];
+
+const validQueuedJobResponse = {
+  job_id: "job-parse",
+  status: "QUEUED",
+} satisfies Schemas["QueuedJobResponse"];
+
+const validSourceResponse = {
+  id: "source-1",
+  filename: "books.csv",
+  sha256: "a".repeat(64),
+  size_bytes: 12,
+  role: "VENDOR_QUOTE",
+  status: "PENDING",
+  detected_format: "CSV",
+  mapping: { 제목: "title" },
+  vendor_scope: "vendor-a",
+  remember_template: false,
+  requested_start_local_date: null,
+  requested_through_local_date: null,
+  parsed_config_version: null,
+  row_version: 2,
+  created_at: "2026-08-29T00:00:00Z",
+  completed_at: null,
+  latest_job_id: null,
+  latest_result: null,
+} satisfies Schemas["SourceResponse"];
+
+const validSourceWithResultResponse = {
+  ...validSourceResponse,
+  latest_job_id: "job-parse",
+  latest_result: {
+    source_document_id: "source-1",
+    filename: "books.csv",
+    status: "PARTIAL",
+    total_rows: 1,
+    processed_rows: 0,
+    row_error_count: 0,
+    error: { type: null, code: "MAPPING_REQUIRED", message: "연결이 필요합니다." },
+    mapping_required: {
+      headers: ["제목"],
+      preview_rows: [["책"]],
+      suggested_mapping: { 제목: null },
+      required_fields: ["title"],
+      confidence: 0.25,
+      questions: ["제목 열을 골라 주세요."],
+    },
+  },
+} satisfies Schemas["SourceResponse"];
+
+const validComparisonResponse = {
+  job_id: "job-compare",
+  status: "QUEUED",
+  workspace_status: "ANALYZING",
+  row_version: 2,
+} satisfies Schemas["ComparisonJobResponse"];
+
+const validLockResponse = {
+  candidate_id: "candidate-1",
+  actor_id: "user-1",
+  expires_at: "2026-08-29T00:01:00Z",
+} satisfies Schemas["CandidateLockResponse"];
+
+const validCandidateMutationResponse = {
+  id: "candidate-1",
+  outcome: "CANDIDATE",
+  quantity: 2,
+  unit_price: 12_000,
+  row_version: 2,
+} satisfies Schemas["CandidateMutationResponse"];
+
+const validApprovalResponse = {
+  revision_id: "revision-1",
+  revision_number: 1,
+  sha256: "b".repeat(64),
+  expected_total_won: 24_000,
+  budget_won: 30_000,
+  state: "AWAITING_APPROVAL",
+  row_version: 3,
+} satisfies Schemas["ApprovalRequestResponse"];
+
+type MutationContractCase = {
+  name: string;
+  malformed: unknown;
+  valid: unknown;
+  invoke: (client: SuseoroApi) => Promise<unknown>;
+};
+
+const mutationContractCases: MutationContractCase[] = [
+  {
+    name: "login roles 원소",
+    malformed: { ...validUserResponse, roles: [null] },
+    valid: validUserResponse,
+    invoke: (client) =>
+      client.login({ school_id: "school-1", username: "operator", password: "pw" }),
+  },
+  {
+    name: "upload item error",
+    malformed: {
+      ...validUploadResponse,
+      items: validUploadResponse.items.map(({ error: _error, ...item }) => item),
+    },
+    valid: validUploadResponse,
+    invoke: (client) =>
+      client.uploadSources("workspace-1", {
+        files: [new File(["제목\n책\n"], "books.csv", { type: "text/csv" })],
+        role: "PURCHASE_REQUEST",
+      }),
+  },
+  {
+    name: "upload item repair obligation",
+    malformed: {
+      ...validUploadResponse,
+      items: validUploadResponse.items.map(
+        ({ repair_obligation_id: _repairObligationId, ...item }) => item,
+      ),
+    },
+    valid: validUploadResponse,
+    invoke: (client) =>
+      client.uploadSources("workspace-1", {
+        files: [new File(["제목\n책\n"], "books.csv", { type: "text/csv" })],
+        role: "PURCHASE_REQUEST",
+      }),
+  },
+  {
+    name: "upload item repair generation",
+    malformed: {
+      ...validUploadResponse,
+      items: validUploadResponse.items.map(
+        ({ repair_generation: _repairGeneration, ...item }) => item,
+      ),
+    },
+    valid: validUploadResponse,
+    invoke: (client) =>
+      client.uploadSources("workspace-1", {
+        files: [new File(["제목\n책\n"], "books.csv", { type: "text/csv" })],
+        role: "PURCHASE_REQUEST",
+      }),
+  },
+  {
+    name: "upload nested error message",
+    malformed: {
+      ...validUploadErrorResponse,
+      items: validUploadErrorResponse.items.map((item) => ({
+        ...item,
+        error: { code: item.error.code },
+      })),
+    },
+    valid: validUploadErrorResponse,
+    invoke: (client) =>
+      client.uploadSources("workspace-1", {
+        files: [new File(["broken"], "broken.exe")],
+        role: "UNKNOWN",
+      }),
+  },
+  {
+    name: "retry job error",
+    malformed: (({ error: _error, ...value }) => value)(validJobCommandResponse),
+    valid: validJobCommandResponse,
+    invoke: (client) => client.retryJob("job-command"),
+  },
+  {
+    name: "cancel job workspace",
+    malformed: (({ workspace_id: _workspaceId, ...value }) => value)(
+      validJobCommandResponse,
+    ),
+    valid: validJobCommandResponse,
+    invoke: (client) => client.cancelJob("job-command"),
+  },
+  {
+    name: "job nested nullable error type",
+    malformed: {
+      ...validErroredJobCommandResponse,
+      error: { code: "JOB_FAILED", message: "다시 시도해 주세요." },
+    },
+    valid: validErroredJobCommandResponse,
+    invoke: (client) => client.retryJob("job-command-error"),
+  },
+  {
+    name: "parse unexpected property",
+    malformed: { ...validQueuedJobResponse, unexpected: true },
+    valid: validQueuedJobResponse,
+    invoke: (client) => client.parseSource("source-1"),
+  },
+  {
+    name: "mapping truncated source",
+    malformed: {
+      id: validSourceResponse.id,
+      role: validSourceResponse.role,
+      mapping: validSourceResponse.mapping,
+      row_version: validSourceResponse.row_version,
+    },
+    valid: validSourceResponse,
+    invoke: (client) =>
+      client.updateSourceMapping(
+        "source-1",
+        {
+          role: "VENDOR_QUOTE",
+          vendor_scope: "vendor-a",
+          mapping: { 제목: "title" },
+          remember_template: false,
+        },
+        1,
+      ),
+  },
+  {
+    name: "mapping nested latest result",
+    malformed: {
+      ...validSourceWithResultResponse,
+      latest_result: (({ mapping_required: _mappingRequired, ...result }) => result)(
+        validSourceWithResultResponse.latest_result,
+      ),
+    },
+    valid: validSourceWithResultResponse,
+    invoke: (client) =>
+      client.updateSourceMapping(
+        "source-1",
+        {
+          role: "VENDOR_QUOTE",
+          vendor_scope: "vendor-a",
+          mapping: { 제목: "title" },
+          remember_template: false,
+        },
+        1,
+      ),
+  },
+  {
+    name: "comparison fractional version",
+    malformed: { ...validComparisonResponse, row_version: 2.5 },
+    valid: validComparisonResponse,
+    invoke: (client) => client.createComparisonJob("workspace-1", [], 1),
+  },
+  {
+    name: "candidate lock unexpected property",
+    malformed: { ...validLockResponse, unexpected: true },
+    valid: validLockResponse,
+    invoke: (client) => client.lockCandidate("candidate-1", "workspace-1"),
+  },
+  {
+    name: "candidate fractional quantity",
+    malformed: { ...validCandidateMutationResponse, quantity: 1.5 },
+    valid: validCandidateMutationResponse,
+    invoke: (client) =>
+      client.updateCandidate(
+        "candidate-1",
+        { workspace_id: "workspace-1", changes: { quantity: 2 }, reason: "둘" },
+        1,
+      ),
+  },
+  {
+    name: "approval fractional budget",
+    malformed: { ...validApprovalResponse, budget_won: 30_000.5 },
+    valid: validApprovalResponse,
+    invoke: (client) =>
+      client.requestApproval(
+        "workspace-1",
+        { budget_won: 30_000, reason: "승인 요청" },
+        2,
+      ),
+  },
+];
 
 const originalOnline = Object.getOwnPropertyDescriptor(
   window.navigator,
@@ -463,6 +781,40 @@ describe("생성 계약을 쓰는 API client", () => {
     expect(keys[0]).toBeTruthy();
     expect(keys[1]).toBe(keys[0]);
   });
+
+  test.each(mutationContractCases)(
+    "$name 계약 위반 2xx는 같은 논리 행동 key로만 재확인한다",
+    async ({ malformed, valid, invoke }) => {
+      const keys: string[] = [];
+      let call = 0;
+      vi.stubGlobal(
+        "fetch",
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = new Request(
+            typeof input === "string"
+              ? new URL(input, window.location.href)
+              : input,
+            init,
+          );
+          keys.push(request.headers.get("Idempotency-Key") ?? "");
+          call += 1;
+          return new Response(JSON.stringify(call === 1 ? malformed : valid), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+      );
+      const client = createApiClient();
+
+      await expect(invoke(client)).rejects.toThrow("서버 응답");
+      await invoke(client);
+      await invoke(client);
+
+      expect(keys[0]).toBeTruthy();
+      expect(keys[1]).toBe(keys[0]);
+      expect(keys[2]).not.toBe(keys[1]);
+    },
+  );
 
   test("필수 필드가 빠진 JSON 2xx도 모호한 응답으로 보고 같은 업로드 key를 보존한다", async () => {
     const keys: string[] = [];

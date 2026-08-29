@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 
-import type { SuseoroApi, Workspace } from "../../api/client";
+import type { Source, SuseoroApi, Workspace } from "../../api/client";
 import type { components } from "../../api/types";
 import { MappingDialog } from "./MappingDialog";
 
@@ -30,6 +30,7 @@ interface MappingState {
   sourceVersion: number;
   mappingRequired: MappingRequired;
   role: DocumentRole;
+  vendorScope: string;
 }
 
 interface RecheckState {
@@ -81,6 +82,19 @@ function errorCode(error: unknown): string | null {
     return error.detail.code;
   }
   return null;
+}
+
+function mappingStateFromSource(
+  source: Source,
+  mappingRequired: MappingRequired,
+): MappingState {
+  return {
+    sourceId: source.id,
+    sourceVersion: source.row_version,
+    mappingRequired,
+    role: source.role as DocumentRole,
+    vendorScope: source.vendor_scope,
+  };
 }
 
 export function IngestionPanel({
@@ -368,12 +382,12 @@ export function IngestionPanel({
             sourceResultsRef.current.set(source.id, source.latest_result);
           }
           if (source.latest_result?.mapping_required) {
-            mappingStates.push({
-              sourceId: source.id,
-              sourceVersion: source.row_version,
-              mappingRequired: source.latest_result.mapping_required,
-              role: source.role as DocumentRole,
-            });
+            mappingStates.push(
+              mappingStateFromSource(
+                source,
+                source.latest_result.mapping_required,
+              ),
+            );
           }
           if (source.latest_job_id !== null) {
             const linked = sourceJobsRef.current.get(source.latest_job_id) ?? [];
@@ -826,12 +840,10 @@ export function IngestionPanel({
       const states = await Promise.all(
         mappingItems.map(async (item) => {
           const source = await api.getSource(item.source_document_id);
-          return {
-            sourceId: source.data.id,
-            sourceVersion: source.data.row_version,
-            mappingRequired: item.mapping_required as MappingRequired,
-            role: source.data.role as DocumentRole,
-          };
+          return mappingStateFromSource(
+            source.data,
+            item.mapping_required as MappingRequired,
+          );
         }),
       );
       if (mountedRef.current) {
@@ -1240,12 +1252,7 @@ export function IngestionPanel({
     try {
       const source = await api.getSource(sourceId);
       setMappingQueue((current) => [
-        {
-          sourceId,
-          sourceVersion: source.data.row_version,
-          mappingRequired,
-          role: source.data.role as DocumentRole,
-        },
+        mappingStateFromSource(source.data, mappingRequired),
         ...current.filter((item) => item.sourceId !== sourceId),
       ]);
       setMappingOpen(true);
@@ -1269,14 +1276,19 @@ export function IngestionPanel({
           role: mapping.role,
           mapping: mappingFields,
           remember_template: rememberTemplate,
-          vendor_scope: "*",
+          vendor_scope: mapping.vendorScope,
         },
         mapping.sourceVersion,
       );
       setMappingQueue((current) =>
         current.map((item) =>
           item.sourceId === mapping.sourceId
-            ? { ...item, sourceVersion: updated.data.row_version }
+            ? {
+                ...item,
+                sourceVersion: updated.data.row_version,
+                role: updated.data.role as DocumentRole,
+                vendorScope: updated.data.vendor_scope,
+              }
             : item,
         ),
       );

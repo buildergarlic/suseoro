@@ -298,14 +298,21 @@ class BackupService:
     @classmethod
     def _validate_migration_history(cls, schema: tuple[dict[str, str], ...]) -> None:
         bundled = cls._bundled_schema()
-        if (
-            not schema
-            or len(schema) > len(bundled)
-            or tuple(bundled[: len(schema)]) != schema
-        ):
-            raise RestoreVerificationError(
-                "backup migration history is future, incomplete, or altered"
-            )
+        if schema and len(schema) <= len(bundled):
+            if tuple(bundled[: len(schema)]) == schema:
+                return
+            historical_0011: list[dict[str, str]] = []
+            for migration in bundled:
+                if migration["version"] == "0010a_task8_round4_upgrade_prelude":
+                    continue
+                historical_0011.append(migration)
+                if migration["version"] == "0011_task8_round3_integrity":
+                    break
+            if tuple(historical_0011) == schema:
+                return
+        raise RestoreVerificationError(
+            "backup migration history is future, incomplete, or altered"
+        )
 
     def _open_restore_journal(self) -> sqlite3.Connection:
         journal = sqlite3.connect(

@@ -60,6 +60,7 @@ describe("후보 만들기 자료 입력", () => {
       id: "source-reload-map",
       filename: "vendor.xlsx",
       role: "VENDOR_QUOTE" as const,
+      vendor_scope: "bookstore-a",
       latest_job_id: "ingest-reload-map",
       latest_result: {
         source_document_id: "source-reload-map",
@@ -72,7 +73,7 @@ describe("후보 만들기 자료 입력", () => {
         mapping_required: mappingRequired,
       },
     };
-    const mappings: Array<{ role: string; version: number }> = [];
+    const mappings: Array<{ role: string; vendorScope: string; version: number }> = [];
     const api = createFixtureApi({
       getWorkspace: async () => ({ data: draft, etag: '"1"' }),
       getSource: async () => ({ data: source, etag: '"1"' }),
@@ -82,7 +83,7 @@ describe("후보 만들기 자료 입력", () => {
         next_cursor: null,
       }),
       updateSourceMapping: async (_sourceId, input, version) => {
-        mappings.push({ role: input.role, version });
+        mappings.push({ role: input.role, vendorScope: input.vendor_scope, version });
         return { data: { ...source, role: input.role, row_version: 2 }, etag: '"2"' };
       },
       parseSource: async () => ({ job_id: "parse-reload-map", status: "QUEUED" }),
@@ -98,7 +99,11 @@ describe("후보 만들기 자료 입력", () => {
     const dialog = await screen.findByRole("dialog", { name: "열 연결 확인" });
     expect(within(dialog).getByText("다시 연 책")).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "열 연결 적용" }));
-    await waitFor(() => expect(mappings).toEqual([{ role: "VENDOR_QUOTE", version: 1 }]));
+    await waitFor(() =>
+      expect(mappings).toEqual([
+        { role: "VENDOR_QUOTE", vendorScope: "bookstore-a", version: 1 },
+      ]),
+    );
   });
 
   test("열 연결이 필요한 자료가 있어도 함께 진행 중인 다른 자료를 계속 확인한다", async () => {
@@ -860,7 +865,35 @@ describe("후보 만들기 자료 입력", () => {
       mapping_required: null,
     };
     const uploadedRoles: string[] = [];
+    const mappingScopes: string[] = [];
     const comparisons: string[][] = [];
+    const mappingRequired = {
+      headers: ["서점 제목"],
+      preview_rows: [["견적 책"]],
+      suggested_mapping: { "서점 제목": "title" },
+      required_fields: ["title"],
+      confidence: 0,
+      questions: ["제목 열을 확인해 주세요."],
+    };
+    const vendorMappingResult = {
+      source_document_id: "source-vendor-repaired",
+      filename: "quote-fixed.xlsx",
+      status: "PARTIAL",
+      total_rows: 1,
+      processed_rows: 0,
+      row_error_count: 0,
+      error: { code: "MAPPING_REQUIRED", message: "열 연결 확인", type: null },
+      mapping_required: mappingRequired,
+    };
+    const repairedVendorSource = {
+      ...sourceFixture,
+      id: "source-vendor-repaired",
+      filename: "quote-fixed.xlsx",
+      role: "VENDOR_QUOTE" as const,
+      vendor_scope: "bookstore-a",
+      latest_job_id: "parse-vendor-repair",
+      latest_result: vendorMappingResult,
+    };
     const api = createFixtureApi({
       listSources: async () => ({
         items: [
@@ -911,23 +944,41 @@ describe("후보 만들기 자료 입력", () => {
           ],
         };
       },
+      getSource: async () => ({ data: repairedVendorSource, etag: '"1"' }),
+      updateSourceMapping: async (_sourceId, input, version) => {
+        mappingScopes.push(input.vendor_scope);
+        return {
+          data: {
+            ...repairedVendorSource,
+            mapping: input.mapping ?? {},
+            row_version: version + 1,
+          },
+          etag: '"2"',
+        };
+      },
+      parseSource: async () => ({
+        job_id: "parse-vendor-remapped",
+        status: "QUEUED",
+      }),
       getJob: async (jobId) => ({
         ...idleJob,
         id: jobId,
-        type: "PARSE",
-        status: "SUCCEEDED",
-        items: [
-          {
-            source_document_id: "source-vendor-repaired",
-            filename: "quote-fixed.xlsx",
-            status: "SUCCESS",
-            total_rows: 1,
-            processed_rows: 1,
-            row_error_count: 0,
-            error: null,
-            mapping_required: null,
-          },
-        ],
+        type: jobId.startsWith("parse-") ? "PARSE" : "COMPARE",
+        status: jobId === "parse-vendor-repair" ? "PARTIAL" : "SUCCEEDED",
+        items:
+          jobId === "parse-vendor-repair"
+            ? [vendorMappingResult]
+            : jobId === "parse-vendor-remapped"
+              ? [
+                  {
+                    ...vendorMappingResult,
+                    status: "SUCCESS",
+                    processed_rows: 1,
+                    error: null,
+                    mapping_required: null,
+                  },
+                ]
+              : [],
       }),
       createComparisonJob: async (_workspaceId, sourceIds) => {
         comparisons.push(sourceIds);
@@ -946,7 +997,11 @@ describe("후보 만들기 자료 입력", () => {
       new File(["binary"], "quote-fixed.xlsx"),
     );
 
+    const dialog = await screen.findByRole("dialog", { name: "열 연결 확인" });
+    await user.click(within(dialog).getByRole("button", { name: "열 연결 적용" }));
+
     await waitFor(() => expect(uploadedRoles).toEqual(["VENDOR_QUOTE"]));
+    await waitFor(() => expect(mappingScopes).toEqual(["bookstore-a"]));
     await waitFor(() => expect(comparisons).toEqual([["source-purchase-ready"]]));
   });
 
@@ -3288,6 +3343,66 @@ describe("후보 확인과 자동 저장", () => {
     expect(screen.getByRole("status")).toHaveTextContent("수서 후보로 되돌렸습니다");
   });
 
+  test("outcome별 초기 응답이 엇갈리면 최신 행 판본에 맞춰 전체 요약도 갱신한다", async () => {
+    const user = userEvent.setup();
+    const older = {
+      ...candidate(
+        "candidate-interleaved-summary",
+        "엇갈린 판본 책",
+        "NEEDS_REVIEW",
+        "판정을 기다립니다.",
+      ),
+      row_version: 2,
+    };
+    const newer = {
+      ...older,
+      outcome: "EXCLUDED",
+      reason: "LIBRARIAN_DECISION",
+      row_version: 3,
+    };
+    const olderSummary = {
+      total_count: 1,
+      candidate_count: 0,
+      needs_review_count: 1,
+      excluded_count: 0,
+      unresolved_count: 1,
+      expected_total_won: 0,
+    };
+    const newerSummary = {
+      ...olderSummary,
+      needs_review_count: 0,
+      excluded_count: 1,
+      unresolved_count: 0,
+    };
+    const api = candidateApi({
+      listCandidates: async (
+        _workspaceId: string,
+        filters: { outcome: string },
+      ) => ({
+        items:
+          filters.outcome === "NEEDS_REVIEW"
+            ? [older]
+            : filters.outcome === "EXCLUDED"
+              ? [newer]
+              : [],
+        next_cursor: null,
+        total_count: filters.outcome === "EXCLUDED" ? 1 : 0,
+        summary:
+          filters.outcome === "NEEDS_REVIEW" ? olderSummary : newerSummary,
+      }),
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+
+    const excluded = await screen.findByRole("tab", { name: "제외된 책 1" });
+    expect(screen.getByRole("tab", { name: "확인 필요 0" })).toBeVisible();
+    await user.click(excluded);
+    expect(await screen.findByText("엇갈린 판본 책")).toBeVisible();
+    await user.type(screen.getByRole("spinbutton", { name: "승인 예산" }), "10000");
+    expect(
+      screen.getByRole("button", { name: "후보 확정하고 승인 요청" }),
+    ).toBeEnabled();
+  });
+
   test("탭 수·미해결·예상 금액은 서버 전체 요약을 쓰고 cursor 다음 후보를 이어 붙인다", async () => {
     const user = userEvent.setup();
     const first = candidate("candidate-page-1", "첫 페이지 책", "CANDIDATE");
@@ -3409,6 +3524,222 @@ describe("후보 확인과 자동 저장", () => {
     expect(await screen.findByText("다음 확인 책")).toBeVisible();
     expect(screen.queryByText("이미 판정한 책")).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "확인 필요 1" })).toBeVisible();
+  });
+
+  test("판정 뒤 더 새로운 서버 판본은 다른 outcome과 전체 count를 함께 갱신한다", async () => {
+    const user = userEvent.setup();
+    const moved = candidate(
+      "candidate-moved-newer-page",
+      "다시 판정된 책",
+      "NEEDS_REVIEW",
+      "판정을 기다립니다.",
+    );
+    const excludedSeed = candidate(
+      "candidate-excluded-seed",
+      "기존 제외 책",
+      "EXCLUDED",
+      "EXACT_ISBN_MATCH",
+    );
+    const newer = {
+      ...moved,
+      outcome: "EXCLUDED",
+      reason: "LIBRARIAN_DECISION",
+      row_version: 3,
+    };
+    const initialSummary = {
+      total_count: 2,
+      candidate_count: 0,
+      needs_review_count: 1,
+      excluded_count: 1,
+      unresolved_count: 1,
+      expected_total_won: 0,
+    };
+    const api = candidateApi({
+      listCandidates: async (
+        _workspaceId: string,
+        filters: { outcome: string; cursor?: string },
+      ) => {
+        if (filters.cursor === "excluded-next") {
+          return {
+            items: [newer],
+            next_cursor: null,
+            total_count: 2,
+            summary: {
+              ...initialSummary,
+              candidate_count: 0,
+              needs_review_count: 0,
+              excluded_count: 2,
+              unresolved_count: 0,
+            },
+          };
+        }
+        const items =
+          filters.outcome === "NEEDS_REVIEW"
+            ? [moved]
+            : filters.outcome === "EXCLUDED"
+              ? [excludedSeed]
+              : [];
+        return {
+          items,
+          next_cursor:
+            filters.outcome === "EXCLUDED" ? "excluded-next" : null,
+          total_count: items.length,
+          summary: initialSummary,
+        };
+      },
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+
+    await user.click(
+      await screen.findByRole("button", { name: "다시 판정된 책 수서 후보로 포함" }),
+    );
+    expect(screen.getByRole("tab", { name: "수서 후보 1" })).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "제외된 책 1" }));
+    await user.click(screen.getByRole("button", { name: "제외된 책 더 보기" }));
+
+    expect(await screen.findByText("다시 판정된 책")).toBeVisible();
+    expect(screen.getByRole("tab", { name: "수서 후보 0" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "제외된 책 2" })).toBeVisible();
+    expect(screen.getAllByText("다시 판정된 책")).toHaveLength(1);
+  });
+
+  test("cursor 행이 요약보다 새 판본이면 행 이동을 전체 count에도 한 번 반영한다", async () => {
+    const user = userEvent.setup();
+    const older = {
+      ...candidate(
+        "candidate-cursor-summary-skew",
+        "cursor 요약 판본 책",
+        "NEEDS_REVIEW",
+        "판정을 기다립니다.",
+      ),
+      row_version: 2,
+    };
+    const newer = {
+      ...older,
+      outcome: "EXCLUDED",
+      reason: "LIBRARIAN_DECISION",
+      row_version: 3,
+    };
+    const excludedSeed = candidate(
+      "candidate-cursor-summary-seed",
+      "기존 cursor 제외 책",
+      "EXCLUDED",
+      "EXACT_ISBN_MATCH",
+    );
+    const olderSummary = {
+      total_count: 2,
+      candidate_count: 0,
+      needs_review_count: 1,
+      excluded_count: 1,
+      unresolved_count: 1,
+      expected_total_won: 0,
+    };
+    const api = candidateApi({
+      listCandidates: async (
+        _workspaceId: string,
+        filters: { outcome: string; cursor?: string },
+      ) => {
+        if (filters.cursor === "skew-next") {
+          return {
+            items: [newer],
+            next_cursor: null,
+            total_count: 2,
+            summary: olderSummary,
+          };
+        }
+        return {
+          items:
+            filters.outcome === "NEEDS_REVIEW"
+              ? [older]
+              : filters.outcome === "EXCLUDED"
+                ? [excludedSeed]
+                : [],
+          next_cursor: filters.outcome === "EXCLUDED" ? "skew-next" : null,
+          total_count: filters.outcome === "EXCLUDED" ? 2 : 1,
+          summary: olderSummary,
+        };
+      },
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+
+    await user.click(await screen.findByRole("tab", { name: "제외된 책 1" }));
+    await user.click(screen.getByRole("button", { name: "제외된 책 더 보기" }));
+
+    expect(await screen.findByText("cursor 요약 판본 책")).toBeVisible();
+    expect(screen.getByRole("tab", { name: "확인 필요 0" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "제외된 책 2" })).toBeVisible();
+  });
+
+  test("검색 재조회는 동일 판본을 되돌리지 않고 더 최신 판본만 받아들인다", async () => {
+    const user = userEvent.setup();
+    const original = candidate(
+      "candidate-search-fence",
+      "검색 판본 책",
+      "NEEDS_REVIEW",
+      "판정을 기다립니다.",
+    );
+    let phase: "equal" | "newer" = "equal";
+    const api = candidateApi({
+      listCandidates: async (
+        _workspaceId: string,
+        filters: { outcome: string; search?: string },
+      ) => {
+        if (!filters.search) {
+          const included = filters.outcome === "NEEDS_REVIEW";
+          return {
+            items: included ? [original] : [],
+            next_cursor: null,
+            total_count: included ? 1 : 0,
+            summary: {
+              total_count: 1,
+              candidate_count: 0,
+              needs_review_count: 1,
+              excluded_count: 0,
+              unresolved_count: 1,
+              expected_total_won: 0,
+            },
+          };
+        }
+        const outcome = phase === "equal" ? "NEEDS_REVIEW" : "EXCLUDED";
+        const serverCandidate = {
+          ...original,
+          outcome,
+          row_version: phase === "equal" ? 2 : 3,
+        };
+        const included = filters.outcome === outcome;
+        return {
+          items: included ? [serverCandidate] : [],
+          next_cursor: null,
+          total_count: included ? 1 : 0,
+          summary: {
+            total_count: 1,
+            candidate_count: 0,
+            needs_review_count: phase === "equal" ? 1 : 0,
+            excluded_count: phase === "newer" ? 1 : 0,
+            unresolved_count: phase === "equal" ? 1 : 0,
+            expected_total_won: 0,
+          },
+        };
+      },
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+
+    await user.click(
+      await screen.findByRole("button", { name: "검색 판본 책 수서 후보로 포함" }),
+    );
+    const searchbox = screen.getByRole("searchbox", { name: "후보 필터" });
+    await user.type(searchbox, "검색");
+    expect(await screen.findByRole("tab", { name: "수서 후보 1" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "확인 필요 0" })).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "수서 후보 1" }));
+    expect(screen.getByText("검색 판본 책")).toBeVisible();
+
+    phase = "newer";
+    await user.clear(searchbox);
+    await user.type(searchbox, "판본");
+    expect(await screen.findByRole("tab", { name: "수서 후보 0" })).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "제외된 책 1" }));
+    expect(await screen.findByText("검색 판본 책")).toBeVisible();
   });
 
   test("이전 cursor 응답은 새 검색의 후보와 전체 금액을 되돌리지 않는다", async () => {
