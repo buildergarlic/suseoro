@@ -33,6 +33,17 @@ class Job:
     updated_at: datetime
 
 
+def _decode_error(value: object) -> dict[str, Any] | None:
+    """Decode legacy error storage without letting malformed JSON break a boundary."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        decoded = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
 def _job(row: sqlite3.Row | None) -> Job | None:
     if row is None:
         return None
@@ -52,7 +63,7 @@ def _job(row: sqlite3.Row | None) -> Job | None:
             else None
         ),
         heartbeat_at=parse_utc(row["heartbeat_at"]) if row["heartbeat_at"] else None,
-        error=json.loads(row["error_json"]) if row["error_json"] else None,
+        error=_decode_error(row["error_json"]),
         retry_count=row["retry_count"],
         claim_token=row["claim_token"],
         claim_generation=row["claim_generation"],
@@ -415,6 +426,7 @@ class JobRepository:
         processed_rows: int,
         row_error_count: int = 0,
         error: dict[str, Any] | None = None,
+        public_mapping_payload_version: int | None = None,
         now: datetime | None = None,
     ) -> None:
         job = self.assert_claim(job_id, claim_token, claim_generation)
@@ -435,8 +447,9 @@ class JobRepository:
             INSERT INTO job_file_results (
                 id, job_id, source_document_id, status, total_rows,
                 processed_rows, row_error_count, error_json, claim_token,
-                claim_generation, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                claim_generation, public_mapping_payload_version,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (job_id, source_document_id) DO UPDATE SET
                 status = excluded.status, total_rows = excluded.total_rows,
                 processed_rows = excluded.processed_rows,
@@ -444,6 +457,8 @@ class JobRepository:
                 error_json = excluded.error_json,
                 claim_token = excluded.claim_token,
                 claim_generation = excluded.claim_generation,
+                public_mapping_payload_version =
+                    excluded.public_mapping_payload_version,
                 updated_at = excluded.updated_at
             """,
             (
@@ -459,18 +474,40 @@ class JobRepository:
                 else None,
                 claim_token,
                 claim_generation,
+                public_mapping_payload_version,
                 timestamp,
                 timestamp,
             ),
         )
 
     def file_results(self, job_id: str) -> list[dict[str, Any]]:
-        rows = self.connection.execute(
+        has_count_history = (
+            self.connection.execute(
+                """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'job_file_result_count_history'
             """
-            SELECT result.*, file.original_filename
+            ).fetchone()
+            is not None
+        )
+        history_projection = (
+            "COALESCE(history.confidence, 'EXACT') AS count_confidence"
+            if has_count_history
+            else "'UNVERIFIED' AS count_confidence"
+        )
+        history_join = (
+            "LEFT JOIN job_file_result_count_history history "
+            "ON history.job_file_result_id = result.id"
+            if has_count_history
+            else ""
+        )
+        rows = self.connection.execute(
+            f"""
+            SELECT result.*, file.original_filename, {history_projection}
             FROM job_file_results result
             JOIN source_documents document ON document.id = result.source_document_id
             JOIN source_files file ON file.id = document.source_file_id
+            {history_join}
             WHERE result.job_id = ?
             ORDER BY file.original_filename, result.source_document_id
             """,
@@ -478,11 +515,16 @@ class JobRepository:
         ).fetchall()
         results: list[dict[str, Any]] = []
         for row in rows:
-            error = json.loads(row["error_json"]) if row["error_json"] else None
+            error = _decode_error(row["error_json"])
             mapping_required = None
             if isinstance(error, dict):
                 error = dict(error)
                 mapping_required = error.pop("mapping_required", None)
+            mapping_payload_version = (
+                row["public_mapping_payload_version"]
+                if "public_mapping_payload_version" in set(row.keys())
+                else None
+            )
             results.append(
                 {
                     "source_document_id": row["source_document_id"],
@@ -491,8 +533,10 @@ class JobRepository:
                     "total_rows": row["total_rows"],
                     "processed_rows": row["processed_rows"],
                     "row_error_count": row["row_error_count"],
+                    "count_confidence": row["count_confidence"],
                     "error": error,
                     "mapping_required": mapping_required,
+                    "_public_mapping_payload_version": mapping_payload_version,
                 }
             )
         return results

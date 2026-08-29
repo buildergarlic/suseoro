@@ -267,6 +267,7 @@ export function createFixtureApi(
       row_version: version + 1,
     }),
     listCandidates: async (_workspaceId, _filters) => ({
+      workspace_revision: 0,
       items: [],
       next_cursor: null,
       total_count: 0,

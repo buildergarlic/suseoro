@@ -301,14 +301,25 @@ class BackupService:
         if schema and len(schema) <= len(bundled):
             if tuple(bundled[: len(schema)]) == schema:
                 return
-            historical_0011: list[dict[str, str]] = []
-            for migration in bundled:
-                if migration["version"] == "0010a_task8_round4_upgrade_prelude":
-                    continue
-                historical_0011.append(migration)
-                if migration["version"] == "0011_task8_round3_integrity":
-                    break
-            if tuple(historical_0011) == schema:
+            historical_releases = (
+                tuple(
+                    migration
+                    for migration in bundled
+                    if migration["version"] <= "0011_task8_round3_integrity"
+                    and migration["version"]
+                    not in {
+                        "0010a_task8_round4_upgrade_prelude",
+                        "0010b_task8_round5_count_capture",
+                    }
+                ),
+                tuple(
+                    migration
+                    for migration in bundled
+                    if migration["version"] <= "0012_task8_round4_integrity"
+                    and migration["version"] != "0010b_task8_round5_count_capture"
+                ),
+            )
+            if schema in historical_releases:
                 return
         raise RestoreVerificationError(
             "backup migration history is future, incomplete, or altered"

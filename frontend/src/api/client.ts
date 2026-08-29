@@ -205,6 +205,7 @@ const validJobFileResult = exactObject<Schemas["JobFileResult"]>({
   total_rows: integerValue,
   processed_rows: integerValue,
   row_error_count: integerValue,
+  count_confidence: stringValue,
   error: nullable(validJobError),
   mapping_required: nullable(validMappingRequired),
 });

@@ -29,7 +29,7 @@ from suseoro.ingestion.parsers.marc import MarcParseResult, parse_marc
 from suseoro.ingestion.parsers.pdf import parse_pdf
 from suseoro.ingestion.parsers.tabular import parse_tabular
 from suseoro.ingestion.templates import MappingTemplateStore, ParserCache
-from suseoro.jobs.public_errors import parser_failure
+from suseoro.jobs.public_errors import mapping_required_error, parser_failure
 from suseoro.jobs.repository import JobRepository
 from suseoro.jobs.runner import DurableJobRunner, JobContext
 from suseoro.jobs.source_snapshot import source_rows_snapshot
@@ -598,18 +598,17 @@ def build_ingestion_handler(
                         status="PARTIAL",
                         total_rows=len(base_result.rows),
                         processed_rows=0,
-                        error={
-                            "code": "MAPPING_REQUIRED",
-                            "message": "열 이름과 자료 내용을 확인해 연결해 주세요.",
-                            "mapping_required": {
+                        error=mapping_required_error(
+                            {
                                 "headers": headers,
                                 "preview_rows": preview_rows,
                                 "suggested_mapping": inference.mapping,
                                 "required_fields": sorted(required),
                                 "confidence": inference.confidence,
                                 "questions": inference.questions,
-                            },
-                        },
+                            }
+                        ),
+                        public_mapping_payload_version=1,
                     )
                     connection.commit()
                     context.checkpoint(stage="PARSING", current=current, total=total)

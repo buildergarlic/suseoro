@@ -2906,10 +2906,11 @@ def test_empty_ingestion_is_failed_with_a_durable_zero_row_item(
             "total_rows": 0,
             "processed_rows": 0,
             "row_error_count": 0,
+            "count_confidence": "EXACT",
             "error": {
-                "type": None,
+                "type": "NoLogicalRows",
                 "code": "NO_LOGICAL_ROWS",
-                "message": None,
+                "message": "읽을 수 있는 책 정보가 없습니다. 파일 내용을 확인해 주세요.",
             },
             "mapping_required": None,
         }

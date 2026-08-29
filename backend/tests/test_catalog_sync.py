@@ -1877,7 +1877,7 @@ def test_forward_migration_expands_formats_without_losing_b5fc8_rows(tmp_path) -
         "XLSX",
     )
     assert foreign_keys == []
-    assert latest == "0012_task8_round4_integrity"
+    assert latest == "0015_task8_round5_mapping_provenance"
 
 
 def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
@@ -1931,7 +1931,7 @@ def test_forward_migration_upgrades_populated_0731aa1_schema_without_data_loss(
     connection.close()
 
     assert preserved == 2
-    assert latest == "0012_task8_round4_integrity"
+    assert latest == "0015_task8_round5_mapping_provenance"
     assert {
         "requested_start_local_date",
         "requested_through_local_date",

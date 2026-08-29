@@ -1130,9 +1130,14 @@
           "total_count": {
             "title": "Total Count",
             "type": "integer"
+          },
+          "workspace_revision": {
+            "title": "Workspace Revision",
+            "type": "integer"
           }
         },
         "required": [
+          "workspace_revision",
           "items",
           "next_cursor",
           "total_count",
@@ -2033,6 +2038,10 @@
       "JobFileResult": {
         "additionalProperties": false,
         "properties": {
+          "count_confidence": {
+            "title": "Count Confidence",
+            "type": "string"
+          },
           "error": {
             "anyOf": [
               {
@@ -2085,6 +2094,7 @@
           "total_rows",
           "processed_rows",
           "row_error_count",
+          "count_confidence",
           "error",
           "mapping_required"
         ],

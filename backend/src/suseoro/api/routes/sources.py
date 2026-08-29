@@ -22,7 +22,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from suseoro.api.common import decode_cursor, page
 from suseoro.api.dependencies import (
@@ -36,7 +36,7 @@ from suseoro.api.dependencies import (
 )
 from suseoro.api.errors import domain_not_found, public_error_message
 from suseoro.api.routes.events import publish_event
-from suseoro.api.schemas import ApiErrorResponse, UploadResponse
+from suseoro.api.schemas import ApiErrorResponse, MappingRequired, UploadResponse
 from suseoro.catalog.contracts import (
     CatalogRecord,
     DeltaFile,
@@ -60,7 +60,10 @@ from suseoro.ingestion.file_store import (
     StagedUploadRejected,
 )
 from suseoro.jobs.handlers import parser_version_for_format
-from suseoro.jobs.public_errors import comparison_file_failure, job_failure
+from suseoro.jobs.public_errors import (
+    sanitize_public_job_error,
+    sanitize_public_mapping_required,
+)
 from suseoro.jobs.repository import JobRepository
 from suseoro.jobs.source_snapshot import authoritative_comparison_sources
 from suseoro.security.sessions import format_utc, utc_now
@@ -582,10 +585,9 @@ def _source_with_discovery(
             None,
         )
         if latest_result is not None:
-            result["latest_result"] = {
-                **latest_result,
-                "error": _public_job_error(latest_result.get("error")),
-            }
+            result["latest_result"] = _public_job_file_result(
+                latest_result, fallback_code="PARSER_FAILURE"
+            )
     return result
 
 
@@ -1981,24 +1983,42 @@ def _job(connection, school_id: str, job_id: str):
     return job if job is not None and job.school_id == school_id else None
 
 
-def _public_job_error(error: object) -> dict[str, str | None] | None:
-    if not isinstance(error, dict):
-        return None
+def _public_job_error(
+    error: object, *, fallback_code: str = "JOB_FAILED"
+) -> dict[str, str] | None:
+    return sanitize_public_job_error(error, fallback_code=fallback_code)
+
+
+def _public_job_file_result(
+    item: dict[str, Any], *, fallback_code: str
+) -> dict[str, Any]:
+    raw_error = item.get("error")
+    raw_mapping = sanitize_public_mapping_required(
+        raw_error,
+        item.get("mapping_required"),
+        item.get("_public_mapping_payload_version"),
+    )
+    mapping = None
+    if raw_mapping is not None:
+        try:
+            mapping = MappingRequired.model_validate(raw_mapping).model_dump(
+                mode="json"
+            )
+        except ValidationError:
+            mapping = None
+    public_item = {
+        key: value
+        for key, value in item.items()
+        if key != "_public_mapping_payload_version"
+    }
     return {
-        key: value if isinstance(value, str) else None
-        for key, value in (
-            ("type", error.get("type")),
-            ("code", error.get("code")),
-            ("message", error.get("message")),
-        )
+        **public_item,
+        "error": _public_job_error(raw_error, fallback_code=fallback_code),
+        "mapping_required": mapping,
     }
 
 
 def _job_json(job) -> dict[str, Any]:
-    error = job.error
-    if job.job_type == "COMPARE" and error is not None:
-        public = job_failure()
-        error = {"code": public["code"], "message": public["message"]}
     return {
         "id": job.id,
         "workspace_id": job.workspace_id,
@@ -2007,7 +2027,7 @@ def _job_json(job) -> dict[str, Any]:
         "stage": job.stage,
         "progress_current": job.progress_current,
         "progress_total": job.progress_total,
-        "error": _public_job_error(error),
+        "error": _public_job_error(job.error),
         "retry_count": job.retry_count,
     }
 
@@ -2015,29 +2035,12 @@ def _job_json(job) -> dict[str, Any]:
 def _job_with_items(connection: sqlite3.Connection, job) -> dict[str, Any]:
     result = _job_json(job)
     items = JobRepository(connection).file_results(job.id)
-    if job.job_type == "COMPARE":
-        safe_messages = {
-            "NO_LOGICAL_ROWS": "비교할 책이 없습니다.",
-            "ALL_LOGICAL_ROWS_FAILED": (
-                "이 자료의 책을 비교하지 못했습니다. 다시 시도해 주세요."
-            ),
-        }
-        sanitized = []
-        for item in items:
-            item = dict(item)
-            error = item.get("error")
-            if error is not None:
-                code = error.get("code") if isinstance(error, dict) else None
-                if code in safe_messages:
-                    item["error"] = {
-                        "code": code,
-                        "message": safe_messages[code],
-                    }
-                else:
-                    item["error"] = comparison_file_failure()
-            sanitized.append(item)
-        items = sanitized
-    items = [{**item, "error": _public_job_error(item.get("error"))} for item in items]
+    fallback_code = (
+        "COMPARISON_FILE_FAILED" if job.job_type == "COMPARE" else "PARSER_FAILURE"
+    )
+    items = [
+        _public_job_file_result(item, fallback_code=fallback_code) for item in items
+    ]
     result["items"] = items
     return result
 

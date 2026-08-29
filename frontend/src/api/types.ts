@@ -1218,6 +1218,8 @@ export interface components {
             summary: components["schemas"]["CandidateSummary"];
             /** Total Count */
             total_count: number;
+            /** Workspace Revision */
+            workspace_revision: number;
         };
         /** CandidateResponse */
         CandidateResponse: {
@@ -1509,6 +1511,8 @@ export interface components {
         };
         /** JobFileResult */
         JobFileResult: {
+            /** Count Confidence */
+            count_confidence: string;
             error: components["schemas"]["JobError"] | null;
             /** Filename */
             filename: string;

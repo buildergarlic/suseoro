@@ -14,12 +14,22 @@ class MigrationChecksumMismatch(RuntimeError):
     """Raised when an already-applied migration has been changed."""
 
 
-_ATOMIC_MIGRATION_BUNDLES = (
-    (
-        "0010a_task8_round4_upgrade_prelude",
-        "0011_task8_round3_integrity",
-        "0012_task8_round4_integrity",
-    ),
+class MigrationHistoryMismatch(RuntimeError):
+    """Raised when an impossible partial history would require destructive replay."""
+
+
+_TASK8_INTEGRITY_BUNDLE = (
+    "0010a_task8_round4_upgrade_prelude",
+    "0010b_task8_round5_count_capture",
+    "0011_task8_round3_integrity",
+    "0012_task8_round4_integrity",
+    "0013_task8_round5_count_restoration",
+)
+
+_LEGACY_TASK8_INTEGRITY_BUNDLE = (
+    "0010a_task8_round4_upgrade_prelude",
+    "0011_task8_round3_integrity",
+    "0012_task8_round4_integrity",
 )
 
 
@@ -104,13 +114,44 @@ def _apply_atomic_bundle(
     if not pending:
         return
     bundle_ids = tuple(migration[0] for migration in migrations)
-    if bundle_ids == _ATOMIC_MIGRATION_BUNDLES[0]:
+    if bundle_ids == _TASK8_INTEGRITY_BUNDLE:
+        by_id = {migration[0]: migration for migration in migrations}
         pending_ids = {migration[0] for migration in pending}
-        execution: list[tuple[str, str, str, str | None]] = []
-        # 0011 needs the prelude whenever it is newly applied. Any newly
-        # discovered earlier member must finish with the idempotent postlude,
-        # even when that postlude is already recorded, so the claim guard can
-        # never be left dropped by an out-of-order historical ledger.
+        prelude_id, capture_id, round3_id, round4_id, restoration_id = bundle_ids
+        if round4_id not in pending_ids and round3_id in pending_ids:
+            raise MigrationHistoryMismatch(
+                "0012 is recorded without its checksum-protected 0011 prerequisite"
+            )
+        if restoration_id not in pending_ids and round4_id in pending_ids:
+            raise MigrationHistoryMismatch(
+                "0013 is recorded while checksum-protected 0012 is missing"
+            )
+
+        execution = []
+        replayed_prelude = False
+        # A pending 0011 or 0012 must run with the legacy terminal claim guard
+        # suspended.  A newly discovered missing prelude after 0012 instead
+        # pairs with the idempotent 0013 guard restoration; 0012 is never
+        # replayed after its ledger row exists.
+        if (
+            round3_id in pending_ids
+            or round4_id in pending_ids
+            or prelude_id in pending_ids
+        ):
+            execution.append(by_id[prelude_id])
+            replayed_prelude = True
+
+        if capture_id in pending_ids:
+            execution.append(by_id[capture_id])
+        if round3_id in pending_ids:
+            execution.append(by_id[round3_id])
+        if round4_id in pending_ids:
+            execution.append(by_id[round4_id])
+        if restoration_id in pending_ids or replayed_prelude:
+            execution.append(by_id[restoration_id])
+    elif bundle_ids == _LEGACY_TASK8_INTEGRITY_BUNDLE:
+        pending_ids = {migration[0] for migration in pending}
+        execution = []
         if bundle_ids[0] in pending_ids or bundle_ids[1] in pending_ids:
             execution.append(migrations[0])
         if bundle_ids[1] in pending_ids:
@@ -155,19 +196,44 @@ def _apply_migrations_trusted(
         )
     bundles_by_id: dict[str, tuple[Path, ...]] = {}
     deferred_bundle_ids: set[str] = set()
-    for bundle in _ATOMIC_MIGRATION_BUNDLES:
-        if all(migration_id in paths_by_id for migration_id in bundle):
-            bundle_paths = tuple(paths_by_id[migration_id] for migration_id in bundle)
-            for migration_id in bundle:
-                bundles_by_id[migration_id] = bundle_paths
-        elif bundle[0] in paths_by_id or bundle[-1] in paths_by_id:
-            # An old release can legitimately contain the committed middle
-            # migration alone. Once either new guard file is present, applying
-            # only part of the bundle could strand the legacy trigger dropped
-            # or run the correction before its required column exists.
-            deferred_bundle_ids.update(
-                migration_id for migration_id in bundle if migration_id in paths_by_id
-            )
+    if all(migration_id in paths_by_id for migration_id in _TASK8_INTEGRITY_BUNDLE):
+        bundle_paths = tuple(
+            paths_by_id[migration_id] for migration_id in _TASK8_INTEGRITY_BUNDLE
+        )
+        for migration_id in _TASK8_INTEGRITY_BUNDLE:
+            bundles_by_id[migration_id] = bundle_paths
+    elif all(
+        migration_id in paths_by_id for migration_id in _LEGACY_TASK8_INTEGRITY_BUNDLE
+    ) and not any(
+        migration_id in paths_by_id
+        for migration_id in (
+            "0010b_task8_round5_count_capture",
+            "0013_task8_round5_count_restoration",
+        )
+    ):
+        # The checksum-valid round-4 release remains a supported historical
+        # directory for backup/upgrade probes.
+        bundle_paths = tuple(
+            paths_by_id[migration_id] for migration_id in _LEGACY_TASK8_INTEGRITY_BUNDLE
+        )
+        for migration_id in _LEGACY_TASK8_INTEGRITY_BUNDLE:
+            bundles_by_id[migration_id] = bundle_paths
+    elif any(
+        migration_id in paths_by_id
+        for migration_id in (
+            "0010a_task8_round4_upgrade_prelude",
+            "0010b_task8_round5_count_capture",
+            "0012_task8_round4_integrity",
+            "0013_task8_round5_count_restoration",
+        )
+    ):
+        # Once a guard/capture/restoration member is present, an incomplete
+        # new bundle is deferred rather than stranding a trigger or capture.
+        deferred_bundle_ids.update(
+            migration_id
+            for migration_id in _TASK8_INTEGRITY_BUNDLE
+            if migration_id in paths_by_id
+        )
     handled_bundle_ids: set[str] = set()
 
     for migration_path in migration_paths:

@@ -28,7 +28,13 @@ def _migration_directory() -> Path:
 
 def _copy_migrations(destination: Path, *, exclude: set[str] | None = None) -> Path:
     destination.mkdir()
-    excluded = exclude or set()
+    excluded = {
+        "0010b_task8_round5_count_capture",
+        "0013_task8_round5_count_restoration",
+        "0014_task8_round5_candidate_revision",
+        "0015_task8_round5_mapping_provenance",
+        *(exclude or set()),
+    }
     for source in _migration_directory().glob("*.sql"):
         if source.stem not in excluded:
             shutil.copy2(source, destination / source.name)
@@ -220,10 +226,14 @@ def test_round4_populated_0010_upgrade_preserves_mapping_required_as_unread(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id"
         ).fetchall()
     ]
-    assert migration_ids[-3:] == [
+    assert migration_ids[-7:] == [
         PRELUDE_ID,
+        "0010b_task8_round5_count_capture",
         "0011_task8_round3_integrity",
         INTEGRITY_ID,
+        "0013_task8_round5_count_restoration",
+        "0014_task8_round5_candidate_revision",
+        "0015_task8_round5_mapping_provenance",
     ]
     with pytest.raises(
         sqlite3.IntegrityError, match="job file result scope or claim mismatch"
@@ -285,7 +295,7 @@ def test_round4_applies_missing_lower_sorted_prelude_after_0011_and_repairs_coun
     ) == {
         successful_result_id: (2, 2, 0, "SUCCESS"),
         mapping_result_id: (1, 0, 0, "PARTIAL"),
-        mixed_result_id: (2, 1, 1, "PARTIAL"),
+        mixed_result_id: (2, 2, 0, "PARTIAL"),
     }
     applied = {
         str(row["migration_id"]): (int(row["rowid"]), str(row["checksum"]))
@@ -310,7 +320,7 @@ def test_round4_applies_missing_lower_sorted_prelude_after_0011_and_repairs_coun
     assert applied["0011_task8_round3_integrity"][1] == COMMITTED_0011_SHA256
 
 
-def test_round4_historical_partial_never_becomes_fully_read_from_newer_rows(
+def test_round5_already_0011_partial_is_preserved_but_marked_unverified(
     tmp_path: Path,
 ) -> None:
     already_0011_dir = _copy_migrations(
@@ -334,7 +344,17 @@ def test_round4_historical_partial_never_becomes_fully_read_from_newer_rows(
 
     apply_migrations(fixture.connection, _migration_directory())
 
-    assert _result_counts(fixture, (result_id,)) == {result_id: (2, 1, 1, "PARTIAL")}
+    assert _result_counts(fixture, (result_id,)) == {result_id: (2, 2, 0, "PARTIAL")}
+    assert (
+        fixture.connection.execute(
+            """
+        SELECT confidence FROM job_file_result_count_history
+        WHERE job_file_result_id = ?
+        """,
+            (result_id,),
+        ).fetchone()[0]
+        == "UNVERIFIED"
+    )
 
 
 def test_round4_fresh_database_has_complete_checksum_ledger_and_final_guards(
@@ -349,10 +369,14 @@ def test_round4_fresh_database_has_complete_checksum_ledger_and_final_guards(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id"
         ).fetchall()
     ]
-    assert migration_ids[-3:] == [
+    assert migration_ids[-7:] == [
         PRELUDE_ID,
+        "0010b_task8_round5_count_capture",
         "0011_task8_round3_integrity",
         INTEGRITY_ID,
+        "0013_task8_round5_count_restoration",
+        "0014_task8_round5_candidate_revision",
+        "0015_task8_round5_mapping_provenance",
     ]
     assert {
         str(row[0])
@@ -610,7 +634,10 @@ def test_round4_restore_accepts_checksum_valid_0011_history_from_before_prelude(
     """A real 0011 backup predates the lower-sorted prelude but remains upgradeable."""
     bundled = BackupService._bundled_schema()
     historical_0011 = tuple(
-        item for item in bundled if item["version"] not in {PRELUDE_ID, INTEGRITY_ID}
+        item
+        for item in bundled
+        if item["version"] <= "0011_task8_round3_integrity"
+        and item["version"] not in {PRELUDE_ID, "0010b_task8_round5_count_capture"}
     )
 
     BackupService._validate_migration_history(historical_0011)

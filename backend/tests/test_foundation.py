@@ -492,7 +492,7 @@ def test_0008_preserves_populated_0007_claims_and_backfills_failed_items(
         "error_code": "UNSUPPORTED_FILE_TYPE",
     }
     assert foreign_keys == []
-    assert latest == "0012_task8_round4_integrity"
+    assert latest == "0015_task8_round5_mapping_provenance"
 
 
 def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
@@ -772,7 +772,7 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
         fixture.connection.execute(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
         ).fetchone()[0]
-        == "0012_task8_round4_integrity"
+        == "0015_task8_round5_mapping_provenance"
     )
 
 

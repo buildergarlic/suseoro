@@ -191,6 +191,7 @@ export function IngestionPanel({
         status: "FAILED",
         total_rows: 0,
         processed_rows: 0,
+        count_confidence: "EXACT",
         row_error_count: 0,
         error:
           current.error ??
@@ -1399,19 +1400,24 @@ export function IngestionPanel({
                 ? displayedRepairConfigurations.get(item.repair_obligation_id)
                 : undefined;
               const parseFailed = detail?.status === "FAILED";
-              const readCount = parseFailed ? 0 : (detail?.processed_rows ?? 0);
+              const countsVerified = detail?.count_confidence !== "UNVERIFIED";
+              const readCount = !countsVerified || parseFailed ? 0 : (detail?.processed_rows ?? 0);
               const filePercent = detail
                 ? TERMINAL_JOB_STATES.has(detail.status) ||
                   ["SUCCESS", "PARTIAL", "FAILED"].includes(detail.status)
                   ? 100
                   : progressPercent(detail.processed_rows, detail.total_rows)
                 : 0;
-              const needsReview = detail?.mapping_required
+              const needsReview = !countsVerified
+                ? 0
+                : detail?.mapping_required
                 ? Math.max(detail.total_rows - detail.processed_rows, 0)
                   : detail?.status === "PARTIAL"
                   ? detail.row_error_count
                   : 0;
-              const statusCopy = rejected
+              const statusCopy = !countsVerified
+                ? "처리 건수 확인 필요"
+                : rejected
                 ? "읽지 못함"
                 : detail?.mapping_required
                   ? "열 연결 확인"
@@ -1535,13 +1541,21 @@ export function IngestionPanel({
                     </>
                   ) : (
                     <>
-                      <div className="progress-copy">
-                        <progress aria-label={`${item.filename} 진행률`} max={100} value={filePercent} />
-                        <span>{filePercent}%</span>
-                      </div>
-                      <p>
-                        {readCount}권 읽음 · 확인 필요 {needsReview}
-                      </p>
+                      {countsVerified ? (
+                        <>
+                          <div className="progress-copy">
+                            <progress aria-label={`${item.filename} 진행률`} max={100} value={filePercent} />
+                            <span>{filePercent}%</span>
+                          </div>
+                          <p>
+                            {readCount}권 읽음 · 확인 필요 {needsReview}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="error-copy">
+                          과거 처리 건수의 근거를 확인할 수 없습니다. 원본을 다시 읽어 주세요.
+                        </p>
+                      )}
                       {parseFailed && detail?.error?.message ? (
                         <p className="error-copy">{detail.error.message}</p>
                       ) : null}

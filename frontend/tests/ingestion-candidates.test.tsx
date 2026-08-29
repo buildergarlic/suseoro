@@ -68,6 +68,7 @@ describe("후보 만들기 자료 입력", () => {
         status: "PARTIAL",
         total_rows: 1,
         processed_rows: 0,
+        count_confidence: "EXACT",
         row_error_count: 0,
         error: { code: "MAPPING_REQUIRED", message: "열 연결 확인", type: null },
         mapping_required: mappingRequired,
@@ -91,7 +92,7 @@ describe("후보 만들기 자료 입력", () => {
         ...idleJob,
         id: "parse-reload-map",
         type: "PARSE",
-        items: [{ ...source.latest_result, status: "SUCCESS", processed_rows: 1, row_error_count: 0, error: null, mapping_required: null }],
+        items: [{ ...source.latest_result, status: "SUCCESS", processed_rows: 1, count_confidence: "EXACT", row_error_count: 0, error: null, mapping_required: null }],
       }),
     });
     renderWorkroom(api, draft.id);
@@ -122,6 +123,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "PARTIAL",
       total_rows: 1,
       processed_rows: 0,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: { code: "MAPPING_REQUIRED", message: "열 연결 확인", type: null },
       mapping_required: mappingRequired,
@@ -132,6 +134,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS",
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -200,6 +203,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS",
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -286,6 +290,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -379,6 +384,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -457,6 +463,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -542,6 +549,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS",
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -638,6 +646,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -648,6 +657,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -809,6 +819,7 @@ describe("후보 만들기 자료 입력", () => {
             status: "SUCCESS",
             total_rows: 1,
             processed_rows: 1,
+            count_confidence: "EXACT",
             row_error_count: 0,
             error: null,
             mapping_required: null,
@@ -860,6 +871,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -881,6 +893,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "PARTIAL",
       total_rows: 1,
       processed_rows: 0,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: { code: "MAPPING_REQUIRED", message: "열 연결 확인", type: null },
       mapping_required: mappingRequired,
@@ -1016,6 +1029,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -1108,6 +1122,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -1230,6 +1245,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -1368,6 +1384,7 @@ describe("후보 만들기 자료 입력", () => {
           status: "SUCCESS",
           total_rows: 1,
           processed_rows: 1,
+          count_confidence: "EXACT",
           row_error_count: 0,
           error: null,
           mapping_required: null,
@@ -1455,6 +1472,7 @@ describe("후보 만들기 자료 입력", () => {
                 status: "SUCCESS",
                 total_rows: 1,
                 processed_rows: 1,
+                count_confidence: "EXACT",
                 row_error_count: 0,
                 error: null,
                 mapping_required: null,
@@ -1517,6 +1535,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "FAILED",
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: { code: "PARSER_FAILURE", message: "파일 내용을 읽지 못했습니다.", type: null },
       mapping_required: null,
@@ -1527,6 +1546,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "PARTIAL",
       total_rows: 3,
       processed_rows: 2,
+      count_confidence: "EXACT",
       row_error_count: 1,
       error: { code: "ROW_ERRORS", message: "한 행을 확인해 주세요.", type: null },
       mapping_required: null,
@@ -1564,6 +1584,55 @@ describe("후보 만들기 자료 입력", () => {
     expect(within(partial).queryByText("대기 중")).not.toBeInTheDocument();
   });
 
+  test("근거 없는 과거 처리 건수는 숫자로 신뢰하지 않고 다시 읽기 안내를 표시한다", async () => {
+    const draft = workspace("workspace-unverified-counts", "과거 건수 확인", "DRAFT");
+    const unverifiedResult = {
+      source_document_id: "source-unverified-counts",
+      filename: "historical.csv",
+      status: "PARTIAL",
+      total_rows: 100,
+      processed_rows: 0,
+      count_confidence: "UNVERIFIED",
+      row_error_count: 100,
+      error: null,
+      mapping_required: null,
+    };
+    const historicalSource = {
+      ...sourceFixture,
+      id: unverifiedResult.source_document_id,
+      filename: unverifiedResult.filename,
+      latest_job_id: "ingest-unverified-counts",
+      latest_result: unverifiedResult,
+    };
+    const api = createFixtureApi({
+      listSources: async () => ({ items: [historicalSource], next_cursor: null }),
+      listWorkspaceJobs: async () => ({
+        items: [
+          {
+            ...idleJob,
+            id: "ingest-unverified-counts",
+            status: "PARTIAL",
+            items: [unverifiedResult],
+          },
+        ],
+        next_cursor: null,
+      }),
+    });
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    const historical = await screen.findByRole("listitem", {
+      name: "historical.csv 처리 상태",
+    });
+    expect(within(historical).getByText("처리 건수 확인 필요")).toBeVisible();
+    expect(
+      within(historical).getByText(
+        "과거 처리 건수의 근거를 확인할 수 없습니다. 원본을 다시 읽어 주세요.",
+      ),
+    ).toBeVisible();
+    expect(within(historical).queryByText(/권 읽음/u)).not.toBeInTheDocument();
+    expect(within(historical).queryByText(/확인 필요 100/u)).not.toBeInTheDocument();
+  });
+
   test("교체 파일을 연달아 고르면 최신 세대만 남기고 비교는 한 번만 시작한다", async () => {
     const user = userEvent.setup();
     const draft = workspace("workspace-repair-race", "교체 세대", "DRAFT");
@@ -1592,8 +1661,8 @@ describe("후보 만들기 자료 입력", () => {
         ...idleJob,
         id: jobId,
         items: jobId === "ingest-ready"
-          ? [{ source_document_id: "source-ready", filename: "ready.csv", status: "SUCCESS", total_rows: 1, processed_rows: 1, row_error_count: 0, error: null, mapping_required: null }]
-          : [{ source_document_id: "source-b", filename: "replacement-b.csv", status: "SUCCESS", total_rows: 1, processed_rows: 1, row_error_count: 0, error: null, mapping_required: null }],
+          ? [{ source_document_id: "source-ready", filename: "ready.csv", status: "SUCCESS", total_rows: 1, processed_rows: 1, count_confidence: "EXACT", row_error_count: 0, error: null, mapping_required: null }]
+          : [{ source_document_id: "source-b", filename: "replacement-b.csv", status: "SUCCESS", total_rows: 1, processed_rows: 1, count_confidence: "EXACT", row_error_count: 0, error: null, mapping_required: null }],
       }),
       createComparisonJob: async (_workspaceId, sourceIds, version) => {
         comparisons.push(sourceIds);
@@ -1670,6 +1739,7 @@ describe("후보 만들기 자료 입력", () => {
                   status: "SUCCESS",
                   total_rows: 1,
                   processed_rows: 1,
+                  count_confidence: "EXACT",
                   row_error_count: 0,
                   error: null,
                   mapping_required: null,
@@ -1755,6 +1825,7 @@ describe("후보 만들기 자료 입력", () => {
             status: "SUCCESS",
             total_rows: 2,
             processed_rows: 2,
+            count_confidence: "EXACT",
             row_error_count: 0,
             error: null,
             mapping_required: null,
@@ -1880,6 +1951,7 @@ describe("후보 만들기 자료 입력", () => {
                 status: "PARTIAL",
                 total_rows: 25,
                 processed_rows: 0,
+                count_confidence: "EXACT",
                 row_error_count: 0,
                 error: {
                   code: "MAPPING_REQUIRED",
@@ -1912,6 +1984,7 @@ describe("후보 만들기 자료 입력", () => {
                     status: "SUCCESS",
                     total_rows: 25,
                     processed_rows: 25,
+                    count_confidence: "EXACT",
                     row_error_count: 0,
                     error: null,
                     mapping_required: null,
@@ -1942,6 +2015,7 @@ describe("후보 만들기 자료 입력", () => {
         };
       },
       listCandidates: async (_workspaceId, filters) => ({
+        workspace_revision: 1,
         items:
           filters.outcome === "CANDIDATE"
             ? [candidate("candidate-from-flow", "비교해서 찾은 책", "CANDIDATE")]
@@ -2011,6 +2085,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "PARTIAL",
       total_rows: 1,
       processed_rows: 0,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: { code: "MAPPING_REQUIRED", message: "열 연결 확인", type: null },
       mapping_required: mappingRequired,
@@ -2044,6 +2119,7 @@ describe("후보 만들기 자료 입력", () => {
                   ...mappingItem,
                   status: "SUCCESS",
                   processed_rows: 1,
+                  count_confidence: "EXACT",
                   row_error_count: 0,
                   error: null,
                   mapping_required: null,
@@ -2167,6 +2243,7 @@ describe("후보 만들기 자료 입력", () => {
             status: "SUCCESS",
             total_rows: 1,
             processed_rows: 1,
+            count_confidence: "EXACT",
             row_error_count: 0,
             error: null,
             mapping_required: null,
@@ -2240,6 +2317,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "PARTIAL",
       total_rows: 1,
       processed_rows: 0,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: { code: "MAPPING_REQUIRED", message: "열 연결 확인", type: null },
       mapping_required: mappingRequired,
@@ -2292,6 +2370,7 @@ describe("후보 만들기 자료 입력", () => {
                 status: first ? "PARTIAL" : "SUCCESS",
                 total_rows: 1,
                 processed_rows: 1,
+                count_confidence: "EXACT",
                 row_error_count: 0,
                 error: null,
                 mapping_required: null,
@@ -2374,6 +2453,7 @@ describe("후보 만들기 자료 입력", () => {
             status: "FAILED",
             total_rows: 1,
             processed_rows: 1,
+            count_confidence: "EXACT",
             row_error_count: 0,
             error: {
               code: "PARSER_FAILURE",
@@ -2447,6 +2527,7 @@ describe("후보 만들기 자료 입력", () => {
                 status: "SUCCESS",
                 total_rows: 1,
                 processed_rows: 1,
+                count_confidence: "EXACT",
                 row_error_count: 0,
                 error: null,
                 mapping_required: null,
@@ -2534,6 +2615,7 @@ describe("후보 만들기 자료 입력", () => {
                   status: "SUCCESS",
                   total_rows: 1,
                   processed_rows: 1,
+                  count_confidence: "EXACT",
                   row_error_count: 0,
                   error: null,
                   mapping_required: null,
@@ -2599,6 +2681,11 @@ describe("후보 확인과 자동 저장", () => {
   };
 
   function candidateApi(overrides = {}) {
+    const listCandidatesOverride = (
+      overrides as {
+        listCandidates?: ReturnType<typeof createFixtureApi>["listCandidates"];
+      }
+    ).listCandidates;
     const summary = {
       total_count: 3,
       candidate_count: 1,
@@ -2611,6 +2698,7 @@ describe("후보 확인과 자동 저장", () => {
       getCurrentUser: async () => operator,
       getWorkspace: async () => ({ data: candidateWorkspace, etag: '"1"' }),
       listCandidates: async (_workspaceId, filters) => ({
+        workspace_revision: 1,
         items: candidates[filters.outcome as keyof typeof candidates] ?? [],
         next_cursor: null,
         total_count:
@@ -2618,6 +2706,19 @@ describe("후보 확인과 자동 저장", () => {
         summary,
       }),
       ...overrides,
+      ...(listCandidatesOverride
+        ? {
+            listCandidates: async (
+              ...args: Parameters<ReturnType<typeof createFixtureApi>["listCandidates"]>
+            ) => {
+              const page = await listCandidatesOverride(...args);
+              return {
+                ...page,
+                workspace_revision: page.workspace_revision ?? 1,
+              };
+            },
+          }
+        : {}),
     });
   }
 
@@ -2832,6 +2933,7 @@ describe("후보 확인과 자동 저장", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: null,
       mapping_required: null,
@@ -2918,6 +3020,7 @@ describe("후보 확인과 자동 저장", () => {
                   status: "SUCCESS",
                   total_rows: 1,
                   processed_rows: 1,
+                  count_confidence: "EXACT",
                   row_error_count: 0,
                   error: null,
                   mapping_required: null,
@@ -2982,6 +3085,7 @@ describe("후보 확인과 자동 저장", () => {
       status: "PARTIAL" as const,
       total_rows: 2,
       processed_rows: 1,
+      count_confidence: "EXACT",
       row_error_count: 0,
       error: { code: "ROW_ERROR", message: "제목이 없는 행이 있습니다.", type: null },
       mapping_required: null,
@@ -3074,6 +3178,7 @@ describe("후보 확인과 자동 저장", () => {
                   status: "SUCCESS",
                   total_rows: 2,
                   processed_rows: 2,
+                  count_confidence: "EXACT",
                   row_error_count: 0,
                   error: null,
                   mapping_required: null,
@@ -3333,7 +3438,7 @@ describe("후보 확인과 자동 저장", () => {
     expect(screen.getByText("판본을 볼 책")).toBeVisible();
 
     await user.type(screen.getByRole("searchbox", { name: "후보 필터" }), "없는 제목");
-    expect(screen.getByText("조건에 맞는 책이 없습니다.")).toBeVisible();
+    expect(await screen.findByText("조건에 맞는 책이 없습니다.")).toBeVisible();
     await user.clear(screen.getByRole("searchbox", { name: "후보 필터" }));
     await user.click(screen.getByRole("tab", { name: "제외된 책 1" }));
     expect(screen.getByText("보유 장서와 ISBN이 정확히 일치합니다.")).toBeVisible();
@@ -3374,22 +3479,37 @@ describe("후보 확인과 자동 저장", () => {
       excluded_count: 1,
       unresolved_count: 0,
     };
+    const reads = new Map<string, number>();
     const api = candidateApi({
       listCandidates: async (
         _workspaceId: string,
         filters: { outcome: string },
-      ) => ({
-        items:
-          filters.outcome === "NEEDS_REVIEW"
-            ? [older]
-            : filters.outcome === "EXCLUDED"
-              ? [newer]
-              : [],
-        next_cursor: null,
-        total_count: filters.outcome === "EXCLUDED" ? 1 : 0,
-        summary:
-          filters.outcome === "NEEDS_REVIEW" ? olderSummary : newerSummary,
-      }),
+      ) => {
+        const read = (reads.get(filters.outcome) ?? 0) + 1;
+        reads.set(filters.outcome, read);
+        if (read === 1) {
+          return {
+            workspace_revision: filters.outcome === "EXCLUDED" ? 3 : 2,
+            items:
+              filters.outcome === "NEEDS_REVIEW"
+                ? [older]
+                : filters.outcome === "EXCLUDED"
+                  ? [newer]
+                  : [],
+            next_cursor: null,
+            total_count: filters.outcome === "EXCLUDED" ? 1 : 0,
+            summary:
+              filters.outcome === "NEEDS_REVIEW" ? olderSummary : newerSummary,
+          };
+        }
+        return {
+          workspace_revision: 3,
+          items: filters.outcome === "EXCLUDED" ? [newer] : [],
+          next_cursor: null,
+          total_count: filters.outcome === "EXCLUDED" ? 1 : 0,
+          summary: newerSummary,
+        };
+      },
     });
     renderWorkroom(api, candidateWorkspace.id);
 
@@ -3397,6 +3517,83 @@ describe("후보 확인과 자동 저장", () => {
     expect(screen.getByRole("tab", { name: "확인 필요 0" })).toBeVisible();
     await user.click(excluded);
     expect(await screen.findByText("엇갈린 판본 책")).toBeVisible();
+    await user.type(screen.getByRole("spinbutton", { name: "승인 예산" }), "10000");
+    expect(
+      screen.getByRole("button", { name: "후보 확정하고 승인 요청" }),
+    ).toBeEnabled();
+  });
+
+  test("v2 확인 필요와 v3 제외 행·옛 요약이 엇갈리면 같은 workspace revision으로 다시 읽는다", async () => {
+    const user = userEvent.setup();
+    const older = {
+      ...candidate(
+        "candidate-reviewer-concrete-race",
+        "검토자가 지적한 엇갈린 책",
+        "NEEDS_REVIEW",
+        "판정을 기다립니다.",
+      ),
+      row_version: 2,
+    };
+    const newer = {
+      ...older,
+      outcome: "EXCLUDED",
+      reason: "LIBRARIAN_DECISION",
+      row_version: 3,
+    };
+    const olderSummary = {
+      total_count: 1,
+      candidate_count: 0,
+      needs_review_count: 1,
+      excluded_count: 0,
+      unresolved_count: 1,
+      expected_total_won: 0,
+    };
+    const newerSummary = {
+      ...olderSummary,
+      needs_review_count: 0,
+      excluded_count: 1,
+      unresolved_count: 0,
+    };
+    const reads = new Map<string, number>();
+    const api = candidateApi({
+      listCandidates: async (
+        _workspaceId: string,
+        filters: { outcome: string },
+      ) => {
+        const read = (reads.get(filters.outcome) ?? 0) + 1;
+        reads.set(filters.outcome, read);
+        if (read === 1) {
+          return {
+            workspace_revision: filters.outcome === "EXCLUDED" ? 3 : 2,
+            items:
+              filters.outcome === "NEEDS_REVIEW"
+                ? [older]
+                : filters.outcome === "EXCLUDED"
+                  ? [newer]
+                  : [],
+            next_cursor: null,
+            total_count: filters.outcome === "NEEDS_REVIEW" ? 1 : 0,
+            // This is the reviewer's exact old-backend failure: the v3 row
+            // was read after the still-v2 aggregate in the same response.
+            summary: olderSummary,
+          };
+        }
+        return {
+          workspace_revision: 3,
+          items: filters.outcome === "EXCLUDED" ? [newer] : [],
+          next_cursor: null,
+          total_count: filters.outcome === "EXCLUDED" ? 1 : 0,
+          summary: newerSummary,
+        };
+      },
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+
+    expect(await screen.findByRole("tab", { name: "제외된 책 1" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "확인 필요 0" })).toBeVisible();
+    expect([...reads.values()].reduce((total, count) => total + count, 0)).toBeGreaterThan(3);
+    await user.click(screen.getByRole("tab", { name: "제외된 책 1" }));
+    expect(await screen.findByText("검토자가 지적한 엇갈린 책")).toBeVisible();
     await user.type(screen.getByRole("spinbutton", { name: "승인 예산" }), "10000");
     expect(
       screen.getByRole("button", { name: "후보 확정하고 승인 요청" }),
@@ -3492,26 +3689,64 @@ describe("후보 확인과 자동 저장", () => {
       "NEEDS_REVIEW",
       "확인이 필요합니다.",
     );
+    const resolved = {
+      ...moved,
+      outcome: "CANDIDATE",
+      reason: "LIBRARIAN_DECISION",
+      row_version: 2,
+    };
+    let resolvedOnServer = false;
     const api = candidateApi({
-      listCandidates: async (_workspaceId: string, filters: { outcome: string; cursor?: string }) => ({
-        items:
-          filters.outcome === "NEEDS_REVIEW"
-            ? filters.cursor
-              ? [moved, later]
-              : [moved]
-            : [],
-        next_cursor:
-          filters.outcome === "NEEDS_REVIEW" && !filters.cursor ? "review-next" : null,
-        total_count: filters.outcome === "NEEDS_REVIEW" ? 2 : 0,
-        summary: {
-          total_count: 2,
-          candidate_count: 0,
-          needs_review_count: 2,
-          excluded_count: 0,
-          unresolved_count: 2,
-          expected_total_won: 0,
-        },
-      }),
+      updateCandidate: async () => {
+        resolvedOnServer = true;
+        return { data: resolved, etag: '"2"' };
+      },
+      listCandidates: async (_workspaceId: string, filters: { outcome: string; cursor?: string }) => {
+        const summary = resolvedOnServer
+          ? {
+              total_count: 2,
+              candidate_count: 1,
+              needs_review_count: 1,
+              excluded_count: 0,
+              unresolved_count: 1,
+              expected_total_won: 12_000,
+            }
+          : {
+              total_count: 2,
+              candidate_count: 0,
+              needs_review_count: 2,
+              excluded_count: 0,
+              unresolved_count: 2,
+              expected_total_won: 0,
+            };
+        return {
+          workspace_revision: resolvedOnServer ? 2 : 1,
+          items: !resolvedOnServer
+            ? filters.outcome === "NEEDS_REVIEW"
+              ? [moved]
+              : []
+            : filters.outcome === "NEEDS_REVIEW"
+              ? filters.cursor
+                ? [later]
+                : []
+              : filters.outcome === "CANDIDATE"
+                ? [resolved]
+                : [],
+          next_cursor:
+            resolvedOnServer && filters.outcome === "NEEDS_REVIEW" && !filters.cursor
+              ? "review-next-v2"
+              : null,
+          total_count:
+            filters.outcome === "NEEDS_REVIEW"
+              ? resolvedOnServer
+                ? 1
+                : 2
+              : filters.outcome === "CANDIDATE" && resolvedOnServer
+                ? 1
+                : 0,
+          summary,
+        };
+      },
     });
     renderWorkroom(api, candidateWorkspace.id);
 
@@ -3519,7 +3754,7 @@ describe("후보 확인과 자동 저장", () => {
       await screen.findByRole("button", { name: "이미 판정한 책 수서 후보로 포함" }),
     );
     expect(screen.getByRole("tab", { name: "확인 필요 1" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "확인 필요 더 보기" }));
+    await user.click(await screen.findByRole("button", { name: "확인 필요 더 보기" }));
 
     expect(await screen.findByText("다음 확인 책")).toBeVisible();
     expect(screen.queryByText("이미 판정한 책")).not.toBeInTheDocument();
@@ -3554,23 +3789,69 @@ describe("후보 확인과 자동 저장", () => {
       unresolved_count: 1,
       expected_total_won: 0,
     };
+    const locallyResolved = {
+      ...moved,
+      outcome: "CANDIDATE",
+      reason: "LIBRARIAN_DECISION",
+      row_version: 2,
+    };
+    const localSummary = {
+      ...initialSummary,
+      candidate_count: 1,
+      needs_review_count: 0,
+      unresolved_count: 0,
+      expected_total_won: 12_000,
+    };
+    const newerSummary = {
+      ...initialSummary,
+      candidate_count: 0,
+      needs_review_count: 0,
+      excluded_count: 2,
+      unresolved_count: 0,
+    };
+    let phase: "initial" | "local" | "newer" = "initial";
     const api = candidateApi({
+      updateCandidate: async () => {
+        phase = "local";
+        return { data: locallyResolved, etag: '"2"' };
+      },
       listCandidates: async (
         _workspaceId: string,
         filters: { outcome: string; cursor?: string },
       ) => {
         if (filters.cursor === "excluded-next") {
+          phase = "newer";
           return {
+            workspace_revision: 3,
             items: [newer],
             next_cursor: null,
             total_count: 2,
-            summary: {
-              ...initialSummary,
-              candidate_count: 0,
-              needs_review_count: 0,
-              excluded_count: 2,
-              unresolved_count: 0,
-            },
+            summary: newerSummary,
+          };
+        }
+        if (phase === "newer") {
+          const items = filters.outcome === "EXCLUDED" ? [excludedSeed, newer] : [];
+          return {
+            workspace_revision: 3,
+            items,
+            next_cursor: null,
+            total_count: items.length,
+            summary: newerSummary,
+          };
+        }
+        if (phase === "local") {
+          const items =
+            filters.outcome === "CANDIDATE"
+              ? [locallyResolved]
+              : filters.outcome === "EXCLUDED"
+                ? [excludedSeed]
+                : [];
+          return {
+            workspace_revision: 2,
+            items,
+            next_cursor: filters.outcome === "EXCLUDED" ? "excluded-next" : null,
+            total_count: items.length,
+            summary: localSummary,
           };
         }
         const items =
@@ -3580,6 +3861,7 @@ describe("후보 확인과 자동 저장", () => {
               ? [excludedSeed]
               : [];
         return {
+          workspace_revision: 1,
           items,
           next_cursor:
             filters.outcome === "EXCLUDED" ? "excluded-next" : null,
@@ -3668,6 +3950,97 @@ describe("후보 확인과 자동 저장", () => {
     expect(await screen.findByText("cursor 요약 판본 책")).toBeVisible();
     expect(screen.getByRole("tab", { name: "확인 필요 0" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "제외된 책 2" })).toBeVisible();
+  });
+
+  test("load-more가 더 최신 revision이면 섞지 않고 첫 페이지를 다시 읽어 승인 gate를 닫는다", async () => {
+    const user = userEvent.setup();
+    const older = {
+      ...candidate(
+        "candidate-load-more-revision-race",
+        "더 보기 중 다시 검토할 책",
+        "CANDIDATE",
+      ),
+      row_version: 2,
+    };
+    const newer = {
+      ...older,
+      outcome: "NEEDS_REVIEW",
+      reason: "판본을 다시 확인해야 합니다.",
+      row_version: 3,
+    };
+    const oldSummary = {
+      total_count: 1,
+      candidate_count: 1,
+      needs_review_count: 0,
+      excluded_count: 0,
+      unresolved_count: 0,
+      expected_total_won: 12_000,
+    };
+    const newSummary = {
+      ...oldSummary,
+      candidate_count: 0,
+      needs_review_count: 1,
+      unresolved_count: 1,
+      expected_total_won: 0,
+    };
+    let cursorReturned = false;
+    let refreshReads = 0;
+    const api = candidateApi({
+      listCandidates: async (
+        _workspaceId: string,
+        filters: { outcome: string; cursor?: string },
+      ) => {
+        if (filters.cursor === "revision-race-next") {
+          cursorReturned = true;
+          return {
+            workspace_revision: 3,
+            items: [newer],
+            next_cursor: null,
+            total_count: 1,
+            // The old endpoint could read this aggregate before the v3 row.
+            summary: oldSummary,
+          };
+        }
+        if (cursorReturned) {
+          refreshReads += 1;
+          return {
+            workspace_revision: 3,
+            items: filters.outcome === "NEEDS_REVIEW" ? [newer] : [],
+            next_cursor: null,
+            total_count: filters.outcome === "NEEDS_REVIEW" ? 1 : 0,
+            summary: newSummary,
+          };
+        }
+        return {
+          workspace_revision: 2,
+          items: filters.outcome === "CANDIDATE" ? [older] : [],
+          next_cursor:
+            filters.outcome === "CANDIDATE" ? "revision-race-next" : null,
+          total_count: filters.outcome === "CANDIDATE" ? 1 : 0,
+          summary: oldSummary,
+        };
+      },
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+
+    await user.type(
+      await screen.findByRole("spinbutton", { name: "승인 예산" }),
+      "20000",
+    );
+    await user.click(screen.getByRole("tab", { name: "수서 후보 1" }));
+    expect(
+      screen.getByRole("button", { name: "후보 확정하고 승인 요청" }),
+    ).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "수서 후보 더 보기" }));
+
+    expect(await screen.findByRole("tab", { name: "확인 필요 1" })).toBeVisible();
+    expect(refreshReads).toBeGreaterThanOrEqual(3);
+    expect(screen.getByRole("tab", { name: "수서 후보 0" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "후보 확정하고 승인 요청" }),
+    ).toBeDisabled();
+    await user.click(screen.getByRole("tab", { name: "확인 필요 1" }));
+    expect(await screen.findByText("더 보기 중 다시 검토할 책")).toBeVisible();
   });
 
   test("검색 재조회는 동일 판본을 되돌리지 않고 더 최신 판본만 받아들인다", async () => {
@@ -3810,6 +4183,7 @@ describe("후보 확인과 자동 저장", () => {
 
     act(() =>
       resolveOldPage?.({
+        workspace_revision: 1,
         items: [candidate("candidate-old-late", "늦은 이전 결과", "CANDIDATE")],
         next_cursor: null,
         total_count: 999,
@@ -3884,6 +4258,7 @@ describe("후보 확인과 자동 저장", () => {
 
     act(() =>
       resolveOldPage?.({
+        workspace_revision: 1,
         items: [candidate("candidate-stale-save", "늦은 저장 전 행", "CANDIDATE")],
         next_cursor: null,
         total_count: 999,
@@ -4048,6 +4423,7 @@ describe("후보 확인과 자동 저장", () => {
     act(() => {
       for (const resolve of slowResolvers) {
         resolve({
+          workspace_revision: 1,
           items: [candidate("candidate-slow", "느림 결과", "CANDIDATE")],
           next_cursor: null,
           total_count: 999,

@@ -116,66 +116,86 @@ def list_candidates(
         )
         pattern = _literal_like_pattern(search)
         filter_parameters.extend((pattern, pattern, pattern))
-    total_count = connection.execute(
-        f"""
-        SELECT COUNT(*)
-        FROM candidate_decisions candidate
-        JOIN recommendations recommendation
-          ON recommendation.id = candidate.recommendation_id
-        WHERE {" AND ".join(filter_clauses)}
-        """,
-        filter_parameters,
-    ).fetchone()[0]
-    summary_row = connection.execute(
-        """
-        SELECT COUNT(*) AS total_count,
-               SUM(CASE WHEN outcome = 'CANDIDATE' THEN 1 ELSE 0 END)
-                 AS candidate_count,
-               SUM(CASE WHEN outcome = 'NEEDS_REVIEW' THEN 1 ELSE 0 END)
-                 AS needs_review_count,
-               SUM(CASE WHEN outcome = 'EXCLUDED' THEN 1 ELSE 0 END)
-                 AS excluded_count,
-               COALESCE(SUM(
-                   CASE WHEN outcome = 'CANDIDATE'
-                        THEN quantity * COALESCE(unit_price, 0) ELSE 0 END
-               ), 0) AS expected_total_won
-        FROM candidate_decisions
-        WHERE school_id = ? AND workspace_id = ?
-        """,
-        (user.school_id, workspace_id),
-    ).fetchone()
-    clauses = list(filter_clauses)
-    parameters = list(filter_parameters)
-    if decoded:
-        clauses.append("candidate.id > ?")
-        parameters.append(decoded[0])
-    rows = connection.execute(
-        f"""
-        SELECT candidate.*, recommendation.original_title,
-               recommendation.original_authors_json, recommendation.isbn13,
-               recommendation.original_edition
-        FROM candidate_decisions candidate
-        JOIN recommendations recommendation ON recommendation.id = candidate.recommendation_id
-        WHERE {" AND ".join(clauses)}
-        ORDER BY candidate.id ASC LIMIT ?
-        """,
-        (*parameters, limit + 1),
-    ).fetchall()
-    items = [_candidate(row) for row in rows]
-    result = page(items, limit=limit, cursor_values=lambda item: (item["id"],))
-    needs_review_count = int(summary_row["needs_review_count"] or 0)
-    result.update(
-        total_count=int(total_count),
-        summary={
-            "total_count": int(summary_row["total_count"] or 0),
-            "candidate_count": int(summary_row["candidate_count"] or 0),
-            "needs_review_count": needs_review_count,
-            "excluded_count": int(summary_row["excluded_count"] or 0),
-            "unresolved_count": needs_review_count,
-            "expected_total_won": int(summary_row["expected_total_won"] or 0),
-        },
-    )
-    return result
+    started_snapshot = not connection.in_transaction
+    if started_snapshot:
+        connection.execute("BEGIN")
+    try:
+        workspace = connection.execute(
+            """
+            SELECT candidate_collection_revision
+            FROM acquisition_workspaces
+            WHERE id = ? AND school_id = ?
+            """,
+            (workspace_id, user.school_id),
+        ).fetchone()
+        if workspace is None:
+            raise domain_not_found("WORKSPACE_NOT_FOUND")
+        workspace_revision = int(workspace["candidate_collection_revision"])
+        total_count = connection.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM candidate_decisions candidate
+            JOIN recommendations recommendation
+              ON recommendation.id = candidate.recommendation_id
+            WHERE {" AND ".join(filter_clauses)}
+            """,
+            filter_parameters,
+        ).fetchone()[0]
+        summary_row = connection.execute(
+            """
+            SELECT COUNT(*) AS total_count,
+                   SUM(CASE WHEN outcome = 'CANDIDATE' THEN 1 ELSE 0 END)
+                     AS candidate_count,
+                   SUM(CASE WHEN outcome = 'NEEDS_REVIEW' THEN 1 ELSE 0 END)
+                     AS needs_review_count,
+                   SUM(CASE WHEN outcome = 'EXCLUDED' THEN 1 ELSE 0 END)
+                     AS excluded_count,
+                   COALESCE(SUM(
+                       CASE WHEN outcome = 'CANDIDATE'
+                            THEN quantity * COALESCE(unit_price, 0) ELSE 0 END
+                   ), 0) AS expected_total_won
+            FROM candidate_decisions
+            WHERE school_id = ? AND workspace_id = ?
+            """,
+            (user.school_id, workspace_id),
+        ).fetchone()
+        clauses = list(filter_clauses)
+        parameters = list(filter_parameters)
+        if decoded:
+            clauses.append("candidate.id > ?")
+            parameters.append(decoded[0])
+        rows = connection.execute(
+            f"""
+            SELECT candidate.*, recommendation.original_title,
+                   recommendation.original_authors_json, recommendation.isbn13,
+                   recommendation.original_edition
+            FROM candidate_decisions candidate
+            JOIN recommendations recommendation
+              ON recommendation.id = candidate.recommendation_id
+            WHERE {" AND ".join(clauses)}
+            ORDER BY candidate.id ASC LIMIT ?
+            """,
+            (*parameters, limit + 1),
+        ).fetchall()
+        items = [_candidate(row) for row in rows]
+        result = page(items, limit=limit, cursor_values=lambda item: (item["id"],))
+        needs_review_count = int(summary_row["needs_review_count"] or 0)
+        result.update(
+            workspace_revision=workspace_revision,
+            total_count=int(total_count),
+            summary={
+                "total_count": int(summary_row["total_count"] or 0),
+                "candidate_count": int(summary_row["candidate_count"] or 0),
+                "needs_review_count": needs_review_count,
+                "excluded_count": int(summary_row["excluded_count"] or 0),
+                "unresolved_count": needs_review_count,
+                "expected_total_won": int(summary_row["expected_total_won"] or 0),
+            },
+        )
+        return result
+    finally:
+        if started_snapshot and connection.in_transaction:
+            connection.rollback()
 
 
 @router.get(

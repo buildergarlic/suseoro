@@ -177,6 +177,7 @@ class JobFileResult(PublicSchema):
     total_rows: int
     processed_rows: int
     row_error_count: int
+    count_confidence: str
     error: JobError | None
     mapping_required: MappingRequired | None
 
@@ -242,6 +243,7 @@ class CandidateSummary(PublicSchema):
 
 
 class CandidatePage(PublicSchema):
+    workspace_revision: int
     items: list[CandidateResponse]
     next_cursor: str | None
     total_count: int

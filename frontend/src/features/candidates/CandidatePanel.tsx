@@ -6,6 +6,7 @@ import { canOperate } from "../workspaces/workflowPolicy";
 import { CandidateRow } from "./CandidateRow";
 
 type CandidateSummary = components["schemas"]["CandidateSummary"];
+type CandidatePage = components["schemas"]["CandidatePage"];
 
 interface CandidatePanelProps {
   api: SuseoroApi;
@@ -126,6 +127,69 @@ function sameSummary(
   );
 }
 
+function summaryFingerprint(summary: CandidateSummary): string {
+  return [
+    summary.total_count,
+    summary.candidate_count,
+    summary.needs_review_count,
+    summary.excluded_count,
+    summary.unresolved_count,
+    summary.expected_total_won,
+  ].join(":");
+}
+
+async function loadCoherentCandidatePages(
+  api: SuseoroApi,
+  workspaceId: string,
+  search: string,
+): Promise<ReadonlyArray<readonly [Outcome, CandidatePage]>> {
+  const pages = new Map<Outcome, CandidatePage>();
+  let outcomesToRead = [...OUTCOMES];
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const refreshed = await Promise.all(
+      outcomesToRead.map(async (outcome) => [
+        outcome,
+        await api.listCandidates(workspaceId, {
+          outcome,
+          search: search || undefined,
+          limit: 100,
+        }),
+      ] as const),
+    );
+    for (const [outcome, page] of refreshed) pages.set(outcome, page);
+    if (pages.size !== OUTCOMES.length) {
+      outcomesToRead = OUTCOMES.filter((outcome) => !pages.has(outcome));
+      continue;
+    }
+
+    const latestRevision = Math.max(
+      ...OUTCOMES.map((outcome) => pages.get(outcome)!.workspace_revision),
+    );
+    const summaryFrequency = new Map<string, number>();
+    for (const outcome of OUTCOMES) {
+      const page = pages.get(outcome)!;
+      if (page.workspace_revision !== latestRevision) continue;
+      const fingerprint = summaryFingerprint(page.summary);
+      summaryFrequency.set(fingerprint, (summaryFrequency.get(fingerprint) ?? 0) + 1);
+    }
+    const [authoritativeSummary] = [...summaryFrequency.entries()].sort(
+      ([leftKey, leftCount], [rightKey, rightCount]) =>
+        rightCount - leftCount || leftKey.localeCompare(rightKey),
+    )[0];
+    outcomesToRead = OUTCOMES.filter((outcome) => {
+      const page = pages.get(outcome)!;
+      return (
+        page.workspace_revision !== latestRevision ||
+        summaryFingerprint(page.summary) !== authoritativeSummary
+      );
+    });
+    if (outcomesToRead.length === 0) {
+      return OUTCOMES.map((outcome) => [outcome, pages.get(outcome)!] as const);
+    }
+  }
+  throw new Error("후보 목록이 계속 변경되고 있습니다. 잠시 후 다시 확인해 주세요.");
+}
+
 export function CandidatePanel({
   api,
   user,
@@ -142,14 +206,27 @@ export function CandidatePanel({
   const [requestingApproval, setRequestingApproval] = useState(false);
   const [budgetWon, setBudgetWon] = useState("");
   const [mutationRefresh, setMutationRefresh] = useState(0);
+  const [acceptedSnapshot, setAcceptedSnapshot] = useState<{
+    identity: string;
+    revision: number;
+  } | null>(null);
   const queryGenerationRef = useRef(0);
   const mutationEpochRef = useRef(0);
   const mutationInFlightRef = useRef(0);
+  const snapshotRevisionRef = useRef<number | null>(null);
+  const hasLoadedSnapshotRef = useRef(false);
   const authoritativeCandidatesRef = useRef(new Map<string, Candidate>());
   const operator = canOperate(user);
+  const snapshotIdentity = `${workspace.id}\u0000${search}\u0000${mutationRefresh}`;
+  const snapshotRevision =
+    acceptedSnapshot?.identity === snapshotIdentity
+      ? acceptedSnapshot.revision
+      : null;
 
   useEffect(() => {
     authoritativeCandidatesRef.current.clear();
+    snapshotRevisionRef.current = null;
+    hasLoadedSnapshotRef.current = false;
   }, [workspace.id]);
 
   function reconcileCandidate(serverCandidate: Candidate): Candidate {
@@ -166,17 +243,10 @@ export function CandidatePanel({
     const generation = ++queryGenerationRef.current;
     const mutationEpoch = mutationEpochRef.current;
     const mutationWasInFlight = mutationInFlightRef.current > 0;
+    snapshotRevisionRef.current = null;
     const timer = window.setTimeout(() => {
-      void Promise.all(
-        OUTCOMES.map(async (outcome) => [
-          outcome,
-          await api.listCandidates(workspace.id, {
-            outcome,
-            search: search.trim() || undefined,
-            limit: 100,
-          }),
-        ] as const),
-      )
+      if (!hasLoadedSnapshotRef.current) setLoading(true);
+      void loadCoherentCandidatePages(api, workspace.id, search.trim())
         .then((results) => {
           if (
             !active ||
@@ -246,6 +316,15 @@ export function CandidatePanel({
           for (const outcome of OUTCOMES) {
             next[outcome].totalCount = summaryCount(reconciledSummary, outcome);
           }
+          const acceptedRevision = results[0]?.[1].workspace_revision ?? null;
+          snapshotRevisionRef.current = acceptedRevision;
+          hasLoadedSnapshotRef.current = true;
+          if (acceptedRevision !== null) {
+            setAcceptedSnapshot({
+              identity: snapshotIdentity,
+              revision: acceptedRevision,
+            });
+          }
           setPages(next);
           setSummary(reconciledSummary);
         })
@@ -266,17 +345,19 @@ export function CandidatePanel({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [api, mutationRefresh, search, workspace.id]);
+  }, [api, mutationRefresh, search, snapshotIdentity, workspace.id]);
 
   function beginMutation() {
     mutationEpochRef.current += 1;
     mutationInFlightRef.current += 1;
+    snapshotRevisionRef.current = null;
+    setAcceptedSnapshot(null);
   }
 
-  function finishMutation(authoritative: boolean) {
+  function finishMutation() {
     mutationInFlightRef.current = Math.max(0, mutationInFlightRef.current - 1);
     queryGenerationRef.current += 1;
-    if (mutationInFlightRef.current === 0 && !authoritative) {
+    if (mutationInFlightRef.current === 0) {
       setMutationRefresh((current) => current + 1);
     }
   }
@@ -407,7 +488,8 @@ export function CandidatePanel({
 
   async function loadMore() {
     const cursor = pages[activeOutcome].nextCursor;
-    if (!cursor) return;
+    const requestedRevision = snapshotRevisionRef.current;
+    if (!cursor || requestedRevision === null) return;
     const generation = queryGenerationRef.current;
     const mutationEpoch = mutationEpochRef.current;
     const mutationWasInFlight = mutationInFlightRef.current > 0;
@@ -429,6 +511,18 @@ export function CandidatePanel({
         activeOutcome !== outcome ||
         search.trim() !== requestedSearch
       ) return;
+      if (
+        page.workspace_revision !== requestedRevision ||
+        !sameSummary(page.summary, summary)
+      ) {
+        snapshotRevisionRef.current = null;
+        setAcceptedSnapshot(null);
+        queryGenerationRef.current += 1;
+        setLoading(true);
+        setAnnouncement("후보 목록이 변경되어 최신 내용을 다시 불러옵니다.");
+        setMutationRefresh((current) => current + 1);
+        return;
+      }
       const canonical = new Map<string, Candidate>();
       for (const candidate of page.items) {
         const existing = canonical.get(candidate.id);
@@ -502,7 +596,6 @@ export function CandidatePanel({
     try {
       await api.lockCandidate(candidate.id, workspace.id);
       beginMutation();
-      let authoritative = false;
       try {
         const updated = await api.updateCandidate(
             candidate.id,
@@ -527,9 +620,8 @@ export function CandidatePanel({
             ? "수서 후보로 되돌렸습니다."
             : "서버의 현재 판정을 유지했습니다.",
         );
-        authoritative = true;
       } finally {
-        finishMutation(authoritative);
+        finishMutation();
       }
     } catch (error) {
       setAnnouncement(
@@ -540,7 +632,11 @@ export function CandidatePanel({
 
   async function requestApproval() {
     const approvedBudget = Number(budgetWon);
-    if (summary.unresolved_count > 0 || approvedBudget <= 0) return;
+    if (
+      snapshotRevisionRef.current === null ||
+      summary.unresolved_count > 0 ||
+      approvedBudget <= 0
+    ) return;
     setRequestingApproval(true);
     try {
       const transition = await api.requestApproval(
@@ -721,6 +817,7 @@ export function CandidatePanel({
             className="button button-primary"
             disabled={
               requestingApproval ||
+              snapshotRevision === null ||
               summary.unresolved_count > 0 ||
               Number(budgetWon) <= 0
             }

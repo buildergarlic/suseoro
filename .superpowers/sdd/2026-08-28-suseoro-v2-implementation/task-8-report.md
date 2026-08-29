@@ -676,3 +676,116 @@ frontend/src/api/types.ts
 서로 상쇄되는 다중 concurrent 변경이 완전히 같은 aggregate를 만드는 경우는 원천적으로 판별할 수 없고,
 DDL은 있으나 committed `0011` ledger row만 유실된 비정상 DB는 self-heal 대신 fail closed한다. 둘 다 현재
 요구 범위의 data/guard를 손상하지 않는 residual risk이며 blocker는 없다.
+
+## 검토 수정 라운드 5 (2026-08-29)
+
+검토 commit `5ab1a5e`의 남은 Important 3개를 전용 RED regression으로 재현하고 닫았다. ruling에 따라
+committed `0011_task8_round3_integrity.sql`과 `0012_task8_round4_integrity.sql`은 byte-for-byte 보존했고,
+historical count capture/restoration과 candidate collection revision은 forward-only migration으로 추가했다.
+plan/progress ledger는 수정하지 않았다.
+
+### Historical count의 증거 보존과 confidence
+
+- `0010b_task8_round5_count_capture.sql`은 `0011`/`0012`보다 먼저 정렬되어 terminal INGEST/PARSE file result의
+  `total_rows`, `processed_rows`, 자체 결과에서 도출한 `row_error_count`를 immutable history table에 잡는다.
+  현재 mutable `source_rows`는 읽지 않는다. `PARTIAL + MAPPING_REQUIRED`는 그 결과 자체의 code로 `0/0`을
+  보존하고, canonical populated-0010 `PARTIAL (100,90)`은 최종 `(100,90,10)` `EXACT`가 된다. nonzero read가
+  있는 `FAILED (100,40)`도 `(100,40,60)`으로 보존한다.
+- capture 시점에 `0011` 또는 `0012` ledger가 이미 있으면 과거 증거가 사라졌다고 보고 `UNVERIFIED`로
+  명시한다. `0013_task8_round5_count_restoration.sql`은 checksum-protected `0012`가 바꾼 값을 capture로
+  되돌리고 claim guard를 정확히 복원한다. 값이 실제로 다를 때만 UPDATE하여 postlude 재실행이 history를
+  다시 mutate하지 않는다. history row 자체는 INSERT/UPDATE/DELETE trigger로 불변이다.
+- migration runner의 원자 bundle은 prelude → capture → committed 0011 → committed 0012 → restoration 순서이며,
+  실행 전 present/applied member의 checksum을 모두 검증한다. fresh, populated 0010, already-0011,
+  already-0012 without capture, already-0012 with pre-rewrite capture, lower-sorted prelude 재발견을 모두
+  검증했다. impossible 0012-without-0011 / 0013-without-0012 history는 fail closed하고 0012는 ledger 기록 뒤
+  절대 replay하지 않는다. backup validator는 정확한 historical 0011/0012 release manifest만 허용하며 임의
+  subset은 계속 거절한다.
+- API는 각 file result에 `count_confidence`를 내보낸다. UI는 `UNVERIFIED` count/progress 숫자를 숨기고
+  한국어로 원본 재읽기를 안내하므로 검증되지 않은 값을 성공 count처럼 표시하지 않는다.
+
+### Historical job/source error privacy
+
+- public job error는 stable code/type/한국어 message의 고정 allowlist로만 응답한다. 허용 대상은
+  `JOB_FAILED`, `PARSER_FAILURE`, `COMPARISON_FILE_FAILED`, `MAPPING_REQUIRED`, `NO_LOGICAL_ROWS`,
+  `ALL_LOGICAL_ROWS_FAILED`이며 persisted type/message는 허용 code인 경우에도 그대로 echo하지 않는다.
+- job detail/list, source detail/list의 latest result, COMPARE 및 pre-`4ccff0b` INGEST/PARSE item boundary 모두
+  같은 sanitizer를 거친다. boundary별 unknown/non-dict/malformed JSON은 Job/Parser/Comparison의 고정 generic
+  envelope로 fail-safe한다. 새 unknown-job/all-items-failed 영속 값도 처음부터 canonical error다.
+- structured `MAPPING_REQUIRED` payload는 error JSON 안의 값만으로 신뢰하지 않는다.
+  `0015_task8_round5_mapping_provenance.sql`이 legacy row를 `NULL`로 남기는 별도
+  `public_mapping_payload_version` provenance column을 추가하고, 현재 mapping handler에서 생성한 row만 `1`로
+  기록한다. response boundary는 이 별도 provenance와 Pydantic schema 검증을 모두 통과한 payload만 내보내며
+  내부 provenance column은 응답에서 제거한다. 따라서 historical JSON 안에 같은 이름의 marker를 위조해도
+  public mapping payload가 되지 않는다.
+- adversarial historical DB probe에 `OperationalError`, 임의 code, SQL/table/index, 로컬 path, exception
+  message, malformed `error_json`, 위조 mapping marker와 path/SQL preview를 직접 심었다. 모든 response는
+  200을 유지하면서 private token을 하나도 내보내지 않고 오직 canonical Korean envelope만 반환한다.
+
+### Candidate page snapshot과 collection revision
+
+- `0014_task8_round5_candidate_revision.sql`은 workspace별 monotonic
+  `candidate_collection_revision`을 추가한다. candidate INSERT/UPDATE/DELETE trigger가 candidate 변경과 같은
+  SQLite transaction에서 revision을 올리며 rollback도 함께 된다. 유효한 cross-workspace move는 OLD와 NEW
+  collection을 모두 올린다.
+- candidate page는 먼저 workspace revision을 읽어 WAL snapshot을 확정한 뒤 같은 read transaction에서
+  filtered count, workspace summary, page rows를 모두 읽는다. 따라서 한 response의 rows/count/summary/revision은
+  단일 SQLite snapshot이다.
+- client는 CANDIDATE/NEEDS_REVIEW/EXCLUDED 세 요청의 가장 최신 revision과 summary가 모두 같을 때만 state를
+  reconcile한다. 낮은 revision 또는 다른 summary tab은 bounded refetch하고 계속 변하면 fail closed한다.
+  load-more가 다른 revision/summary를 받으면 cursor row를 섞지 않고 전체 세 tab을 다시 읽는다. mutation
+  시작 즉시 approval revision을 무효화하고 완료 뒤 authoritative collection을 재조회한다. approval button은
+  현재 workspace/search/mutation identity와 일치하는 한 revision의 `unresolved_count`로만 gate되며 server도
+  같은 transaction에서 unresolved candidate를 다시 확인한다.
+- reviewer의 구체적 v2 NEEDS_REVIEW → v3 EXCLUDED 이동에서 old summary와 new row가 교차하는 경우, 그리고
+  cursor/load-more가 더 새로운 v3를 먼저 보는 경우를 deterministic test로 고정했다. stale unresolved count가
+  남거나 approval이 잘못 block/allow되지 않는다.
+
+### RED / GREEN과 최종 gate
+
+초기 backend round-5 migration/privacy/snapshot 묶음은 `8 failed`였고 candidate snapshot transaction과
+revision rollback probe도 각각 RED에서 시작했다. self-review에서 추가한 malformed historical JSON과
+nonzero-processed FAILED upgrade도 `2 failed -> 2 passed`로 확인했다. 최종 round-4+round-5 focused 결과는
+`22 passed`다. cross-workspace collection move도 old revision이 오르지 않는 RED를 확인한 뒤 닫았다.
+Frontend는 reviewer interleave/load-more 2개가 모두 RED였고 `UNVERIFIED` count 노출 probe도
+RED에서 시작했으며 최종 ingestion/candidate file은 `65 passed`다. 독립 검토에서 legacy structured mapping
+payload 노출을 재현했고, 최초 JSON marker 방안도 위조 marker RED에서 탈락시킨 뒤 별도 DB provenance로
+교체했다. 최종 독립 재검토는 Critical/Important finding 없이 clean이며 reviewer가 round-5 `12 passed`와
+mapping privacy `3 passed`를 별도로 확인했다.
+
+```text
+tests/test_task8_round4.py + test_task8_round5.py     22 passed in 6.88s
+backend full pytest                                 462 passed in 115.21s
+npm ci                                                audited 265, 0 vulnerabilities
+npm ls --all                                          exit 0
+npm test -- --run                                     3 files, 103 passed in 55.43s
+ingestion/candidate frontend                          65 passed in 53.47s
+npm run typecheck                                     exit 0
+npm run lint                                          exit 0, warning 0
+npm run build                                         36 modules, exit 0
+dist JS                                               308.62 kB / 94.85 kB gzip
+uvx ruff@0.16.5 format --check .                      109 files already formatted
+uvx ruff@0.16.5 check .                               All checks passed
+python -m compileall -q src tests                     exit 0
+uv lock --check                                       resolved 36 packages
+uv build                                              sdist + wheel built
+git diff --check                                      exit 0
+```
+
+OpenAPI와 generated TypeScript type은 각각 연속 두 번 생성해 같은 SHA-256을 확인했다.
+
+```text
+backend/openapi.json
+664769024F325CF01819F7E4A8358965113D8EA0602C7E9A9F2F2F40B1D9373D
+
+frontend/src/api/types.ts
+37B34C157CB14C2CBE441EA3E0081A4F99509806BA57C4DE6F1BB91C93E239A5
+```
+
+새 migration SHA-256은 capture
+`BD78A9BF9A414EACC020F93DA02406A88BB8D1CC42FBDBD171F405369165F24C`, restoration
+`1FC5453B72C173D133F6A54439006E9DF8019ADF0C1CB21DA1C0951A69768C69`, candidate revision
+`F7F7E0A75B4CEF24D28C798B43012647FA90FAA825381727A99D85D71872163E`, mapping provenance
+`CF9CBB3468070C4A437491D2997838C22429ABA860D3B03F3D0FCDAE41F836D8`이다. committed 0011은
+`EB22DB853D9488C3FDC0A95AD0EAFD2E4C79884D41D6D313B272CB49822242B0`, committed 0012는
+`D236B01E9FC31013C5C183FF1536C5815BADD47ACCE6CE5C01DC700B77DCB462`로 보존됐다.

@@ -100,6 +100,7 @@ const validSourceWithResultResponse = {
     status: "PARTIAL",
     total_rows: 1,
     processed_rows: 0,
+    count_confidence: "EXACT",
     row_error_count: 0,
     error: { type: null, code: "MAPPING_REQUIRED", message: "연결이 필요합니다." },
     mapping_required: {

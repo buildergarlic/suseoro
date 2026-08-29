@@ -83,10 +83,7 @@ class DurableJobRunner:
             failed = self.repository.mark_failed(
                 job.id,
                 claim_token=job.claim_token,
-                error={
-                    "type": "UnknownJobType",
-                    "message": f"No handler registered for {job.job_type}",
-                },
+                error=job_failure(),
                 now=self.clock(),
             )
             self.repository.connection.commit()
@@ -119,10 +116,7 @@ class DurableJobRunner:
             failed = self.repository.mark_failed(
                 job.id,
                 claim_token=job.claim_token,
-                error={
-                    "type": "AllItemsFailed",
-                    "message": "모든 파일 처리에 실패했습니다.",
-                },
+                error=job_failure(),
                 now=self.clock(),
             )
             self.repository.connection.commit()
