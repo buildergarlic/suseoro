@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import re
 import sqlite3
 import uuid
 from collections.abc import Callable
@@ -120,13 +121,240 @@ def _parse_source_preserving_unknown_headers(
     )
 
 
+_TABLE_NODE = re.compile(
+    r"(?P<table>(?:^|/)table\[(?P<table_number>\d+)\])"
+    r"/row\[(?P<row>\d+)\]/cell\[(?P<cell>\d+)\]$"
+)
+_DOCUMENT_FORMATS = frozenset({"DOCX", "HWP", "HWPX", "PDF"})
+
+
+def _document_text(row: ParsedRow) -> str:
+    field = row.fields.get("text")
+    value = field.value if field is not None else row.raw_values.get("text")
+    return "" if value is None else str(value).strip()
+
+
+def _unique_headers(values: list[str]) -> list[str]:
+    headers: list[str] = []
+    used: dict[str, int] = {}
+    for index, value in enumerate(values, start=1):
+        base = value.strip() or f"column_{index}"
+        used[base] = used.get(base, 0) + 1
+        headers.append(base if used[base] == 1 else f"{base}__{used[base]}")
+    return headers
+
+
+def _table_row(
+    *,
+    result: ParseResult,
+    headers: list[str],
+    values: list[str],
+    sheet: str | None,
+    source_row: int,
+    source_columns: dict[str, int] | None = None,
+) -> ParsedRow:
+    padded = values + [""] * max(0, len(headers) - len(values))
+    return ParsedRow(
+        status=RowStatus.SUCCESS,
+        provenance=Provenance(
+            sheet=sheet,
+            source_row=source_row,
+            source_columns=source_columns
+            or {header: index for index, header in enumerate(headers, start=1)},
+            source_file_sha256=next(
+                (
+                    row.provenance.source_file_sha256
+                    for row in result.rows
+                    if row.provenance.source_file_sha256
+                ),
+                None,
+            ),
+        ),
+        raw_values={header: padded[index] for index, header in enumerate(headers)},
+        fields={},
+    )
+
+
+def _xml_document_table_rows(result: ParseResult) -> list[ParsedRow]:
+    tables: dict[tuple[str, str], dict[int, dict[int, ParsedRow]]] = {}
+    for row in result.rows:
+        if row.status != RowStatus.SUCCESS:
+            continue
+        node = str(row.raw_values.get("node") or "")
+        match = _TABLE_NODE.search(node)
+        if match is None:
+            continue
+        sheet_part = (row.provenance.sheet or "").split("#", 1)[0]
+        table_path = node.rsplit("/row[", 1)[0]
+        table = tables.setdefault((sheet_part, table_path), {})
+        table.setdefault(int(match.group("row")), {})[int(match.group("cell"))] = row
+    all_parsed: list[ParsedRow] = []
+    for (sheet_part, table_path), rows in tables.items():
+        ordered = sorted(rows.items())
+        if len(ordered) < 2:
+            continue
+        _, header_cells = ordered[0]
+        headers = _unique_headers(
+            [_document_text(header_cells[index]) for index in sorted(header_cells)]
+        )
+        if len(headers) < 2:
+            continue
+        parsed: list[ParsedRow] = []
+        for row_number, cells in ordered[1:]:
+            values = [
+                _document_text(cells[index]) if index in cells else ""
+                for index in range(1, len(headers) + 1)
+            ]
+            if not any(values):
+                continue
+            parsed.append(
+                _table_row(
+                    result=result,
+                    headers=headers,
+                    values=values,
+                    sheet=f"{sheet_part}#{table_path}",
+                    source_row=len(all_parsed) + len(parsed) + 1,
+                )
+            )
+        if parsed:
+            all_parsed.extend(parsed)
+    return all_parsed
+
+
+def _hwp_document_table_rows(result: ParseResult) -> list[ParsedRow]:
+    by_table: dict[tuple[str, int], list[ParsedRow]] = {}
+    for row in result.rows:
+        if row.status == RowStatus.SUCCESS and row.raw_values.get("cell") is not None:
+            by_table.setdefault(
+                (
+                    row.provenance.sheet or "BodyText",
+                    int(row.raw_values.get("table") or 1),
+                ),
+                [],
+            ).append(row)
+    all_parsed: list[ParsedRow] = []
+    for (stream, table_number), cells in by_table.items():
+        cells.sort(key=lambda row: int(row.raw_values.get("cell") or 0))
+        candidates: list[tuple[int, int, list[str]]] = []
+        for width in range(2, min(20, len(cells) // 2) + 1):
+            if len(cells) % width:
+                continue
+            headers = [_document_text(row) for row in cells[:width]]
+            recognized = sum(
+                canonical_field_for_header(header) is not None for header in headers
+            )
+            if recognized:
+                candidates.append((recognized, width, headers))
+        if not candidates:
+            continue
+        _, width, headers = max(candidates, key=lambda item: (item[0], item[1]))
+        parsed: list[ParsedRow] = []
+        for offset in range(width, len(cells), width):
+            group = cells[offset : offset + width]
+            values = [_document_text(row) for row in group]
+            if not any(values):
+                continue
+            parsed.append(
+                _table_row(
+                    result=result,
+                    headers=_unique_headers(headers),
+                    values=values,
+                    sheet=f"{stream}#table[{table_number}]",
+                    source_row=len(all_parsed) + len(parsed) + 1,
+                )
+            )
+        all_parsed.extend(parsed)
+    return all_parsed
+
+
+def _pdf_document_table_rows(result: ParseResult) -> list[ParsedRow]:
+    lines: list[tuple[ParsedRow, str]] = []
+    for row in result.rows:
+        if row.status != RowStatus.SUCCESS:
+            continue
+        lines.extend(
+            (row, line.strip())
+            for line in _document_text(row).splitlines()
+            if line.strip()
+        )
+    if len(lines) < 2:
+        return []
+    for delimiter in ("\t", ",", ";", "|"):
+        header_values = next(csv.reader([lines[0][1]], delimiter=delimiter))
+        if len(header_values) < 2:
+            continue
+        headers = _unique_headers(header_values)
+        parsed: list[ParsedRow] = []
+        for line_number, (source, line) in enumerate(lines[1:], start=2):
+            values = next(csv.reader([line], delimiter=delimiter))
+            if len(values) != len(headers):
+                parsed = []
+                break
+            parsed.append(
+                _table_row(
+                    result=result,
+                    headers=headers,
+                    values=values,
+                    sheet=source.provenance.sheet,
+                    source_row=line_number,
+                )
+            )
+        if parsed:
+            return parsed
+    return []
+
+
+def _procurement_document_table(result: ParseResult) -> ParseResult:
+    """Recover a durable row matrix from the common document parser outcome."""
+    if (
+        result.role != DocumentRole.VENDOR_QUOTE
+        or result.detected_format not in _DOCUMENT_FORMATS
+    ):
+        return result
+    if result.detected_format in {"DOCX", "HWPX"}:
+        rows = _xml_document_table_rows(result)
+    elif result.detected_format == "HWP":
+        rows = _hwp_document_table_rows(result)
+    else:
+        rows = _pdf_document_table_rows(result)
+    parser_errors = [row for row in result.rows if row.status == RowStatus.ROW_ERROR]
+    if rows:
+        rows.extend(parser_errors)
+    elif parser_errors:
+        rows = parser_errors
+    else:
+        first = result.rows[0] if result.rows else None
+        rows = [
+            ParsedRow(
+                status=RowStatus.ROW_ERROR,
+                provenance=Provenance(
+                    sheet=first.provenance.sheet if first else None,
+                    source_row=first.provenance.source_row if first else 0,
+                    source_file_sha256=(
+                        first.provenance.source_file_sha256 if first else None
+                    ),
+                ),
+                raw_values={"detected_format": result.detected_format},
+                fields={},
+                error_code="DOCUMENT_TABLE_REQUIRED",
+                error_message=(
+                    "No reliable procurement table was found; convert the table "
+                    "to CSV/XLSX or use a document with explicit table cells"
+                ),
+            )
+        ]
+    kwargs = dict(result.__dict__)
+    kwargs.update(rows=rows, header_rows={})
+    return type(result)(**kwargs)
+
+
 def parser_version_for_format(detected_format: str) -> str:
     return {
-        "DOCX": "docx-v1",
-        "HWP": "hwp-v1",
-        "HWPX": "hwpx-v1",
+        "DOCX": "docx-v2",
+        "HWP": "hwp-v2",
+        "HWPX": "hwpx-v2",
         "MARC": "marc-v1",
-        "PDF": "pdf-v1",
+        "PDF": "pdf-v2",
     }.get(detected_format, "tabular-v1")
 
 
@@ -268,11 +496,16 @@ def _apply_mapping(
                 value = None if raw_value is None else str(raw_value)
             fields[semantic] = ParsedField(value=value, raw_value=raw_value)
             source_columns[semantic] = column
-        missing = [
-            field
-            for field in sorted(required)
-            if field not in fields or fields[field].value in (None, "")
-        ]
+        missing = (
+            [
+                field
+                for field in sorted(required)
+                if field not in fields or fields[field].value in (None, "")
+            ]
+            if row.status == RowStatus.SUCCESS
+            or row.error_code == "MISSING_REQUIRED_FIELD"
+            else []
+        )
         status = (
             RowStatus.ROW_ERROR
             if missing
@@ -519,11 +752,13 @@ def build_ingestion_handler(
                     role=role,
                     parse=lambda storage_path=document["storage_path"], digest=document["sha256"], detected_format=document["detected_format"], configured_role=document["role"]: (
                         _parse_result_payload(
-                            _parse_source_preserving_unknown_headers(
-                                Path(storage_path),
-                                digest=digest,
-                                detected_format=detected_format,
-                                role=configured_role,
+                            _procurement_document_table(
+                                _parse_source_preserving_unknown_headers(
+                                    Path(storage_path),
+                                    digest=digest,
+                                    detected_format=detected_format,
+                                    role=configured_role,
+                                )
                             )
                         )
                     ),
@@ -531,8 +766,13 @@ def build_ingestion_handler(
                     claim_generation=context.job.claim_generation,
                 )
                 base_result = _parse_result_from_payload(cached.result)
+                successful_base_rows = [
+                    row for row in base_result.rows if row.status == RowStatus.SUCCESS
+                ]
                 headers = (
-                    list(base_result.rows[0].raw_values) if base_result.rows else []
+                    list(successful_base_rows[0].raw_values)
+                    if successful_base_rows
+                    else []
                 )
                 required = _required_fields(role)
                 configured_mapping = json.loads(document["mapping_json"])
@@ -555,7 +795,7 @@ def build_ingestion_handler(
                 )
                 preview_rows = [
                     [_preview_scalar(row.raw_values.get(header)) for header in headers]
-                    for row in base_result.rows[:20]
+                    for row in successful_base_rows[:20]
                 ]
                 inference = infer_mapping(headers, preview_rows)
                 available_semantics = {

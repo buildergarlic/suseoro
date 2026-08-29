@@ -1,3 +1,6 @@
+import { useState } from "react";
+
+import { MappingDialog } from "../ingestion/MappingDialog";
 import {
   procurementImportMessage,
   type ProcurementImport,
@@ -7,15 +10,24 @@ interface ProcurementImportStatusProps {
   busy: boolean;
   imports: ProcurementImport[];
   kind: "QUOTE" | "DELIVERY";
+  canMutate: boolean;
   onCompose: (item: ProcurementImport) => void;
+  onMap: (
+    item: ProcurementImport,
+    mapping: Record<string, string>,
+    remember: boolean,
+  ) => Promise<void>;
 }
 
 export function ProcurementImportStatus({
   busy,
   imports,
   kind,
+  canMutate,
   onCompose,
+  onMap,
 }: ProcurementImportStatusProps) {
+  const [mappingItem, setMappingItem] = useState<ProcurementImport | null>(null);
   const relevant = imports.filter((item) => item.kind === kind);
   if (!relevant.length) return null;
   return (
@@ -46,13 +58,27 @@ export function ProcurementImportStatus({
               </ul>
             ) : null}
           </div>
-          {item.status === "READY" ? (
+          {item.status === "MAPPING_REQUIRED" && item.mapping_required && canMutate ? (
+            <button className="button button-secondary" disabled={busy} onClick={() => setMappingItem(item)} type="button">
+              {item.filename} 열 연결하기
+            </button>
+          ) : item.status === "READY" && canMutate ? (
             <button className="button button-secondary" disabled={busy} onClick={() => onCompose(item)} type="button">
               서버 처리 결과 반영하기
             </button>
           ) : null}
         </article>
       ))}
+      {mappingItem?.mapping_required ? (
+        <MappingDialog
+          mappingRequired={mappingItem.mapping_required}
+          onApply={async (mapping, remember) => {
+            await onMap(mappingItem, mapping, remember);
+            setMappingItem(null);
+          }}
+          onClose={() => setMappingItem(null)}
+        />
+      ) : null}
     </section>
   );
 }

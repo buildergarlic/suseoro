@@ -18,7 +18,7 @@ from suseoro.api.dependencies import (
     require_request_id,
 )
 from suseoro.api.routes.events import publish_event
-from suseoro.workflow.receiving import ReceivingService
+from suseoro.workflow.receiving import ReceivingService, barcode_verification_gaps
 
 router = APIRouter(prefix="/api/v2", tags=["deliveries"])
 
@@ -236,14 +236,16 @@ def get_receiving_status(
     for row in order_rows:
         delivered = connection.execute(
             """
-            SELECT COALESCE(SUM(delivery.quantity), 0) AS n
-            FROM delivery_rows AS delivery
+            SELECT COALESCE(SUM(allocation.quantity), 0) AS n
+            FROM delivery_row_order_allocations AS allocation
+            JOIN delivery_rows AS delivery
+              ON delivery.id = allocation.delivery_row_id
             JOIN delivery_batches AS batch ON batch.id = delivery.delivery_batch_id
             WHERE batch.school_id = ? AND batch.workspace_id = ?
               AND batch.order_revision_id = ? AND batch.sealed_at IS NOT NULL
-              AND delivery.isbn13 IS ?
+              AND allocation.order_row_id = ?
             """,
-            (user.school_id, workspace_id, order_revision_id, row["isbn13"]),
+            (user.school_id, workspace_id, order_revision_id, row["id"]),
         ).fetchone()["n"]
         scanned = connection.execute(
             """
@@ -285,6 +287,16 @@ def get_receiving_status(
         reasons.append("납품명세서를 넣거나 바코드 검수를 시작해 주세요.")
     if unresolved:
         reasons.append(f"처리 방침이 필요한 차이가 {unresolved}건 있습니다.")
+    barcode_gaps = barcode_verification_gaps(
+        connection,
+        school_id=user.school_id,
+        workspace_id=workspace_id,
+        order_revision_id=order_revision_id,
+    )
+    if barcode_gaps:
+        reasons.append(
+            f"바코드로 확인하지 않았거나 차이 처리 방침이 없는 책이 {barcode_gaps}권 있습니다."
+        )
     return {
         "order_revision_id": order_revision_id,
         "active_session_id": active_session["id"] if active_session else None,

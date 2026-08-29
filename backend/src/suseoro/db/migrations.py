@@ -7,6 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from suseoro.catalog.normalization import normalize_key
 from suseoro.db.connection import install_fts_protection, trusted_fts_maintenance
 
 
@@ -178,6 +179,9 @@ def _apply_migrations_trusted(
 ) -> None:
     """Apply pending SQL files and refuse checksum changes to migration history."""
     connection.set_authorizer(None)
+    connection.create_function(
+        "suseoro_normalize_key", 1, normalize_key, deterministic=True
+    )
     _ensure_migration_ledger(connection)
     directory = migrations_dir or _migration_directory()
 

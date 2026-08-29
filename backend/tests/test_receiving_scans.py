@@ -457,6 +457,39 @@ def test_receiving_requires_latest_current_revision_and_successful_transmission(
         request_id=str(uuid.uuid4()),
     )
     assert delivered["state"] == "RECEIVING"
+    with pytest.raises(ReceivingRuleError) as manifest_only:
+        receiving.complete(
+            school_id=fixture.school_id,
+            workspace_id=fixture.workspace_id,
+            actor_id=fixture.operator_id,
+            actor_roles=("OPERATOR",),
+            workspace_version=fixture.workspace_version(),
+            reason="명세서만으로 완료 시도",
+            idempotency_key="complete-current-r2-without-scan",
+            request_id=str(uuid.uuid4()),
+        )
+    assert manifest_only.value.code == "RECEIVING_INCOMPLETE"
+    session = receiving.start_scan_session(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        order_revision_id=second["revision_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        workspace_version=fixture.workspace_version(),
+        reason="실물 바코드 확인",
+        idempotency_key="scan-current-r2",
+        request_id=str(uuid.uuid4()),
+    )
+    receiving.scan(
+        school_id=fixture.school_id,
+        workspace_id=fixture.workspace_id,
+        session_id=session["session_id"],
+        actor_id=fixture.operator_id,
+        actor_roles=("OPERATOR",),
+        isbn="9788937464010",
+        idempotency_key="scan-current-r2-copy",
+        request_id=str(uuid.uuid4()),
+    )
     completed = receiving.complete(
         school_id=fixture.school_id,
         workspace_id=fixture.workspace_id,
@@ -513,7 +546,10 @@ def test_completion_requires_quantities_or_dispositions_on_every_difference(
         )
     assert incomplete.value.code == "RECEIVING_INCOMPLETE"
     shortage = fixture.connection.execute(
-        "SELECT id, row_version FROM receiving_differences WHERE workspace_id = ? AND kind = 'MISSING'",
+        """
+        SELECT id, row_version FROM receiving_differences
+        WHERE workspace_id = ? AND kind = 'MISSING' AND active = 1
+        """,
         (fixture.workspace_id,),
     ).fetchone()
     with pytest.raises(ReceivingRuleError) as legacy:

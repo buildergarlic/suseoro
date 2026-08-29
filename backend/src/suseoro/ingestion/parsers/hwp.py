@@ -298,7 +298,14 @@ def _error_row(
 
 
 def _text_row(
-    *, digest: str, stream: str, section: int, record: int, cell: int | None, text: str
+    *,
+    digest: str,
+    stream: str,
+    section: int,
+    record: int,
+    table: int | None,
+    cell: int | None,
+    text: str,
 ) -> ParsedRow:
     warnings: tuple[FieldWarning, ...] = ()
     if text.startswith(_FORMULA_MARKERS):
@@ -320,6 +327,7 @@ def _text_row(
             "stream": stream,
             "section": section,
             "record": record,
+            "table": table,
             "cell": cell,
             "text": text,
         },
@@ -373,6 +381,7 @@ def _parse_section(
     record = 0
     in_table = False
     table_level = 0
+    table = 0
     cell = 0
     while offset < len(contents):
         record += 1
@@ -433,6 +442,7 @@ def _parse_section(
             in_table = True
             table_level = level
             cell = 0
+            table += 1
         elif tag == HWPTAG_LIST_HEADER and in_table:
             cell += 1
         elif tag == HWPTAG_PARA_TEXT:
@@ -456,6 +466,7 @@ def _parse_section(
                         stream=stream,
                         section=section,
                         record=record,
+                        table=table if in_table else None,
                         cell=cell if in_table and cell else None,
                         text=text,
                     )

@@ -50,9 +50,9 @@ export function OrderPanel({ api, user, workspace, onWorkspaceChange }: { api: S
     <div className="section-intro"><div><p className="eyebrow">{order.vendor_name}</p><h3>발주파일 준비</h3><p>수서로는 파일만 만들며 업체에 자동 전송하지 않습니다.</p></div></div>
     <BudgetStrip budgetWon={order.budget_won} quoteWon={order.total_won} />
     <div className="order-actions">
-      <button className="button button-primary" disabled={busy || !canPerformAction(user, workspace.status, "DOWNLOAD_ORDER")} onClick={() => void download()} type="button">발주파일 받기</button>
+      <button className="button button-primary" data-major-action="DOWNLOAD_ORDER" disabled={busy || !canPerformAction(user, workspace.status, "DOWNLOAD_ORDER")} onClick={() => void download()} type="button">발주파일 받기</button>
       <p>파일을 받은 뒤 학교의 평소 방식으로 업체에 직접 전달해 주세요.</p>
-      <button className="button button-secondary" disabled={busy || !canPerformAction(user, workspace.status, "MARK_ORDER_SENT")} onClick={() => void markSent()} type="button">업체에 전달했어요</button>
+      <button className="button button-secondary" data-major-action="MARK_ORDER_SENT" disabled={busy || !canPerformAction(user, workspace.status, "MARK_ORDER_SENT")} onClick={() => void markSent()} type="button">업체에 전달했어요</button>
     </div>
     {message ? <p className="live-status" role="status">{message}</p> : null}
   </div>;

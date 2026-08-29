@@ -172,19 +172,29 @@ def _sanitize_upload(body: object) -> dict[str, Any]:
             status_code=409, detail={"code": "HISTORICAL_REPLAY_INVALID"}
         )
     items: list[dict[str, Any]] = []
+    accepted_count = 0
     for item in body["items"]:
         if not isinstance(item, dict) or not isinstance(item.get("filename"), str):
             raise HTTPException(
                 status_code=409, detail={"code": "HISTORICAL_REPLAY_INVALID"}
             )
+        persisted_status = item.get("status")
         source_id = item.get("source_id")
-        if source_id is not None and not isinstance(source_id, str):
-            source_id = None
         raw_error = item.get("error")
-        if raw_error is None:
+        if (
+            persisted_status == "ACCEPTED"
+            and isinstance(source_id, str)
+            and bool(source_id)
+            and raw_error is None
+        ):
             error = None
             status = "ACCEPTED"
-        else:
+            accepted_count += 1
+        elif (
+            persisted_status == "FAILED"
+            and source_id is None
+            and isinstance(raw_error, dict)
+        ):
             code = raw_error.get("code") if isinstance(raw_error, dict) else None
             safe_code = (
                 code
@@ -196,6 +206,10 @@ def _sanitize_upload(body: object) -> dict[str, Any]:
                 "message": _UPLOAD_ERROR_MESSAGES[safe_code],
             }
             status = "FAILED"
+        else:
+            raise HTTPException(
+                status_code=409, detail={"code": "HISTORICAL_REPLAY_INVALID"}
+            )
         repair_id = item.get("repair_obligation_id")
         repair_generation = item.get("repair_generation")
         procurement_import_id = item.get("procurement_import_id")
@@ -220,6 +234,10 @@ def _sanitize_upload(body: object) -> dict[str, Any]:
                     else None
                 ),
             }
+        )
+    if accepted_count and not isinstance(job_id, str):
+        raise HTTPException(
+            status_code=409, detail={"code": "HISTORICAL_REPLAY_INVALID"}
         )
     return schemas.UploadResponse.model_validate(
         {"job_id": job_id, "items": items}

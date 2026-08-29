@@ -9,9 +9,11 @@ import { waitForProcurementJob } from "../src/features/procurement/procurementIm
 import { QuotePanel } from "../src/features/quotes/QuotePanel";
 import {
   createFixtureApi,
+  FixtureApiError,
   idleJob,
   operator,
   reviewer,
+  sourceFixture,
   workspace,
 } from "../src/test/fixtures";
 
@@ -177,9 +179,128 @@ describe("승인 검토", () => {
     expect(await screen.findByText("판본과 수량을 다시 확인해 주세요.")).toBeVisible();
     expect(screen.getByText(/새 버전으로 다시 승인 요청/)).toBeVisible();
   });
+
+  test("stale 승인 충돌은 최신 요청을 다시 읽는 복구 행동을 제공한다", async () => {
+    const user = userEvent.setup();
+    const pending = workspace("workspace-stale-approval", "바뀐 승인", "APPROVAL_PENDING");
+    const getWorkspace = vi.fn(async () => ({
+      data: { ...pending, row_version: 2 }, etag: '"2"',
+    }));
+    const api = apiWith({
+      listApprovals: async () => ({ items: [{
+        id: "approval-1", revision_number: 2, budget_won: 50_000,
+        expected_total_won: 42_000, sha256: "a".repeat(64),
+        candidate_collection_revision: 7, candidate_count: 3, decision: null,
+        request_reason: "요청", created_at: "2026-08-29T08:00:00Z",
+      }], next_cursor: null }),
+      getApproval: async () => approvalDetail,
+      approveApproval: async () => { throw new FixtureApiError(409, "ROW_VERSION_CONFLICT", "다른 사용자가 먼저 수정했습니다."); },
+      getWorkspace,
+    });
+    render(<ApprovalPanel api={api} onWorkspaceChange={vi.fn()} user={reviewer} workspace={pending} />);
+    await user.click(await screen.findByRole("button", { name: "이 목록 승인" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("최신 승인 요청을 다시 확인");
+    await user.click(screen.getByRole("button", { name: "최신 승인 요청 다시 불러오기" }));
+    await waitFor(() => expect(getWorkspace).toHaveBeenCalledWith(pending.id));
+  });
 });
 
 describe("견적 비교와 발주", () => {
+  test("견적 workroom 안에서 MAPPING_REQUIRED 열 연결을 저장하고 다시 파싱한다", async () => {
+    const user = userEvent.setup();
+    const quoteReview = workspace("workspace-mapping-quote", "열 연결", "QUOTE_REVIEW");
+    const mappingImport = {
+      import_id: "import-mapping", source_id: "source-mapping", kind: "QUOTE" as const,
+      target_revision_id: "approval-1", vendor_name: "처음 보는 업체",
+      status: "MAPPING_REQUIRED", filename: "unknown.csv", detected_format: "CSV",
+      parser_version: "tabular-v1", template_version: null, total_rows: 1,
+      processed_rows: 0, row_error_count: 0, count_confidence: "EXACT",
+      mapping_required: {
+        headers: ["A", "B", "C"], preview_rows: [["9788937464010", "도서관의 책", 12000]],
+        suggested_mapping: { A: "isbn", B: "title", C: "unit_price" },
+        required_fields: ["title"], confidence: 0.4, questions: ["제목 열을 확인해 주세요."],
+      },
+      result_id: null, completed_at: null, created_at: "2026-08-29T08:00:00Z", rows: [],
+    };
+    const updateSourceMapping = vi.fn<SuseoroApi["updateSourceMapping"]>().mockResolvedValue({
+      data: { ...sourceFixture, id: "source-mapping", role: "VENDOR_QUOTE" as const, vendor_scope: "처음 보는 업체", row_version: 2 },
+      etag: '"2"',
+    });
+    const parseSource = vi.fn(async () => ({ job_id: "job-mapping", status: "QUEUED" }));
+    const api = apiWith({
+      listApprovals: async () => ({ items: [{
+        id: "approval-1", revision_number: 2, budget_won: 50_000,
+        expected_total_won: 42_000, sha256: "a".repeat(64),
+        candidate_collection_revision: 7, candidate_count: 3, decision: "APPROVED",
+        request_reason: "요청", created_at: "2026-08-29T08:00:00Z",
+      }], next_cursor: null }),
+      getApproval: async () => approvalDetail,
+      listQuotes: async () => ({ items: [], next_cursor: null }),
+      listProcurementImports: async () => ({ items: [mappingImport], next_cursor: null }),
+      getSource: async () => ({ data: { ...sourceFixture, id: "source-mapping", role: "VENDOR_QUOTE", vendor_scope: "처음 보는 업체" }, etag: '"1"' }),
+      updateSourceMapping,
+      parseSource,
+      getJob: async () => ({ ...idleJob, id: "job-mapping" }),
+    });
+    render(<QuotePanel api={api} onWorkspaceChange={vi.fn()} user={operator} workspace={quoteReview} />);
+    await user.click(await screen.findByRole("button", { name: "unknown.csv 열 연결하기" }));
+    expect(screen.getByRole("dialog", { name: "열 연결 확인" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "열 연결 적용" }));
+    await waitFor(() => expect(updateSourceMapping).toHaveBeenCalledOnce());
+    const [sourceId, payload, sourceVersion] = updateSourceMapping.mock.calls[0];
+    expect(sourceId).toBe("source-mapping");
+    expect(payload).toMatchObject({ role: "VENDOR_QUOTE", mapping: { B: "title" } });
+    expect(sourceVersion).toBe(1);
+    await waitFor(() => expect(parseSource).toHaveBeenCalledWith("source-mapping"));
+  });
+
+  test("견적 read model 오류는 영구 loading 대신 복구 행동을 보인다", async () => {
+    const user = userEvent.setup();
+    const listApprovals = vi.fn<SuseoroApi["listApprovals"]>()
+      .mockRejectedValueOnce(new Error("견적 기준을 불러오지 못했습니다."))
+      .mockResolvedValueOnce({ items: [], next_cursor: null });
+    render(<QuotePanel api={apiWith({ listApprovals })} onWorkspaceChange={vi.fn()} user={operator} workspace={workspace("workspace-quote-error", "견적 오류", "QUOTE_REVIEW")} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("견적 기준을 불러오지 못했습니다.");
+    await user.click(screen.getByRole("button", { name: "다시 불러오기" }));
+    await waitFor(() => expect(listApprovals).toHaveBeenCalledTimes(2));
+  });
+
+  test("품절·가격 누락·목록 불일치·미연결은 각각 정확한 이유로 선택을 막는다", async () => {
+    const quoteReview = workspace("workspace-blocked-quotes", "선택 차단", "QUOTE_REVIEW");
+    const base = {
+      approval_revision_id: "approval-1", total_won: 10_000, list_total_won: 10_000,
+      discount_won: 0, budget_overrun_won: 0, out_of_stock_count: 0,
+      missing_price_count: 0, list_mismatch_count: 0, needs_review_count: 0,
+      unmatched_count: 0, requires_reapproval: false,
+      reconciliation: { duplicate_isbns: [], price_conflicts: [] },
+      created_at: "2026-08-29T08:00:00Z",
+    };
+    const api = apiWith({
+      listApprovals: async () => ({ items: [{
+        id: "approval-1", revision_number: 2, budget_won: 50_000,
+        expected_total_won: 42_000, sha256: "a".repeat(64), candidate_collection_revision: 7,
+        candidate_count: 3, decision: "APPROVED", request_reason: "요청",
+        created_at: "2026-08-29T08:00:00Z",
+      }], next_cursor: null }),
+      getApproval: async () => approvalDetail,
+      listQuotes: async () => ({ items: [
+        { ...base, id: "out", vendor_name: "품절서점", out_of_stock_count: 1 },
+        { ...base, id: "price", vendor_name: "가격누락서점", missing_price_count: 1 },
+        { ...base, id: "mismatch", vendor_name: "불일치서점", list_mismatch_count: 1 },
+        { ...base, id: "unmatched", vendor_name: "미연결서점", unmatched_count: 1 },
+      ], next_cursor: null }),
+    });
+    render(<QuotePanel api={api} onWorkspaceChange={vi.fn()} user={operator} workspace={quoteReview} />);
+    await screen.findByText("품절서점");
+    const blockedButtons = screen.getAllByRole("button", { name: "이 견적 사용" });
+    expect(blockedButtons).toHaveLength(4);
+    blockedButtons.forEach((button) => expect(button).toBeDisabled());
+    expect(screen.getByText("품절 도서 1건을 먼저 조정해 주세요.")).toBeVisible();
+    expect(screen.getByText("가격이 없는 도서 1건을 먼저 확인해 주세요.")).toBeVisible();
+    expect(screen.getByText("승인 목록과 가격·수량이 다른 도서 1건을 먼저 확인해 주세요.")).toBeVisible();
+    expect(screen.getByText("승인 목록에 연결되지 않은 도서 1건을 먼저 연결해 주세요.")).toBeVisible();
+  });
+
   test("견적 파일은 브라우저에서 해석하지 않고 공통 서버 파서 결과를 조합한다", async () => {
     const user = userEvent.setup();
     const quoteReview = workspace("workspace-import-quote", "견적 파일", "QUOTE_REVIEW");
@@ -283,7 +404,9 @@ describe("견적 비교와 발주", () => {
     expect(screen.getByText("차이")).toBeVisible();
     expect(screen.getByText(/3,000원 초과/)).toBeVisible();
     expect(screen.getByText(/목록을 자동으로 줄이지 않습니다/)).toBeVisible();
-    expect(screen.getAllByRole("button", { name: "이 견적 사용" })).toHaveLength(1);
+    const quoteActions = screen.getAllByRole("button", { name: "이 견적 사용" });
+    expect(quoteActions).toHaveLength(2);
+    expect(quoteActions.filter((button) => button.hasAttribute("disabled"))).toHaveLength(1);
   });
 
   test("발주파일 받기는 실제 blob을 한 번 내려받고 외부 전달 경계를 알린다", async () => {

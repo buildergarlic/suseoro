@@ -29,6 +29,50 @@ class ReceivingRuleError(WorkflowDomainError):
     pass
 
 
+def barcode_verification_gaps(
+    connection: sqlite3.Connection,
+    *,
+    school_id: str,
+    workspace_id: str,
+    order_revision_id: str,
+) -> int:
+    """Count ordered copies lacking a scan or an explicit scan discrepancy."""
+    rows = connection.execute(
+        """
+        SELECT ordered.id, ordered.quantity,
+               (
+                   SELECT COUNT(*) FROM scan_events AS event
+                   WHERE event.order_row_id = ordered.id
+                     AND event.school_id = ? AND event.workspace_id = ?
+                     AND event.result_code IN ('NORMAL', 'OVER')
+               ) AS scanned,
+               EXISTS (
+                   SELECT 1 FROM receiving_differences AS difference
+                   WHERE difference.school_id = ? AND difference.workspace_id = ?
+                     AND difference.order_revision_id = ordered.order_revision_id
+                     AND difference.order_row_id = ordered.id
+                     AND difference.reference_key = 'scan:missing:' || ordered.id
+                     AND difference.active = 1
+                     AND difference.disposition IS NOT NULL
+               ) AS disposition_covers_gap
+        FROM order_rows AS ordered
+        WHERE ordered.order_revision_id = ?
+        """,
+        (
+            school_id,
+            workspace_id,
+            school_id,
+            workspace_id,
+            order_revision_id,
+        ),
+    ).fetchall()
+    return sum(
+        max(0, int(row["quantity"]) - int(row["scanned"]))
+        for row in rows
+        if not row["disposition_covers_gap"]
+    )
+
+
 class ReceivingService:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -89,22 +133,36 @@ class ReceivingService:
             """
             SELECT * FROM receiving_differences
             WHERE workspace_id = ? AND order_revision_id = ?
-              AND kind = ? AND reference_key = ? AND active = 1
-            ORDER BY created_at DESC LIMIT 1
+              AND kind = ? AND reference_key = ?
+            ORDER BY updated_at DESC, created_at DESC LIMIT 1
             """,
             (workspace_id, order_revision_id, kind, reference_key),
         ).fetchone()
         encoded = json.dumps(
             details, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
-        if existing is not None:
+        same_fingerprint = (
+            existing is not None
+            and existing["order_row_id"] == order_row_id
+            and existing["details_json"] == encoded
+        )
+        self.connection.execute(
+            """
+            UPDATE receiving_differences
+            SET active = 0, updated_at = ?
+            WHERE workspace_id = ? AND order_revision_id = ?
+              AND kind = ? AND reference_key = ? AND active = 1
+            """,
+            (now, workspace_id, order_revision_id, kind, reference_key),
+        )
+        if same_fingerprint:
             self.connection.execute(
                 """
                 UPDATE receiving_differences
-                SET details_json = ?, row_version = row_version + 1, updated_at = ?
+                SET active = 1, row_version = row_version + 1, updated_at = ?
                 WHERE id = ?
                 """,
-                (encoded, now, existing["id"]),
+                (now, existing["id"]),
             )
             difference_id = existing["id"]
         else:
@@ -130,6 +188,64 @@ class ReceivingService:
                 ),
             )
         return {"id": difference_id, "kind": kind, "details": details}
+
+    @staticmethod
+    def _match_delivery_row(
+        order_rows: list[sqlite3.Row], row: dict[str, Any]
+    ) -> tuple[sqlite3.Row, str] | None:
+        isbn13 = canonical_isbn13(row.get("isbn"))
+        title_key = normalize_key(str(row.get("title") or ""))
+        author_key = normalize_key(str(row.get("author") or ""))
+        edition_key = normalize_key(str(row.get("edition") or ""))
+        exact_isbn = [
+            ordered
+            for ordered in order_rows
+            if isbn13 is not None and ordered["isbn13"] == isbn13
+        ]
+        if len(exact_isbn) == 1:
+            return exact_isbn[0], "ISBN"
+        if len(exact_isbn) > 1:
+            titled = [
+                ordered
+                for ordered in exact_isbn
+                if normalize_key(ordered["title"]) == title_key
+            ]
+            if len(titled) == 1:
+                return titled[0], "ISBN_TITLE"
+            if edition_key:
+                editions = [
+                    ordered
+                    for ordered in titled
+                    if normalize_key(str(ordered["edition"] or "")) == edition_key
+                ]
+                if len(editions) == 1:
+                    return editions[0], "TITLE_EDITION"
+            return None
+        titled = [
+            ordered
+            for ordered in order_rows
+            if title_key and normalize_key(ordered["title"]) == title_key
+        ]
+        if len(titled) == 1:
+            return titled[0], "TITLE"
+        if author_key:
+            authored = [
+                ordered
+                for ordered in titled
+                if normalize_key(str(ordered["author"] or "")) == author_key
+            ]
+            if len(authored) == 1:
+                return authored[0], "TITLE_AUTHOR"
+            titled = authored
+        if edition_key:
+            editions = [
+                ordered
+                for ordered in titled
+                if normalize_key(str(ordered["edition"] or "")) == edition_key
+            ]
+            if len(editions) == 1:
+                return editions[0], "TITLE_EDITION"
+        return None
 
     def _delivery_differences(
         self,
@@ -161,18 +277,49 @@ class ReceivingService:
             """,
             (workspace_id, order_revision_id),
         ).fetchall()
-        by_isbn = {row["isbn13"]: row for row in order_rows if row["isbn13"]}
-        by_title: dict[str, list[sqlite3.Row]] = {}
-        for row in order_rows:
-            by_title.setdefault(normalize_key(row["title"]), []).append(row)
+        order_by_id = {row["id"]: row for row in order_rows}
+        allocation_rows = self.connection.execute(
+            """
+            SELECT allocation.*
+            FROM delivery_row_order_allocations AS allocation
+            JOIN delivery_rows AS delivered
+              ON delivered.id = allocation.delivery_row_id
+            JOIN delivery_batches AS batch
+              ON batch.id = delivered.delivery_batch_id
+            WHERE batch.workspace_id = ? AND batch.order_revision_id = ?
+              AND batch.sealed_at IS NOT NULL
+            ORDER BY allocation.delivery_row_id, allocation.order_row_id
+            """,
+            (workspace_id, order_revision_id),
+        ).fetchall()
+        allocations: dict[str, list[sqlite3.Row]] = {}
+        for allocation in allocation_rows:
+            allocations.setdefault(allocation["delivery_row_id"], []).append(allocation)
         received_by_order: dict[str, int] = {row["id"]: 0 for row in order_rows}
         differences: list[dict[str, Any]] = []
         for delivered in deliveries:
-            ordered = by_isbn.get(delivered["isbn13"])
-            if ordered is None:
-                title_matches = by_title.get(normalize_key(delivered["title"]), [])
-                if len(title_matches) == 1:
-                    ordered = title_matches[0]
+            linked = allocations.get(delivered["id"], [])
+            if not linked:
+                differences.append(
+                    self._insert_difference(
+                        school_id=school_id,
+                        workspace_id=workspace_id,
+                        order_revision_id=order_revision_id,
+                        order_row_id=None,
+                        kind="UNORDERED",
+                        reference_key=f"delivery:unordered:{delivered['id']}",
+                        details={
+                            "isbn13": delivered["isbn13"],
+                            "title": delivered["title"],
+                        },
+                        now=now,
+                    )
+                )
+                continue
+            for allocation in linked:
+                ordered = order_by_id[allocation["order_row_id"]]
+                received_by_order[ordered["id"]] += allocation["quantity"]
+                if delivered["isbn13"] != ordered["isbn13"]:
                     differences.append(
                         self._insert_difference(
                             school_id=school_id,
@@ -180,7 +327,9 @@ class ReceivingService:
                             order_revision_id=order_revision_id,
                             order_row_id=ordered["id"],
                             kind="ISBN",
-                            reference_key=f"delivery:isbn:{delivered['id']}",
+                            reference_key=(
+                                f"delivery:isbn:{delivered['id']}:{ordered['id']}"
+                            ),
                             details={
                                 "expected": ordered["isbn13"],
                                 "received": delivered["isbn13"],
@@ -188,63 +337,49 @@ class ReceivingService:
                             now=now,
                         )
                     )
-                else:
+                if (
+                    delivered["unit_price"] is not None
+                    and delivered["unit_price"] != ordered["unit_price"]
+                ):
                     differences.append(
                         self._insert_difference(
                             school_id=school_id,
                             workspace_id=workspace_id,
                             order_revision_id=order_revision_id,
-                            order_row_id=None,
-                            kind="UNORDERED",
-                            reference_key=f"delivery:unordered:{delivered['id']}",
+                            order_row_id=ordered["id"],
+                            kind="UNIT_PRICE",
+                            reference_key=(
+                                f"delivery:price:{delivered['id']}:{ordered['id']}"
+                            ),
                             details={
-                                "isbn13": delivered["isbn13"],
-                                "title": delivered["title"],
+                                "expected": ordered["unit_price"],
+                                "received": delivered["unit_price"],
                             },
                             now=now,
                         )
                     )
-                    continue
-            received_by_order[ordered["id"]] += delivered["quantity"]
-            if (
-                delivered["unit_price"] is not None
-                and delivered["unit_price"] != ordered["unit_price"]
-            ):
-                differences.append(
-                    self._insert_difference(
-                        school_id=school_id,
-                        workspace_id=workspace_id,
-                        order_revision_id=order_revision_id,
-                        order_row_id=ordered["id"],
-                        kind="UNIT_PRICE",
-                        reference_key=f"delivery:price:{delivered['id']}",
-                        details={
-                            "expected": ordered["unit_price"],
-                            "received": delivered["unit_price"],
-                        },
-                        now=now,
+                if (
+                    delivered["edition"]
+                    and ordered["edition"]
+                    and delivered["edition"] != ordered["edition"]
+                ):
+                    differences.append(
+                        self._insert_difference(
+                            school_id=school_id,
+                            workspace_id=workspace_id,
+                            order_revision_id=order_revision_id,
+                            order_row_id=ordered["id"],
+                            kind="EDITION",
+                            reference_key=(
+                                f"delivery:edition:{delivered['id']}:{ordered['id']}"
+                            ),
+                            details={
+                                "expected": ordered["edition"],
+                                "received": delivered["edition"],
+                            },
+                            now=now,
+                        )
                     )
-                )
-            if (
-                delivered["edition"]
-                and ordered["edition"]
-                and delivered["edition"] != ordered["edition"]
-            ):
-                differences.append(
-                    self._insert_difference(
-                        school_id=school_id,
-                        workspace_id=workspace_id,
-                        order_revision_id=order_revision_id,
-                        order_row_id=ordered["id"],
-                        kind="EDITION",
-                        reference_key=f"delivery:edition:{delivered['id']}",
-                        details={
-                            "expected": ordered["edition"],
-                            "received": delivered["edition"],
-                        },
-                        now=now,
-                    )
-                )
         for ordered in order_rows:
             received = received_by_order[ordered["id"]]
             if received == 0:
@@ -350,6 +485,10 @@ class ReceivingService:
                     now,
                 ),
             )
+            order_rows = self.connection.execute(
+                "SELECT * FROM order_rows WHERE order_revision_id = ? ORDER BY id",
+                (order_revision_id,),
+            ).fetchall()
             for row in rows:
                 quantity = row.get("quantity", 1)
                 unit_price = row.get("unit_price")
@@ -365,6 +504,8 @@ class ReceivingService:
                     or unit_price < 0
                 ):
                     raise ReceivingRuleError("INVALID_DELIVERY_UNIT_PRICE")
+                delivery_row_id = str(uuid.uuid4())
+                isbn13 = canonical_isbn13(row.get("isbn"))
                 self.connection.execute(
                     """
                     INSERT INTO delivery_rows (
@@ -373,9 +514,9 @@ class ReceivingService:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        str(uuid.uuid4()),
+                        delivery_row_id,
                         batch_id,
-                        canonical_isbn13(row.get("isbn")),
+                        isbn13,
                         str(row.get("title") or ""),
                         row.get("author"),
                         row.get("edition"),
@@ -384,6 +525,24 @@ class ReceivingService:
                         now,
                     ),
                 )
+                matched = self._match_delivery_row(order_rows, row)
+                if matched is not None:
+                    ordered, match_basis = matched
+                    self.connection.execute(
+                        """
+                        INSERT INTO delivery_row_order_allocations (
+                            delivery_row_id, order_row_id, quantity,
+                            match_basis, created_at
+                        ) VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            delivery_row_id,
+                            ordered["id"],
+                            quantity,
+                            match_basis,
+                            now,
+                        ),
+                    )
             self.connection.execute(
                 "UPDATE delivery_batches SET sealed_at = ? WHERE id = ?",
                 (now, batch_id),
@@ -601,13 +760,24 @@ class ReceivingService:
                 raise ReceivingRuleError("ACTIVE_SCAN_SESSION_NOT_FOUND")
             self._order(school_id, workspace_id, session["order_revision_id"])
             isbn13 = canonical_isbn13(isbn)
-            ordered = self.connection.execute(
+            exact_matches = self.connection.execute(
                 """
                 SELECT * FROM order_rows
-                WHERE order_revision_id = ? AND isbn13 = ? LIMIT 1
+                WHERE order_revision_id = ? AND isbn13 = ?
+                ORDER BY id
                 """,
                 (session["order_revision_id"], isbn13),
-            ).fetchone()
+            ).fetchall()
+            ordered = exact_matches[0] if exact_matches else None
+            if expected_order_row_id is not None and len(exact_matches) > 1:
+                ordered = next(
+                    (
+                        row
+                        for row in exact_matches
+                        if row["id"] == expected_order_row_id
+                    ),
+                    ordered,
+                )
             code = "NORMAL" if ordered is not None else "UNORDERED"
             if ordered is None and expected_order_row_id is not None:
                 hinted = self.connection.execute(
@@ -832,6 +1002,20 @@ class ReceivingService:
                 (school_id, workspace_id),
             ).fetchone()["n"]
             if unresolved:
+                raise ReceivingRuleError("RECEIVING_INCOMPLETE")
+            current = self.connection.execute(
+                """
+                SELECT order_revision_id FROM workspace_current_orders
+                WHERE school_id = ? AND workspace_id = ?
+                """,
+                (school_id, workspace_id),
+            ).fetchone()
+            if current is None or barcode_verification_gaps(
+                self.connection,
+                school_id=school_id,
+                workspace_id=workspace_id,
+                order_revision_id=current["order_revision_id"],
+            ):
                 raise ReceivingRuleError("RECEIVING_INCOMPLETE")
             now = format_utc(utc_now())
             self.connection.execute(

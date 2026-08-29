@@ -82,7 +82,7 @@ export function WorklistScreen({ api, user }: WorklistScreenProps) {
             <span className="status-chip">{workflowPolicy(primary.status).label}</span>
             <p>{reviewer ? "승인을 기다리는 목록이 있습니다." : "이 작업부터 이어가면 됩니다."}</p>
           </div>
-          <Link className="button button-primary" to={`/workspaces/${primary.id}`}>
+          <Link className="button button-primary" data-major-action="OPEN_WORKSPACE" to={`/workspaces/${primary.id}`}>
             {reviewer ? "승인할 작업 보기" : "이어 하기"}
           </Link>
         </aside>
@@ -104,7 +104,7 @@ export function WorklistScreen({ api, user }: WorklistScreenProps) {
                 <tr key={item.id}>
                   <td>우리 학교</td>
                   <th scope="row">
-                    <Link to={`/workspaces/${item.id}`}>{item.name}</Link>
+                    <Link data-major-action="OPEN_WORKSPACE" to={`/workspaces/${item.id}`}>{item.name}</Link>
                   </th>
                   <td>{workflowPolicy(item.status).label}</td>
                   <td>{workflowPolicy(item.status).owner}</td>

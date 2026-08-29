@@ -6,7 +6,10 @@ import json
 import sqlite3
 from typing import Any
 
-from suseoro.api.schemas import DeliveryResponse, QuoteResponse
+from pydantic import ValidationError
+
+from suseoro.api.schemas import DeliveryResponse, MappingRequired, QuoteResponse
+from suseoro.jobs.public_errors import sanitize_public_mapping_required
 from suseoro.jobs.repository import JobRepository
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.audit import record_audit_event
@@ -27,8 +30,21 @@ _ROW_ERROR_MESSAGES = {
     "MISSING_REQUIRED_FIELD": "필수 열 값을 확인해 주세요.",
     "PARSER_FAILURE": "파일을 안전하게 읽지 못했습니다. 원본 형식을 확인해 주세요.",
     "NO_LOGICAL_ROWS": "가져올 도서 행을 찾지 못했습니다.",
+    "DOCUMENT_TABLE_REQUIRED": "표 구조를 확인하지 못했습니다. CSV·엑셀로 변환하거나 표가 있는 문서로 다시 올려 주세요.",
+    "DOCUMENT_ARCHIVE_ERROR": "문서를 안전하게 읽지 못했습니다. CSV·엑셀 또는 정상 문서로 변환해 다시 올려 주세요.",
+    "DOCUMENT_XML_ERROR": "문서 표를 안전하게 읽지 못했습니다. CSV·엑셀 또는 정상 문서로 변환해 다시 올려 주세요.",
+    "PDF_ERROR": "PDF를 안전하게 읽지 못했습니다. 암호를 해제하거나 CSV·엑셀로 변환해 다시 올려 주세요.",
+    "PDF_PAGE_ERROR": "PDF 표의 일부를 읽지 못했습니다. CSV·엑셀로 변환해 다시 올려 주세요.",
+    "HWP_ENCRYPTED": "암호·배포용 HWP는 읽을 수 없습니다. 보호를 해제하거나 HWPX·CSV·엑셀로 변환해 다시 올려 주세요.",
+    "HWP_DAMAGED": "HWP가 손상되었습니다. 복구하거나 HWPX·CSV·엑셀로 변환해 다시 올려 주세요.",
+    "HWP_DAMAGED_RECORD": "HWP 표의 일부가 손상되었습니다. HWPX·CSV·엑셀로 변환해 다시 올려 주세요.",
+    "HWP_UNSUPPORTED_OBJECT": "지원하지 않는 HWP 개체가 있습니다. HWPX·CSV·엑셀로 변환해 다시 올려 주세요.",
+    "OCR_UNAVAILABLE": "PDF 글자를 인식할 수 없습니다. 텍스트 PDF 또는 CSV·엑셀로 변환해 다시 올려 주세요.",
+    "OCR_LANGUAGE_UNAVAILABLE": "한국어 PDF 글자 인식이 준비되지 않았습니다. 텍스트 PDF 또는 CSV·엑셀로 변환해 다시 올려 주세요.",
+    "OCR_TIMEOUT": "PDF 글자 인식 시간이 초과되었습니다. 페이지를 나누거나 CSV·엑셀로 변환해 다시 올려 주세요.",
+    "OCR_CANCELLED": "PDF 글자 인식이 중단되었습니다. 다시 시도하거나 CSV·엑셀로 변환해 올려 주세요.",
+    "OCR_ERROR": "PDF 글자를 안전하게 인식하지 못했습니다. 텍스트 PDF 또는 CSV·엑셀로 변환해 다시 올려 주세요.",
 }
-_COMPOSABLE_FORMATS = frozenset({"CSV", "TSV", "TXT", "XLS", "XLSX", "XLSB", "ODS"})
 
 
 def _field_value(fields: dict[str, Any], *names: str) -> Any:
@@ -175,17 +191,40 @@ class ProcurementImportService:
         rows = self._rows(intent)
         latest = self._latest_file_result(intent)
         successful = sum(row["status"] == "SUCCESS" for row in rows)
+        canonical_successful = sum(
+            row["status"] == "SUCCESS"
+            and bool(
+                _text(
+                    _field_value(
+                        json.loads(row["fields_json"]),
+                        "title",
+                    )
+                )
+            )
+            for row in rows
+        )
         row_errors = sum(row["status"] == "ROW_ERROR" for row in rows)
-        mapping_required = latest.get("mapping_required") if latest else None
+        mapping_required = None
+        if latest is not None:
+            raw_mapping = sanitize_public_mapping_required(
+                latest.get("error"),
+                latest.get("mapping_required"),
+                latest.get("_public_mapping_payload_version"),
+            )
+            if raw_mapping is not None:
+                try:
+                    mapping_required = MappingRequired.model_validate(
+                        raw_mapping
+                    ).model_dump(mode="json")
+                except ValidationError:
+                    mapping_required = None
         if intent["status"] == "IMPORTED":
             status = "IMPORTED_PARTIAL" if row_errors else "IMPORTED"
-        elif intent["detected_format"] not in _COMPOSABLE_FORMATS:
-            status = "UNSUPPORTED_FORMAT"
         elif mapping_required is not None:
             status = "MAPPING_REQUIRED"
         elif intent["source_status"] == "PENDING":
             status = "PARSING"
-        elif intent["source_status"] == "FAILED" or not successful:
+        elif intent["source_status"] == "FAILED" or not canonical_successful:
             status = "FAILED"
         elif row_errors:
             status = "PARTIAL"
@@ -311,8 +350,6 @@ class ProcurementImportService:
             raise ProcurementImportRuleError("PROCUREMENT_SOURCE_FAILED")
         if public["status"] == "PARTIAL":
             raise ProcurementImportRuleError("PROCUREMENT_SOURCE_PARTIAL")
-        if public["status"] == "UNSUPPORTED_FORMAT":
-            raise ProcurementImportRuleError("PROCUREMENT_FORMAT_NOT_COMPOSABLE")
         source_rows = [row for row in self._rows(intent) if row["status"] == "SUCCESS"]
         if not source_rows:
             raise ProcurementImportRuleError("PROCUREMENT_SOURCE_FAILED")

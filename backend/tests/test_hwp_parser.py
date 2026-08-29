@@ -55,24 +55,32 @@ def _directory_entry(
 
 
 def _minimal_hwp(
-    *, flags: int = 0, damaged: bool = False, unsupported: bool = True
+    *,
+    flags: int = 0,
+    damaged: bool = False,
+    unsupported: bool = True,
+    cell_values: list[str] | None = None,
 ) -> bytes:
     file_header = bytearray(256)
     file_header[:32] = b"HWP Document File".ljust(32, b"\x00")
     struct.pack_into("<I", file_header, 32, 0x05000300)
     struct.pack_into("<I", file_header, 36, flags)
 
-    section = b"".join(
-        [
-            _record(67, "Opening paragraph".encode("utf-16le")),
-            _record(77, b""),
-            _record(72, b"", level=1),
-            _record(67, "Cell A".encode("utf-16le"), level=2),
-            _record(72, b"", level=1),
-            _record(67, "Cell B".encode("utf-16le"), level=2),
-            _record(71, b"eqed", level=1) if unsupported else b"",
-        ]
-    )
+    cells = cell_values or ["Cell A", "Cell B"]
+    section_records = [
+        _record(67, "Opening paragraph".encode("utf-16le")),
+        _record(77, b""),
+    ]
+    for value in cells:
+        section_records.extend(
+            [
+                _record(72, b"", level=1),
+                _record(67, value.encode("utf-16le"), level=2),
+            ]
+        )
+    if unsupported:
+        section_records.append(_record(71, b"eqed", level=1))
+    section = b"".join(section_records)
     if damaged:
         section += struct.pack("<I", 67 | (100 << 20)) + b"too short"
     if flags & 0x1:

@@ -34,6 +34,8 @@ def _copy_migrations(destination: Path, *, exclude: set[str] | None = None) -> P
         "0014_task8_round5_candidate_revision",
         "0015_task8_round5_mapping_provenance",
         "0016_task9_prerequisite_integrity",
+        "0017_task9_procurement_file_imports",
+        "0018_task9_round1_receiving_links",
         *(exclude or set()),
     }
     for source in _migration_directory().glob("*.sql"):
@@ -227,7 +229,7 @@ def test_round4_populated_0010_upgrade_preserves_mapping_required_as_unread(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id"
         ).fetchall()
     ]
-    assert migration_ids[-9:] == [
+    assert migration_ids[-10:] == [
         PRELUDE_ID,
         "0010b_task8_round5_count_capture",
         "0011_task8_round3_integrity",
@@ -237,6 +239,7 @@ def test_round4_populated_0010_upgrade_preserves_mapping_required_as_unread(
         "0015_task8_round5_mapping_provenance",
         "0016_task9_prerequisite_integrity",
         "0017_task9_procurement_file_imports",
+        "0018_task9_round1_receiving_links",
     ]
     with pytest.raises(
         sqlite3.IntegrityError, match="job file result scope or claim mismatch"
@@ -372,7 +375,7 @@ def test_round4_fresh_database_has_complete_checksum_ledger_and_final_guards(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id"
         ).fetchall()
     ]
-    assert migration_ids[-9:] == [
+    assert migration_ids[-10:] == [
         PRELUDE_ID,
         "0010b_task8_round5_count_capture",
         "0011_task8_round3_integrity",
@@ -382,6 +385,7 @@ def test_round4_fresh_database_has_complete_checksum_ledger_and_final_guards(
         "0015_task8_round5_mapping_provenance",
         "0016_task9_prerequisite_integrity",
         "0017_task9_procurement_file_imports",
+        "0018_task9_round1_receiving_links",
     ]
     assert {
         str(row[0])

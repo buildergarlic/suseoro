@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-import { login, metadata } from "./helpers";
+import { assertNoOverflowAt200Percent, login, metadata } from "./helpers";
 
 test("approval workroom has no critical or serious axe violations", async ({ page, request }) => {
   const seed = await metadata(request);
@@ -35,36 +35,5 @@ test("keyboard dialog trap returns focus and 200 percent layout does not overflo
   await page.keyboard.press("Escape");
   await expect(opener).toBeFocused();
 
-  await page.setViewportSize({ width: 640, height: 720 });
-  await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
-  await expect(page.getByRole("heading", { name: "목록의 핵심만 확인해 주세요" })).toBeVisible();
-  const layout = await page.evaluate(() => {
-    const root = document.documentElement;
-    const clientWidth = root.clientWidth;
-    const overflowing = Array.from(document.querySelectorAll<HTMLElement>("body *"))
-      .filter((element) => {
-        const rect = element.getBoundingClientRect();
-        return rect.left < -1 || rect.right > clientWidth + 1;
-      })
-      .slice(0, 8)
-      .map((element) => {
-        const rect = element.getBoundingClientRect();
-        return {
-          className: element.className,
-          left: rect.left,
-          right: rect.right,
-          tagName: element.tagName,
-          width: rect.width,
-        };
-      });
-    return {
-      clientWidth,
-      rootMinWidth: getComputedStyle(root).minWidth,
-      scrollWidth: root.scrollWidth,
-      overflowing,
-    };
-  });
-  expect(layout.scrollWidth, JSON.stringify(layout, null, 2)).toBeLessThanOrEqual(
-    layout.clientWidth + 1,
-  );
+  await assertNoOverflowAt200Percent(page, "approval dialog return");
 });

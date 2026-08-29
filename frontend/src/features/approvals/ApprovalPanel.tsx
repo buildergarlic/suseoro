@@ -37,6 +37,20 @@ function previousCopy(detail: ApprovalDetail): string {
   return parts.length ? `이전 버전보다 ${parts.join(" · ")}` : "이전 버전과 같은 목록입니다.";
 }
 
+async function latestApproval(api: SuseoroApi, workspaceId: string) {
+  const page = await api.listApprovals(workspaceId);
+  const latest = page.items[0];
+  return latest ? await api.getApproval(latest.id) : null;
+}
+
+function apiErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("detail" in error)) return null;
+  const detail = error.detail;
+  return detail && typeof detail === "object" && "code" in detail
+    ? String(detail.code)
+    : null;
+}
+
 export function ApprovalPanel({
   api,
   user,
@@ -50,16 +64,12 @@ export function ApprovalPanel({
   const [changesOpen, setChangesOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [reasonError, setReasonError] = useState("");
+  const [staleConflict, setStaleConflict] = useState(false);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     let active = true;
-    void api
-      .listApprovals(workspace.id)
-      .then(async (page) => {
-        const latest = page.items[0];
-        return latest ? await api.getApproval(latest.id) : null;
-      })
+    void latestApproval(api, workspace.id)
       .then((approval) => {
         if (active) setDetail(approval);
       })
@@ -111,9 +121,32 @@ export function ApprovalPanel({
           : "수정 요청을 보냈습니다.",
       );
     } catch (error) {
+      const code = apiErrorCode(error);
+      if (["ROW_VERSION_CONFLICT", "CANDIDATE_COLLECTION_CHANGED", "APPROVAL_REVISION_STALE", "APPROVAL_REVISION_NOT_CURRENT"].includes(code ?? "")) {
+        setStaleConflict(true);
+        setMessage("");
+        return;
+      }
       setMessage(
         error instanceof Error ? error.message : "승인 결정을 반영하지 못했습니다.",
       );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function reloadAfterConflict() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const current = await api.getWorkspace(workspace.id);
+      const approval = await latestApproval(api, workspace.id);
+      setDetail(approval);
+      onWorkspaceChange(current.data);
+      setStaleConflict(false);
+      setMessage("최신 승인 요청을 다시 불러왔습니다.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "최신 승인 요청을 불러오지 못했습니다.");
     } finally {
       setSubmitting(false);
     }
@@ -156,11 +189,16 @@ export function ApprovalPanel({
           <span>{metadata.auto_exclusions.map((item) => `${item.reason} ${item.count}권`).join(" · ")}</span>
         ) : <span>자동 제외된 책이 없습니다.</span>}
       </div>
-      {message ? <p className="live-status" role="status">{message}</p> : null}
+      {staleConflict ? (
+        <div className="message message-error" role="alert">
+          <p>승인 목록이 바뀌었습니다. 최신 승인 요청을 다시 확인해 주세요.</p>
+          <button className="button button-secondary" disabled={submitting} onClick={() => void reloadAfterConflict()} type="button">최신 승인 요청 다시 불러오기</button>
+        </div>
+      ) : message ? <p className="live-status" role="status">{message}</p> : null}
       {canPerformAction(user, workspace.status, "APPROVE_LIST") ? (
         <div className="primary-action-row">
           <button className="button button-secondary" disabled={submitting} onClick={() => setChangesOpen(true)} type="button">수정 요청 보내기</button>
-          <button className="button button-primary" disabled={submitting || !metadata.source_counts_verified} onClick={() => void applyDecision("APPROVE", "목록 검토 완료")} type="button">이 목록 승인</button>
+          <button className="button button-primary" data-major-action="APPROVE_LIST" disabled={submitting || !metadata.source_counts_verified} onClick={() => void applyDecision("APPROVE", "목록 검토 완료")} type="button">이 목록 승인</button>
         </div>
       ) : (
         <p className="calm-note" role="status">검토 담당자의 결정을 기다리고 있습니다.</p>

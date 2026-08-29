@@ -156,6 +156,8 @@ def upload_scope_replay_allowance(
                 return None
             response_body = _stored_json(legacy["response_body"])
 
+        response_body = sanitize_persisted_response(route, response_body)
+
         metadata_files = metadata.get("files") if isinstance(metadata, dict) else None
         if isinstance(metadata_files, list) and metadata_files:
             filenames: list[str] = []
@@ -243,6 +245,8 @@ def _existing_upload_idempotency_response(
         return None
 
     stored_body = _stored_json(row["response_body"]) if row["response_body"] else None
+    if stored_body is not None:
+        stored_body = sanitize_persisted_response(route, stored_body)
     if row["request_hash"] == canonical_digest:
         if row["response_status"] is None or stored_body is None:
             raise IdempotencyConflict("IDEMPOTENCY_REQUEST_IN_PROGRESS")

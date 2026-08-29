@@ -12,6 +12,7 @@ import {
   waitForProcurementJob,
 } from "../procurement/procurementImport";
 import { canPerformAction } from "../workspaces/workflowPolicy";
+import { BudgetStrip } from "../quotes/BudgetStrip";
 import { BarcodeScanner } from "./BarcodeScanner";
 
 type CurrentOrder = components["schemas"]["CurrentOrder"];
@@ -59,6 +60,8 @@ export function ReceivingPanel({ api, user, workspace, onWorkspaceChange }: { ap
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -70,16 +73,25 @@ export function ReceivingPanel({ api, user, workspace, onWorkspaceChange }: { ap
       api.listProcurementImports(workspace.id),
     ]).then(([current, progress, differencePage, , importPage]) => {
       if (!active) return;
+      setLoadError("");
       setOrder(current.order);
       setStatus(progress);
       setDifferences(differencePage.items);
       setImports(importPage.items);
       setChoices(Object.fromEntries(differencePage.items.map((difference) => [difference.id, difference.disposition ?? ""])));
-    }).catch((error: unknown) => { if (active) setMessage(error instanceof Error ? error.message : "납품 진행 상황을 불러오지 못했습니다."); });
+    }).catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "납품 진행 상황을 불러오지 못했습니다."); })
+      .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [api, refresh, workspace.id]);
 
+  function retryLoad() {
+    setLoading(true);
+    setLoadError("");
+    setRefresh((value) => value + 1);
+  }
+
   async function composeImport(item: ProcurementImport) {
+    if (!canPerformAction(user, workspace.status, "ADD_DELIVERY")) return;
     const result = await api.composeProcurementImport(
       item.import_id,
       workspace.row_version,
@@ -93,7 +105,31 @@ export function ReceivingPanel({ api, user, workspace, onWorkspaceChange }: { ap
     setRefresh((value) => value + 1);
   }
 
+  async function resolveMapping(
+    item: ProcurementImport,
+    mapping: Record<string, string>,
+    remember: boolean,
+  ) {
+    if (!canPerformAction(user, workspace.status, "ADD_DELIVERY")) return;
+    const source = await api.getSource(item.source_id);
+    await api.updateSourceMapping(
+      item.source_id,
+      {
+        role: "VENDOR_QUOTE",
+        mapping,
+        remember_template: remember,
+        vendor_scope: source.data.vendor_scope || item.vendor_name,
+      },
+      source.data.row_version,
+    );
+    const command = await api.parseSource(item.source_id);
+    await waitForProcurementJob(api, command.job_id);
+    setMessage("열 연결을 저장하고 납품명세서를 다시 읽었습니다.");
+    setRefresh((value) => value + 1);
+  }
+
   async function addDelivery() {
+    if (!canPerformAction(user, workspace.status, "ADD_DELIVERY")) return;
     if (!order || !deliveryFile || busy) { setMessage("납품명세서 파일을 골라 주세요."); return; }
     setBusy(true);
     try {
@@ -132,7 +168,7 @@ export function ReceivingPanel({ api, user, workspace, onWorkspaceChange }: { ap
   }
 
   async function startScan() {
-    if (!order || busy) return;
+    if (!order || busy || !canPerformAction(user, workspace.status, "START_SCAN")) return;
     setBusy(true);
     try {
       const result = await api.startScanSession(workspace.id, { order_revision_id: order.revision_id, reason: "실물 도서 바코드 검수 시작" }, workspace.row_version);
@@ -144,6 +180,7 @@ export function ReceivingPanel({ api, user, workspace, onWorkspaceChange }: { ap
   }
 
   async function saveDisposition(difference: Difference) {
+    if (!canPerformAction(user, workspace.status, "SET_DISPOSITION")) return;
     const disposition = choices[difference.id];
     if (!disposition || busy) return;
     setBusy(true);
@@ -157,7 +194,7 @@ export function ReceivingPanel({ api, user, workspace, onWorkspaceChange }: { ap
   }
 
   async function complete() {
-    if (!status?.can_complete || busy) return;
+    if (!status?.can_complete || busy || !canPerformAction(user, workspace.status, "COMPLETE_RECEIVING")) return;
     setBusy(true);
     try {
       const result = await api.completeReceiving(workspace.id, "주문 수량과 차이 처리 확인 완료", workspace.row_version);
@@ -168,19 +205,27 @@ export function ReceivingPanel({ api, user, workspace, onWorkspaceChange }: { ap
     finally { setBusy(false); }
   }
 
-  if (!order || !status) return <p className="loading-state" role="status">납품 진행 상황을 불러오고 있습니다…</p>;
+  if (loading && (!order || !status)) return <p className="loading-state" role="status">납품 진행 상황을 불러오고 있습니다…</p>;
+  if (loadError) return <div className="message message-error" role="alert"><p>{loadError}</p><button className="button button-secondary" onClick={retryLoad} type="button">다시 불러오기</button></div>;
+  if (!order || !status) return <div className="calm-placeholder"><h3>도착한 책 확인</h3><p>현재 발주 내역을 찾지 못했습니다. 발주 상태를 다시 확인해 주세요.</p></div>;
+  const canAddDelivery = canPerformAction(user, workspace.status, "ADD_DELIVERY");
+  const canScan = canPerformAction(user, workspace.status, "SCAN_BOOK");
+  const canSetDisposition = canPerformAction(user, workspace.status, "SET_DISPOSITION");
   return <div className="receiving-panel">
     <div className="section-intro"><div><p className="eyebrow">{order.vendor_name} · {status.delivery_count}차까지 누적</p><h3>도착한 책 확인</h3><p>명세서와 바코드 결과를 한 작업에 차곡차곡 더합니다.</p></div><dl aria-label="수령 진행 요약" className="receiving-progress-summary"><div><dt>납품명세서 반영</dt><dd>{status.delivered_quantity} / {status.ordered_quantity}권</dd></div><div><dt>바코드 확인</dt><dd>{status.scanned_quantity} / {status.ordered_quantity}권</dd></div><div><dt>처리 대기 차이</dt><dd>{status.unresolved_difference_count}건</dd></div></dl></div>
-    <div className="receiving-intake">
+    <BudgetStrip budgetWon={order.budget_won} quoteWon={order.total_won} />
+    {canAddDelivery || canPerformAction(user, workspace.status, "START_SCAN") ? <div className="receiving-intake">
       <label>납품명세서 파일<input accept={PROCUREMENT_FILE_ACCEPT} type="file" onChange={(event) => setDeliveryFile(event.target.files?.[0] ?? null)} /></label>
-      <button className="button button-secondary" disabled={busy || !canPerformAction(user, workspace.status, "ADD_DELIVERY")} onClick={() => void addDelivery()} type="button">납품명세서 비교하기</button>
-      {!status.active_session_id ? <button className="button button-primary" disabled={busy || !canPerformAction(user, workspace.status, "START_SCAN")} onClick={() => void startScan()} type="button">바코드 검수 시작</button> : null}
+      <button className="button button-secondary" data-major-action="COMPARE_DELIVERY" disabled={busy || !canAddDelivery} onClick={() => void addDelivery()} type="button">납품명세서 비교하기</button>
+      {!status.active_session_id ? <button className="button button-primary" data-major-action="START_SCAN" disabled={busy || !canPerformAction(user, workspace.status, "START_SCAN")} onClick={() => void startScan()} type="button">바코드 검수 시작</button> : null}
       <p className="field-note">CSV·엑셀은 서버 공통 파서로 읽고, 원본과 행별 근거를 작업에 보관합니다.</p>
-    </div>
+    </div> : null}
     <ProcurementImportStatus
       busy={busy}
+      canMutate={canAddDelivery}
       imports={imports}
       kind="DELIVERY"
+      onMap={resolveMapping}
       onCompose={(item) => {
         if (busy) return;
         setBusy(true);
@@ -189,11 +234,11 @@ export function ReceivingPanel({ api, user, workspace, onWorkspaceChange }: { ap
           .finally(() => setBusy(false));
       }}
     />
-    {status.active_session_id ? <BarcodeScanner api={api} onProgress={() => setRefresh((value) => value + 1)} orderRows={status.rows} sessionId={status.active_session_id} workspaceId={workspace.id} /> : null}
+    {status.active_session_id && canScan ? <BarcodeScanner api={api} onProgress={() => setRefresh((value) => value + 1)} orderRows={status.rows} sessionId={status.active_session_id} workspaceId={workspace.id} /> : null}
     <section aria-labelledby="difference-title" className="difference-section"><h4 id="difference-title">발주와 다른 내용</h4>
-      {differences.length ? <ul className="difference-list">{differences.map((difference) => <li key={difference.id}><div><strong>{KIND_LABELS[difference.kind] ?? difference.kind}</strong><p className="difference-identity">{describeDifferenceBook(difference.details)}</p><p>발주 기준 {difference.details.expected ?? "—"} · 도착 확인 {differenceActual(difference.details)}</p></div><div className="difference-action"><label>처리 방침<select aria-label="처리 방침" value={choices[difference.id] ?? ""} onChange={(event) => setChoices((current) => ({ ...current, [difference.id]: event.target.value }))}><option value="">선택해 주세요</option>{DISPOSITIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button className="button button-secondary" disabled={busy || !choices[difference.id]} onClick={() => void saveDisposition(difference)} type="button">방침 기록</button></div></li>)}</ul> : <p className="empty-state">현재 처리할 차이가 없습니다.</p>}
+      {differences.length ? <ul className="difference-list">{differences.map((difference) => <li key={difference.id}><div><strong>{KIND_LABELS[difference.kind] ?? difference.kind}</strong><p className="difference-identity">{describeDifferenceBook(difference.details)}</p><p>발주 기준 {difference.details.expected ?? "—"} · 도착 확인 {differenceActual(difference.details)}</p></div>{canSetDisposition ? <div className="difference-action"><label>처리 방침<select aria-label="처리 방침" value={choices[difference.id] ?? ""} onChange={(event) => setChoices((current) => ({ ...current, [difference.id]: event.target.value }))}><option value="">선택해 주세요</option>{DISPOSITIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button className="button button-secondary" disabled={busy || !choices[difference.id]} onClick={() => void saveDisposition(difference)} type="button">방침 기록</button></div> : <p className="field-note">{difference.disposition ? `기록된 처리: ${DISPOSITIONS.find(([value]) => value === difference.disposition)?.[1] ?? difference.disposition}` : "담당자가 처리 방침을 기록합니다."}</p>}</li>)}</ul> : <p className="empty-state">현재 처리할 차이가 없습니다.</p>}
     </section>
-    <div className="completion-card"><div><h4>검수 완료</h4>{status.blocking_reasons.length ? <ul>{status.blocking_reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : <p>모든 주문 수량과 차이 처리 방침을 확인했습니다.</p>}</div><button className="button button-primary" disabled={busy || !status.can_complete || !canPerformAction(user, workspace.status, "COMPLETE_RECEIVING")} onClick={() => void complete()} type="button">검수 완료하고 작업 끝내기</button></div>
+    <div className="completion-card"><div><h4>검수 완료</h4>{status.blocking_reasons.length ? <ul>{status.blocking_reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : <p>모든 주문 수량과 차이 처리 방침을 확인했습니다.</p>}</div><button className="button button-primary" data-major-action="COMPLETE_RECEIVING" disabled={busy || !status.can_complete || !canPerformAction(user, workspace.status, "COMPLETE_RECEIVING")} onClick={() => void complete()} type="button">검수 완료하고 작업 끝내기</button></div>
     {message ? <p className="live-status" role="status">{message}</p> : null}
   </div>;
 }

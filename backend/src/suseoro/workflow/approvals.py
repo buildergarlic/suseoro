@@ -274,6 +274,9 @@ class ApprovalService:
             FROM workspace_sources AS link
             JOIN source_documents AS document
               ON document.id = link.source_document_id
+            LEFT JOIN source_configurations AS config
+              ON config.source_document_id = document.id
+             AND config.school_id = document.school_id
             JOIN job_file_results AS result
               ON result.source_document_id = link.source_document_id
             JOIN durable_jobs AS job ON job.id = result.job_id
@@ -282,12 +285,19 @@ class ApprovalService:
             LEFT JOIN job_file_result_count_evidence AS evidence
               ON evidence.job_file_result_id = result.id
             WHERE link.school_id = ? AND link.workspace_id = ?
-              AND document.role = 'PURCHASE_REQUEST'
+              AND COALESCE(config.role, document.role) = 'PURCHASE_REQUEST'
               AND job.job_type IN ('INGEST', 'PARSE')
               AND result.status IN ('SUCCESS', 'PARTIAL', 'FAILED')
-              AND COALESCE(
-                    evidence.confidence, history.confidence, 'EXACT'
-                  ) = 'UNVERIFIED'
+              AND CASE
+                    WHEN evidence.job_file_result_id IS NOT NULL THEN
+                        CASE
+                            WHEN evidence.confidence = 'EXACT'
+                             AND evidence.result_updated_at = result.updated_at
+                            THEN 'EXACT'
+                            ELSE 'UNVERIFIED'
+                        END
+                    ELSE COALESCE(history.confidence, 'EXACT')
+                  END = 'UNVERIFIED'
               AND NOT EXISTS (
                   SELECT 1
                   FROM job_file_results AS newer
@@ -791,6 +801,23 @@ class ApprovalService:
             ).fetchone()
             if revision is None:
                 raise ApprovalError("APPROVAL_REVISION_NOT_FOUND")
+            current_revision = self.connection.execute(
+                """
+                SELECT ar.id
+                FROM approval_revisions ar
+                WHERE ar.school_id = ? AND ar.workspace_id = ?
+                  AND ar.sealed_at IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM approval_cancellations ac
+                      WHERE ac.approval_revision_id = ar.id
+                  )
+                ORDER BY ar.revision_number DESC
+                LIMIT 1
+                """,
+                (school_id, workspace_id),
+            ).fetchone()
+            if current_revision is None or current_revision["id"] != revision_id:
+                raise ApprovalError("APPROVAL_REVISION_NOT_CURRENT")
             existing = self.connection.execute(
                 "SELECT decision FROM approval_decisions WHERE approval_revision_id = ?",
                 (revision_id,),

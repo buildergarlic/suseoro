@@ -6,7 +6,7 @@ import type { SuseoroApi } from "../src/api/client";
 import { BarcodeScanner } from "../src/features/receiving/BarcodeScanner";
 import { ReceivingPanel } from "../src/features/receiving/ReceivingPanel";
 import { SCAN_AUDIO_PATTERNS } from "../src/features/receiving/scanFeedback";
-import { createFixtureApi, operator, workspace } from "../src/test/fixtures";
+import { createFixtureApi, operator, reviewer, workspace } from "../src/test/fixtures";
 
 function apiWith(overrides: Partial<SuseoroApi>): SuseoroApi {
   return { ...createFixtureApi(), ...overrides };
@@ -130,7 +130,7 @@ describe("바코드 집중 모드", () => {
     expect(scan.mock.calls[1]?.[1].isbn).toBe("9788936434267");
   });
 
-  test("이전 실패가 이미 대기 중인 다음 스캔을 덮거나 다시 제출하지 않는다", async () => {
+  test("불확실한 A는 같은 key로 복구되기 전까지 뒤의 B가 FIFO에서 앞서지 않는다", async () => {
     const user = userEvent.setup();
     let rejectFirst!: (reason: Error) => void;
     const first = new Promise<Awaited<ReturnType<SuseoroApi["recordScan"]>>>(
@@ -157,17 +157,101 @@ describe("바코드 집중 모드", () => {
     await user.keyboard("9788936434267{Enter}");
     rejectFirst(new Error("첫 스캔 응답을 확인하지 못했습니다."));
 
-    await waitFor(() => expect(scan).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("확인됨"));
-    expect(input).toHaveValue("");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("다시 확인"));
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(input).toHaveValue("9788937464010");
     await user.keyboard("{Enter}");
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-    expect(scan).toHaveBeenCalledTimes(2);
-    expect(scan.mock.calls[1]?.[1].isbn).toBe("9788936434267");
+    await waitFor(() => expect(scan).toHaveBeenCalledTimes(3));
+    expect(scan.mock.calls[1]?.[1].isbn).toBe("9788937464010");
+    expect(scan.mock.calls[1]?.[2]?.commandKey).toBe(
+      scan.mock.calls[0]?.[2]?.commandKey,
+    );
+    expect(scan.mock.calls[2]?.[1].isbn).toBe("9788936434267");
+    expect(scan.mock.calls[2]?.[2]?.commandKey).not.toBe(
+      scan.mock.calls[0]?.[2]?.commandKey,
+    );
+  });
+
+  test("예상 도서 hint는 선택한 한 번의 스캔에만 붙는다", async () => {
+    const user = userEvent.setup();
+    const scan = vi.fn<SuseoroApi["recordScan"]>(async (_session, input) => ({
+      event_id: `event-${input.isbn}`,
+      code: "NORMAL",
+      isbn13: input.isbn,
+      scanned_quantity: 1,
+      order_row_id: "order-row-1",
+    }));
+    render(
+      <BarcodeScanner
+        api={apiWith({ recordScan: scan })}
+        onProgress={vi.fn()}
+        orderRows={[{ order_row_id: "order-row-1", isbn13: "9788937464010", title: "선택한 책", edition: "개정판", ordered_quantity: 1, delivered_quantity: 0, scanned_quantity: 0, unit_price: 10_000 }]}
+        sessionId="scan-session"
+        workspaceId="workspace-receiving"
+      />,
+    );
+    await user.selectOptions(screen.getByLabelText(/판본 차이를 확인할 예상 도서/), "order-row-1");
+    const input = screen.getByLabelText("ISBN 바코드");
+    await user.type(input, "9788937464010{Enter}");
+    await waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
+    await user.type(input, "9788936434267{Enter}");
+    await waitFor(() => expect(scan).toHaveBeenCalledTimes(2));
+    expect(scan.mock.calls[0]?.[1].expected_order_row_id).toBe("order-row-1");
+    expect(scan.mock.calls[1]?.[1].expected_order_row_id).toBeNull();
   });
 });
 
 describe("부분 납품과 차이 처리", () => {
+  test("검토자에게 compose·scanner·disposition 변경 컨트롤을 노출하지 않는다", async () => {
+    const receiving = workspace("workspace-role-fence", "권한 경계", "RECEIVING");
+    const api = apiWith({
+      getCurrentOrder: async () => ({ order: {
+        revision_id: "order-1", revision_number: 1, approval_revision_id: "approval-1",
+        quote_id: "quote-1", vendor_name: "푸른서점", budget_won: 50_000,
+        total_won: 42_000, difference_won: 8_000, state: "RECEIVING", row_version: 4,
+        sent: true, artifacts: [], rows: [],
+      } }),
+      getReceivingStatus: async () => ({
+        order_revision_id: "order-1", active_session_id: "session-1", delivery_count: 1,
+        ordered_quantity: 1, delivered_quantity: 0, scanned_quantity: 0,
+        unresolved_difference_count: 1, can_complete: false,
+        blocking_reasons: ["처리 방침이 필요한 차이가 1건 있습니다."],
+        rows: [{ order_row_id: "row-1", isbn13: "9788937464010", title: "책", edition: null, ordered_quantity: 1, delivered_quantity: 0, scanned_quantity: 0, unit_price: 10_000 }],
+      }),
+      listReceivingDifferences: async () => ({ items: [{
+        id: "difference-1", kind: "MISSING", reference_key: "scan:missing:row-1",
+        disposition: null, active: true, row_version: 1,
+        details: { expected: 1, received: null, isbn13: "9788937464010", title: "책", edition: null, scanned: 0, scanned_quantity: null },
+        created_at: "2026-08-29T08:00:00Z", updated_at: "2026-08-29T08:00:00Z",
+      }], next_cursor: null }),
+      listDeliveries: async () => ({ items: [], next_cursor: null, differences: [], differences_truncated: false }),
+      listProcurementImports: async () => ({ items: [{
+        import_id: "import-ready", source_id: "source-ready", kind: "DELIVERY",
+        target_revision_id: "order-1", vendor_name: "푸른서점", status: "READY",
+        filename: "delivery.xlsx", detected_format: "XLSX", parser_version: "tabular-v1",
+        template_version: null, total_rows: 1, processed_rows: 1, row_error_count: 0,
+        count_confidence: "EXACT", mapping_required: null, result_id: null,
+        rows: [], created_at: "2026-08-29T08:00:00Z", completed_at: null,
+      }], next_cursor: null }),
+    });
+    render(<ReceivingPanel api={api} onWorkspaceChange={vi.fn()} user={reviewer} workspace={receiving} />);
+    expect(await screen.findByText("발주와 다른 내용")).toBeVisible();
+    expect(screen.queryByLabelText("ISBN 바코드")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("처리 방침")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "서버 처리 결과 반영하기" })).not.toBeInTheDocument();
+  });
+
+  test("수령 read model 오류는 영구 loading 대신 복구 버튼과 원인을 보인다", async () => {
+    const user = userEvent.setup();
+    const getCurrentOrder = vi.fn<SuseoroApi["getCurrentOrder"]>()
+      .mockRejectedValueOnce(new Error("수령 정보를 불러오지 못했습니다."))
+      .mockResolvedValueOnce({ order: null });
+    render(<ReceivingPanel api={apiWith({ getCurrentOrder })} onWorkspaceChange={vi.fn()} user={operator} workspace={workspace("workspace-load-error", "불러오기", "ORDER_SENT")} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("수령 정보를 불러오지 못했습니다.");
+    await user.click(screen.getByRole("button", { name: "다시 불러오기" }));
+    await waitFor(() => expect(getCurrentOrder).toHaveBeenCalledTimes(2));
+  });
+
   test("납품 파일도 공통 서버 파서에 맡기고 준비된 결과만 누적 조합한다", async () => {
     const user = userEvent.setup();
     const receiving = workspace("workspace-import-delivery", "납품 파일", "ORDER_SENT");
@@ -261,6 +345,9 @@ describe("부분 납품과 차이 처리", () => {
     expect(manifest).toHaveTextContent("2 / 3권");
     expect(barcode).toHaveTextContent("2 / 3권");
     expect(unresolved).toHaveTextContent("1건");
+    expect(screen.getByText("승인 예산")).toBeVisible();
+    expect(screen.getByText("선택 견적")).toBeVisible();
+    expect(screen.getByText("차이")).toBeVisible();
     expect(screen.getByText("수량 차이")).toBeVisible();
     expect(screen.getByText("책 · ISBN 9788937464010 · 개정판")).toBeVisible();
     const disposition = screen.getByLabelText("처리 방침");

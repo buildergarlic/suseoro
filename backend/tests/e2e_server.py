@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import tempfile
 import threading
 import uuid
@@ -21,7 +22,7 @@ from suseoro.jobs.handlers import build_job_runner
 from suseoro.security.passwords import hash_password
 from suseoro.workflow.approvals import ApprovalService
 
-PASSWORD = "Library2026!"
+PASSWORD = f"E2e!{secrets.token_urlsafe(32)}aA9"
 _temporary_data = tempfile.TemporaryDirectory(prefix="suseoro-e2e-")
 _data_dir = Path(_temporary_data.name)
 _fixture = make_workflow_fixture(_data_dir)
@@ -111,27 +112,87 @@ ApprovalService(_fixture.connection).request_approval(
     idempotency_key="e2e-accessibility-approval",
     request_id=str(uuid.uuid4()),
 )
+
+mapping_workspace_id = str(uuid.uuid4())
+_fixture.connection.execute(
+    """
+    INSERT INTO acquisition_workspaces (
+        id, school_id, name, status, created_by_user_id, created_at, updated_at
+    ) VALUES (?, ?, '열 연결 검증 수서', 'CANDIDATE_REVIEW', ?, ?, ?)
+    """,
+    (
+        mapping_workspace_id,
+        _fixture.school_id,
+        _fixture.operator_id,
+        NOW,
+        NOW,
+    ),
+)
+mapping_fixture = replace(
+    _fixture,
+    workspace_id=mapping_workspace_id,
+    candidate_ids=list(accessibility_fixture.candidate_ids),
+)
+mapping_fixture.add_candidate(
+    title="열 연결할 책",
+    author="표사서",
+    isbn="9788937464010",
+    unit_price=12_000,
+)
+mapping_service = ApprovalService(_fixture.connection)
+mapping_request = mapping_service.request_approval(
+    school_id=_fixture.school_id,
+    workspace_id=mapping_workspace_id,
+    actor_id=_fixture.operator_id,
+    actor_roles=("OPERATOR",),
+    workspace_version=mapping_fixture.workspace_version(),
+    candidate_collection_revision=mapping_fixture.candidate_collection_revision(),
+    budget_won=20_000,
+    reason="열 연결 복구 검증용 승인 요청입니다.",
+    idempotency_key="e2e-mapping-approval-request",
+    request_id=str(uuid.uuid4()),
+)
+mapping_service.approve(
+    school_id=_fixture.school_id,
+    workspace_id=mapping_workspace_id,
+    revision_id=mapping_request["revision_id"],
+    actor_id=_fixture.reviewer_id,
+    actor_roles=("REVIEWER",),
+    workspace_version=mapping_fixture.workspace_version(),
+    reason="열 연결 복구 검증 승인",
+    idempotency_key="e2e-mapping-approval-decision",
+    request_id=str(uuid.uuid4()),
+)
 _fixture.connection.commit()
 
-delivery_workbook = Workbook()
-delivery_sheet = delivery_workbook.active
-delivery_sheet.title = "납품명세서"
-delivery_sheet.append(["ISBN", "제목", "저자", "수량", "단가"])
-delivery_sheet.append(["9788937464010", "도서관의 책", "김사서", 1, 12_000])
-delivery_sheet.append(["9788936434267", "차분한 수서", "이담당", 1, 15_000])
-delivery_buffer = BytesIO()
-delivery_workbook.save(delivery_buffer)
+
+def _delivery_workbook(row: list[object]) -> str:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "납품명세서"
+    sheet.append(["ISBN", "제목", "저자", "수량", "단가"])
+    sheet.append(row)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return b64encode(buffer.getvalue()).decode("ascii")
+
 
 METADATA = {
     "school_id": _fixture.school_id,
     "workspace_id": _fixture.workspace_id,
     "accessibility_workspace_id": accessibility_workspace_id,
+    "mapping_workspace_id": mapping_workspace_id,
     "approval_revision_id": requested["revision_id"],
     "password": PASSWORD,
     "operator_username": "operator",
     "reviewer_username": "reviewer",
     "isbns": ["9788937464010", "9788936434267"],
-    "delivery_xlsx_base64": b64encode(delivery_buffer.getvalue()).decode("ascii"),
+    "delivery_partial_a_xlsx_base64": _delivery_workbook(
+        ["9788937464010", "도서관의 책", "김사서", 1, 12_000]
+    ),
+    "delivery_partial_b_xlsx_base64": _delivery_workbook(
+        ["9788936434267", "차분한 수서", "이담당", 1, 15_000]
+    ),
 }
 _fixture.connection.close()
 

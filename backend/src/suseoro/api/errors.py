@@ -29,6 +29,7 @@ _MESSAGES = {
     "INVALID_IF_MATCH": "현재 버전 정보가 올바르지 않습니다.",
     "ROW_VERSION_CONFLICT": "다른 사용자가 먼저 수정했습니다. 현재 내용과 변경 내용을 확인해 주세요.",
     "CANDIDATE_COLLECTION_CHANGED": "후보 목록이 바뀌었습니다. 최신 목록을 다시 확인해 주세요.",
+    "APPROVAL_REVISION_NOT_CURRENT": "승인 요청이 바뀌었습니다. 최신 승인 요청을 다시 확인해 주세요.",
     "SOURCE_COUNTS_UNVERIFIED": "일부 자료의 처리 건수를 확인할 수 없어 승인할 수 없습니다.",
     "HISTORICAL_REPLAY_INVALID": "이전 요청 결과를 안전하게 확인할 수 없습니다. 새 요청으로 다시 시도해 주세요.",
     "EDIT_LOCK_REQUIRED": "편집 잠금을 다시 확인해 주세요.",
@@ -167,6 +168,12 @@ def install_error_handlers(app: FastAPI) -> None:
         status_code = 403 if error.code.endswith("_ROLE_REQUIRED") else 400
         if error.code.endswith("_NOT_FOUND"):
             status_code = 404
+        if error.code in {
+            "APPROVAL_REVISION_NOT_CURRENT",
+            "CANDIDATE_COLLECTION_CHANGED",
+            "ROW_VERSION_CONFLICT",
+        }:
+            status_code = 409
         return error_response(
             request,
             status_code=status_code,

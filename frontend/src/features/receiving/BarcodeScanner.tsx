@@ -35,14 +35,60 @@ export function BarcodeScanner({ api, workspaceId, sessionId, orderRows, onProgr
   onProgress: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const queueRef = useRef(Promise.resolve());
-  const retryRef = useRef<{ isbn: string; key: string } | null>(null);
-  const inputVersionRef = useRef(0);
+  const commandsRef = useRef<Array<{
+    isbn: string;
+    key: string;
+    expectedOrderRowId: string | null;
+  }>>([]);
+  const processingRef = useRef(false);
+  const retryBlockedRef = useRef(false);
   const [value, setValue] = useState("");
   const [expectedRowId, setExpectedRowId] = useState("");
   const [feedback, setFeedback] = useState<{ code: ScanCode; title: string; help: string } | null>(null);
 
-  useEffect(() => { inputRef.current?.focus(); }, [sessionId]);
+  useEffect(() => {
+    commandsRef.current = [];
+    processingRef.current = false;
+    retryBlockedRef.current = false;
+    inputRef.current?.focus();
+  }, [sessionId]);
+
+  async function processHead() {
+    if (processingRef.current || retryBlockedRef.current) return;
+    const command = commandsRef.current[0];
+    if (!command) return;
+    processingRef.current = true;
+    try {
+      const result = await api.recordScan(
+        sessionId,
+        {
+          workspace_id: workspaceId,
+          isbn: command.isbn,
+          expected_order_row_id: command.expectedOrderRowId,
+        },
+        { commandKey: command.key },
+      );
+      commandsRef.current.shift();
+      const code = feedbackCode(result.code);
+      setFeedback({ code, ...FEEDBACK[code] });
+      playScanAudio(code);
+      onProgress();
+    } catch (error) {
+      retryBlockedRef.current = true;
+      setValue(command.isbn);
+      setFeedback({
+        code: "NOT_ORDERED",
+        title: "다시 확인",
+        help: error instanceof Error
+          ? error.message
+          : "스캔 결과를 확인하지 못했습니다. Enter로 다시 시도해 주세요.",
+      });
+    } finally {
+      processingRef.current = false;
+      window.setTimeout(() => { inputRef.current?.focus(); }, 0);
+    }
+    if (!retryBlockedRef.current) void processHead();
+  }
 
   function submit() {
     const isbn = normalizeBarcode(value);
@@ -50,40 +96,32 @@ export function BarcodeScanner({ api, workspaceId, sessionId, orderRows, onProgr
       inputRef.current?.focus();
       return;
     }
-    const retry = retryRef.current?.isbn === isbn ? retryRef.current : null;
-    const key = retry?.key ?? commandKey();
-    const submittedInputVersion = inputVersionRef.current;
+    const blocked = retryBlockedRef.current ? commandsRef.current[0] : undefined;
+    if (blocked?.isbn === isbn) {
+      retryBlockedRef.current = false;
+      setValue("");
+      void processHead();
+      return;
+    }
+    commandsRef.current.push({
+      isbn,
+      key: commandKey(),
+      expectedOrderRowId: expectedRowId || null,
+    });
+    setExpectedRowId("");
+    if (blocked) {
+      setValue(blocked.isbn);
+      inputRef.current?.focus();
+      return;
+    }
     setValue("");
-    const run = async () => {
-      try {
-        const result = await api.recordScan(
-          sessionId,
-          { workspace_id: workspaceId, isbn, expected_order_row_id: expectedRowId || null },
-          { commandKey: key },
-        );
-        retryRef.current = null;
-        const code = feedbackCode(result.code);
-        setFeedback({ code, ...FEEDBACK[code] });
-        playScanAudio(code);
-        onProgress();
-      } catch (error) {
-        if (inputVersionRef.current === submittedInputVersion) {
-          retryRef.current = { isbn, key };
-          setValue(isbn);
-        }
-        setFeedback({ code: "NOT_ORDERED", title: "다시 확인", help: error instanceof Error ? error.message : "스캔 결과를 확인하지 못했습니다. Enter로 다시 시도해 주세요." });
-      } finally {
-        window.setTimeout(() => { inputRef.current?.focus(); }, 0);
-      }
-    };
-    const queued = queueRef.current.then(run, run);
-    queueRef.current = queued.then(() => undefined, () => undefined);
+    void processHead();
   }
 
   return <section className="scanner-focus" aria-labelledby="scanner-title">
     <div><p className="eyebrow">클릭 없이 계속 스캔해요</p><h4 id="scanner-title">바코드 집중 모드</h4></div>
     <div className="scanner-inputs">
-      <label>ISBN 바코드<input autoComplete="off" inputMode="numeric" ref={inputRef} value={value} onChange={(event) => { inputVersionRef.current += 1; setValue(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } }} /></label>
+      <label>ISBN 바코드<input autoComplete="off" inputMode="numeric" ref={inputRef} value={value} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } }} /></label>
       <label className="scanner-mismatch-field">판본 차이를 확인할 예상 도서 (선택)<select value={expectedRowId} onChange={(event) => setExpectedRowId(event.target.value)}><option value="">자동으로 찾기</option>{orderRows.map((row) => <option key={row.order_row_id} value={row.order_row_id}>{row.title}{row.edition ? ` · ${row.edition}` : ""}</option>)}</select></label>
     </div>
     <div aria-atomic="true" aria-live="assertive" className={`scan-feedback ${feedback ? `scan-${feedback.code.toLocaleLowerCase()}` : ""}`} role="status">

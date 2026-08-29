@@ -16,14 +16,25 @@ function likelyHeader(
   suggested: Record<string, string | null>,
   canonicalField: string,
   choices: string[],
+  fallback = true,
 ): string {
   return (
     headers.find((header) => suggested[header] === canonicalField) ??
     headers.find((header) => choices.some((choice) => header.includes(choice))) ??
-    headers[0] ??
+    (fallback ? headers[0] : undefined) ??
     ""
   );
 }
+
+const OPTIONAL_FIELDS = [
+  ["isbn", "ISBN 열"],
+  ["quantity", "수량 열"],
+  ["unit_price", "단가 열"],
+  ["list_price", "표시가격 열"],
+  ["publisher", "출판사 열"],
+  ["edition", "판본 열"],
+  ["out_of_stock", "품절 열"],
+] as const;
 
 export function MappingDialog({
   mappingRequired,
@@ -45,6 +56,15 @@ export function MappingDialog({
       mappingRequired.suggested_mapping,
       "author",
       ["쓴이", "저자", "지은이"],
+      false,
+    ),
+  );
+  const [optionalColumns, setOptionalColumns] = useState<Record<string, string>>(
+    () => Object.fromEntries(
+      OPTIONAL_FIELDS.map(([field]) => [
+        field,
+        headers.find((header) => mappingRequired.suggested_mapping[header] === field) ?? "",
+      ]),
     ),
   );
   const [remember, setRemember] = useState(true);
@@ -53,8 +73,12 @@ export function MappingDialog({
     const next: Record<string, string> = {};
     if (titleColumn) next[titleColumn] = "title";
     if (authorColumn && authorColumn !== titleColumn) next[authorColumn] = "author";
+    for (const [field] of OPTIONAL_FIELDS) {
+      const column = optionalColumns[field];
+      if (column && !(column in next)) next[column] = field;
+    }
     return next;
-  }, [authorColumn, titleColumn]);
+  }, [authorColumn, optionalColumns, titleColumn]);
 
   async function apply() {
     setApplying(true);
@@ -70,7 +94,7 @@ export function MappingDialog({
       <div className="dialog-heading">
         <p className="eyebrow">한 번만 확인해 주세요</p>
         <h2 id="mapping-dialog-title">열 연결 확인</h2>
-        <p>제목과 저자가 들어 있는 열을 확인하면 다음에도 같은 양식을 알아봅니다.</p>
+        <p>제목·저자와 견적에 필요한 열을 확인하면 다음에도 같은 양식을 알아봅니다.</p>
       </div>
 
       <div className="mapping-fields">
@@ -80,6 +104,7 @@ export function MappingDialog({
             onChange={(event) => setTitleColumn(event.target.value)}
             value={titleColumn}
           >
+            <option value="">연결하지 않음</option>
             {headers.map((header) => (
               <option key={header} value={header}>
                 {header}
@@ -87,12 +112,30 @@ export function MappingDialog({
             ))}
           </select>
         </label>
+        {OPTIONAL_FIELDS.map(([field, label]) => (
+          <label key={field}>
+            {label}
+            <select
+              onChange={(event) => setOptionalColumns((current) => ({
+                ...current,
+                [field]: event.target.value,
+              }))}
+              value={optionalColumns[field] ?? ""}
+            >
+              <option value="">연결하지 않음</option>
+              {headers.map((header) => (
+                <option key={header} value={header}>{header}</option>
+              ))}
+            </select>
+          </label>
+        ))}
         <label>
           저자 열
           <select
             onChange={(event) => setAuthorColumn(event.target.value)}
             value={authorColumn}
           >
+            <option value="">연결하지 않음</option>
             {headers.map((header) => (
               <option key={header} value={header}>
                 {header}
@@ -143,7 +186,7 @@ export function MappingDialog({
         </button>
         <button
           className="button button-primary"
-          disabled={applying || !titleColumn || !authorColumn}
+          disabled={applying || !titleColumn}
           onClick={() => void apply()}
           type="button"
         >

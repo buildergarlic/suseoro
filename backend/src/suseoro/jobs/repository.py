@@ -502,12 +502,18 @@ class JobRepository:
         history_projection = (
             (
                 "CASE WHEN evidence.confidence = 'EXACT' "
+                "AND evidence.result_updated_at = result.updated_at "
                 "THEN evidence.successful_rows ELSE result.processed_rows END "
                 "AS effective_processed_rows, "
                 "CASE WHEN evidence.confidence = 'EXACT' "
+                "AND evidence.result_updated_at = result.updated_at "
                 "THEN evidence.error_rows ELSE result.row_error_count END "
                 "AS effective_row_error_count, "
-                "COALESCE(evidence.confidence, history.confidence, 'EXACT') "
+                "CASE WHEN evidence.job_file_result_id IS NOT NULL THEN "
+                "CASE WHEN evidence.confidence = 'EXACT' "
+                "AND evidence.result_updated_at = result.updated_at "
+                "THEN 'EXACT' ELSE 'UNVERIFIED' END "
+                "ELSE COALESCE(history.confidence, 'EXACT') END "
                 "AS count_confidence"
             )
             if has_count_history and has_count_evidence

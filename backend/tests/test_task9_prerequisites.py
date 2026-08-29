@@ -385,7 +385,7 @@ def test_historical_upload_replay_sanitizes_nested_error_and_mapping_payload(
             {
                 "filename": "private.csv",
                 "status": "FAILED",
-                "source_id": first_body["items"][0]["source_id"],
+                "source_id": None,
                 "error": {
                     "code": "UNSUPPORTED_FILE_TYPE",
                     "message": (
