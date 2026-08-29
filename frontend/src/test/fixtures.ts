@@ -1,4 +1,5 @@
 import type { components } from "../api/types";
+import type { SuseoroApi } from "../api/client";
 
 type Schemas = components["schemas"];
 
@@ -17,71 +18,7 @@ export interface Versioned<T> {
   etag: string;
 }
 
-export interface FixtureApi {
-  getCurrentUser(): Promise<User>;
-  login(input: Schemas["LoginRequest"]): Promise<User>;
-  logout(): Promise<void>;
-  listWorkspaces(): Promise<Schemas["WorkspacePage"]>;
-  getWorkspace(workspaceId: string): Promise<Versioned<Workspace>>;
-  listSources(workspaceId: string): Promise<Schemas["SourcePage"]>;
-  listUploadRepairs(workspaceId: string): Promise<Schemas["UploadRepairPage"]>;
-  listWorkspaceJobs(
-    workspaceId: string,
-    filters?: { type?: string; status?: string; cursor?: string; limit?: number },
-  ): Promise<Schemas["JobPage"]>;
-  uploadSources(
-    workspaceId: string,
-    input: {
-      files: File[];
-      role: Schemas["DocumentRole"];
-      vendorScope?: string;
-      requestedStartLocalDate?: string;
-      requestedThroughLocalDate?: string;
-      repairObligationId?: string;
-      repairGeneration?: number;
-      confirmRepairConfiguration?: boolean;
-      replacementSourceId?: string;
-    },
-  ): Promise<Upload>;
-  getJob(jobId: string): Promise<Job>;
-  retryJob(jobId: string): Promise<Schemas["JobCommandResponse"]>;
-  cancelJob(jobId: string): Promise<Schemas["JobCommandResponse"]>;
-  parseSource(sourceId: string): Promise<Schemas["QueuedJobResponse"]>;
-  getSource(sourceId: string): Promise<Versioned<Source>>;
-  updateSourceMapping(
-    sourceId: string,
-    input: SourceMapping,
-    version: number,
-  ): Promise<Versioned<Source>>;
-  createComparisonJob(
-    workspaceId: string,
-    sourceDocumentIds: string[],
-    version: number,
-  ): Promise<Schemas["ComparisonJobResponse"]>;
-  listCandidates(
-    workspaceId: string,
-    filters: { outcome: string; search?: string; cursor?: string; limit?: number },
-  ): Promise<CandidatePage>;
-  getCandidate(candidateId: string, workspaceId: string): Promise<Versioned<Candidate>>;
-  lockCandidate(
-    candidateId: string,
-    workspaceId: string,
-  ): Promise<Schemas["CandidateLockResponse"]>;
-  updateCandidate(
-    candidateId: string,
-    input: {
-      workspace_id: string;
-      changes: CandidateChanges;
-      reason: string;
-    },
-    version: number,
-  ): Promise<Versioned<Schemas["CandidateMutationResponse"]>>;
-  requestApproval(
-    workspaceId: string,
-    input: Schemas["ApprovalRequest"],
-    version: number,
-  ): Promise<Schemas["ApprovalRequestResponse"]>;
-}
+export type FixtureApi = SuseoroApi;
 
 export class FixtureApiError extends Error {
   readonly status: number;
@@ -218,12 +155,22 @@ export function createFixtureApi(
         filename: file.name,
         status: "ACCEPTED",
         source_id: `source-${index + 1}`,
+        procurement_import_id: null,
         error: null,
         repair_obligation_id: null,
         repair_generation: null,
       })),
     }),
     getJob: async (_jobId) => idleJob,
+    listProcurementImports: async () => ({ items: [], next_cursor: null }),
+    composeProcurementImport: async (importId, version) => ({
+      import_id: importId,
+      kind: "QUOTE",
+      status: "IMPORTED",
+      result_id: "quote-1",
+      state: "QUOTE_REVIEW",
+      row_version: version + 1,
+    }),
     retryJob: async (jobId) => ({
       id: jobId,
       workspace_id: "workspace-draft",
@@ -305,7 +252,166 @@ export function createFixtureApi(
       sha256: "b".repeat(64),
       expected_total_won: 12_000,
       budget_won: input.budget_won,
+      candidate_collection_revision: input.candidate_collection_revision,
       state: "APPROVAL_PENDING",
+      row_version: version + 1,
+    }),
+    listApprovals: async () => ({ items: [], next_cursor: null }),
+    getApproval: async (revisionId) => ({
+      revision_id: revisionId,
+      revision_number: 1,
+      sha256: "b".repeat(64),
+      payload: {
+        budget_won: 12_000,
+        candidate_collection_revision: 0,
+        candidates: [],
+        expected_total_won: 12_000,
+      },
+      metadata: {
+        candidate_count: 0,
+        catalog_as_of_local_date: null,
+        unresolved_complete: true,
+        source_counts_verified: true,
+        auto_excluded_count: 0,
+        auto_exclusions: [],
+        previous_revision: {
+          revision_number: null,
+          added_count: 0,
+          removed_count: 0,
+          quantity_changed_count: 0,
+          price_changed_count: 0,
+        },
+        request_reason: "승인 요청",
+        requested_by_display_name: operator.display_name,
+        created_at: "2026-08-29T08:05:00.000000Z",
+        decision: null,
+        decision_reason: null,
+      },
+    }),
+    approveApproval: async (revisionId, _workspaceId, _reason, version) => ({
+      revision_id: revisionId,
+      decision: "APPROVED",
+      state: "APPROVED",
+      row_version: version + 1,
+    }),
+    requestApprovalChanges: async (revisionId, _workspaceId, _reason, version) => ({
+      revision_id: revisionId,
+      decision: "REJECTED",
+      state: "CHANGES_REQUESTED",
+      row_version: version + 1,
+    }),
+    listQuotes: async () => ({ items: [], next_cursor: null }),
+    getQuote: async (quoteId) => ({
+      quote_id: quoteId,
+      approval_revision_id: "approval-1",
+      vendor_name: "서점",
+      created_at: "2026-08-29T08:05:00.000000Z",
+      revision_number: 1,
+      state: "QUOTE_REVIEW",
+      row_version: 1,
+      total_won: 0,
+      list_total_won: 0,
+      discount_won: 0,
+      budget_overrun_won: 0,
+      out_of_stock_count: 0,
+      missing_price_count: 0,
+      list_mismatch_count: 0,
+      needs_review_count: 0,
+      unmatched_count: 0,
+      requires_reapproval: false,
+      reconciliation: { duplicate_isbns: [], price_conflicts: [] },
+      rows: [],
+    }),
+    createQuote: async (_workspaceId, _input, version) => ({
+      quote_id: "quote-1",
+      revision_number: 1,
+      state: "QUOTE_REVIEW",
+      row_version: version + 1,
+      total_won: 0,
+      list_total_won: 0,
+      discount_won: 0,
+      budget_overrun_won: 0,
+      out_of_stock_count: 0,
+      missing_price_count: 0,
+      list_mismatch_count: 0,
+      needs_review_count: 0,
+      unmatched_count: 0,
+      requires_reapproval: false,
+      reconciliation: { duplicate_isbns: [], price_conflicts: [] },
+      rows: [],
+    }),
+    getCurrentOrder: async () => ({ order: null }),
+    createOrder: async (_workspaceId, _input, version) => ({
+      status: "READY",
+      state: "ORDER_READY",
+      row_version: version + 1,
+      revision_id: "order-1",
+      revision_number: 1,
+      artifact_id: "artifact-1",
+      sha256: "c".repeat(64),
+      size_bytes: 100,
+      artifacts: [],
+      allocations: [],
+      validation_id: null,
+      diagnostics: null,
+      external_send_performed: false,
+    }),
+    downloadOrder: async (orderRevisionId) => ({
+      blob: new Blob(["order"]),
+      filename: `order-${orderRevisionId}.xlsx`,
+    }),
+    markOrderSent: async (_orderRevisionId, _workspaceId, _reason, version) => ({
+      transmission_id: "transmission-1",
+      state: "ORDER_SENT",
+      row_version: version + 1,
+      external_send_performed: false,
+    }),
+    listDeliveries: async () => ({
+      items: [],
+      next_cursor: null,
+      differences: [],
+      differences_truncated: false,
+    }),
+    listReceivingDifferences: async () => ({ items: [], next_cursor: null }),
+    getReceivingStatus: async () => ({
+      order_revision_id: null,
+      active_session_id: null,
+      delivery_count: 0,
+      ordered_quantity: 0,
+      delivered_quantity: 0,
+      scanned_quantity: 0,
+      unresolved_difference_count: 0,
+      can_complete: false,
+      blocking_reasons: ["전달한 발주 버전이 아직 없습니다."],
+      rows: [],
+    }),
+    createDelivery: async (_workspaceId, _input, version) => ({
+      delivery_batch_id: "delivery-1",
+      delivery_number: 1,
+      received_quantity: 0,
+      differences: [],
+      state: "RECEIVING",
+      row_version: version + 1,
+    }),
+    startScanSession: async (_workspaceId, _input, version) => ({
+      session_id: "scan-session-1",
+      state: "RECEIVING",
+      row_version: version + 1,
+    }),
+    recordScan: async (_sessionId, input) => ({
+      event_id: "scan-event-1",
+      code: "NORMAL",
+      isbn13: input.isbn.replaceAll("-", ""),
+      scanned_quantity: 1,
+      order_row_id: input.expected_order_row_id ?? null,
+    }),
+    setReceivingDisposition: async (differenceId, input, version) => ({
+      difference_id: differenceId,
+      disposition: input.disposition,
+      row_version: version + 1,
+    }),
+    completeReceiving: async (_workspaceId, _reason, version) => ({
+      state: "COMPLETED",
       row_version: version + 1,
     }),
     ...overrides,

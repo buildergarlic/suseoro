@@ -82,6 +82,7 @@ class UploadItem(PublicSchema):
     error: UploadItemError | None
     repair_obligation_id: str | None
     repair_generation: int | None
+    procurement_import_id: str | None
 
 
 class UploadResponse(PublicSchema):
@@ -218,6 +219,55 @@ class JobPage(PublicSchema):
     next_cursor: str | None
 
 
+class ProcurementImportProvenance(PublicSchema):
+    sheet: str | None
+    source_row: int
+
+
+class ProcurementImportRow(PublicSchema):
+    source_row_id: str
+    status: str
+    provenance: ProcurementImportProvenance
+    error: UploadItemError | None
+    result_row_id: str | None
+
+
+class ProcurementImportItem(PublicSchema):
+    import_id: str
+    kind: str
+    source_id: str
+    filename: str
+    vendor_name: str
+    target_revision_id: str
+    status: str
+    detected_format: str
+    parser_version: str
+    template_version: str | None
+    total_rows: int
+    processed_rows: int
+    row_error_count: int
+    count_confidence: str
+    mapping_required: MappingRequired | None
+    result_id: str | None
+    rows: list[ProcurementImportRow]
+    created_at: str
+    completed_at: str | None
+
+
+class ProcurementImportPage(PublicSchema):
+    items: list[ProcurementImportItem]
+    next_cursor: str | None
+
+
+class ProcurementImportComposeResponse(PublicSchema):
+    import_id: str
+    kind: str
+    status: str
+    result_id: str
+    state: str
+    row_version: int
+
+
 class CandidateResponse(PublicSchema):
     id: str
     workspace_id: str
@@ -282,6 +332,10 @@ class ApprovalSummary(PublicSchema):
     budget_won: int
     expected_total_won: int
     sha256: str
+    candidate_collection_revision: int
+    candidate_count: int
+    decision: str | None
+    request_reason: str
     created_at: str
 
 
@@ -291,9 +345,11 @@ class ApprovalPage(PublicSchema):
 
 
 class ApprovalCandidatePayload(PublicSchema):
+    approval_row_id: str
     author: str
     candidate_id: str
     isbn13: str | None
+    edition: str | None
     quantity: int
     title: str
     unit_price: int
@@ -301,6 +357,7 @@ class ApprovalCandidatePayload(PublicSchema):
 
 class ApprovalPayload(PublicSchema):
     budget_won: int
+    candidate_collection_revision: int
     candidates: list[ApprovalCandidatePayload]
     expected_total_won: int
 
@@ -310,6 +367,35 @@ class ApprovalDetailResponse(PublicSchema):
     revision_number: int
     sha256: str
     payload: ApprovalPayload
+    metadata: ApprovalReviewMetadata
+
+
+class ApprovalExclusionSummary(PublicSchema):
+    reason: str
+    count: int
+
+
+class ApprovalPreviousRevision(PublicSchema):
+    revision_number: int | None
+    added_count: int
+    removed_count: int
+    quantity_changed_count: int
+    price_changed_count: int
+
+
+class ApprovalReviewMetadata(PublicSchema):
+    candidate_count: int
+    catalog_as_of_local_date: str | None
+    unresolved_complete: bool
+    source_counts_verified: bool
+    auto_excluded_count: int
+    auto_exclusions: list[ApprovalExclusionSummary]
+    previous_revision: ApprovalPreviousRevision
+    request_reason: str
+    requested_by_display_name: str
+    created_at: str
+    decision: str | None
+    decision_reason: str | None
 
 
 class ApprovalRequestResponse(PublicSchema):
@@ -318,6 +404,7 @@ class ApprovalRequestResponse(PublicSchema):
     sha256: str
     expected_total_won: int
     budget_won: int
+    candidate_collection_revision: int
     state: str
     row_version: int
 
@@ -367,9 +454,17 @@ class QuoteRowResponse(PublicSchema):
 
 class QuoteSummary(PublicSchema):
     id: str
+    approval_revision_id: str
     vendor_name: str
     total_won: int
+    list_total_won: int
+    discount_won: int
     budget_overrun_won: int
+    out_of_stock_count: int
+    missing_price_count: int
+    list_mismatch_count: int
+    needs_review_count: int
+    unmatched_count: int
     requires_reapproval: bool
     reconciliation: QuoteReconciliation
     created_at: str
@@ -399,6 +494,12 @@ class QuoteResponse(PublicSchema):
     rows: list[QuoteRowResponse]
 
 
+class QuoteDetailResponse(QuoteResponse):
+    approval_revision_id: str
+    vendor_name: str
+    created_at: str
+
+
 class QuoteMatchResponse(PublicSchema):
     quote_id: str
     parent_quote_id: str
@@ -412,7 +513,6 @@ class OrderArtifact(PublicSchema):
     vendor_name: str
     quote_id: str
     artifact_id: str
-    path: str
     sha256: str
     size_bytes: int
 
@@ -447,7 +547,6 @@ class OrderResponse(PublicSchema):
     revision_id: str | None = None
     revision_number: int | None = None
     artifact_id: str | None = None
-    path: str | None = None
     sha256: str | None = None
     size_bytes: int | None = None
     artifacts: list[OrderArtifact] | None = None
@@ -455,6 +554,46 @@ class OrderResponse(PublicSchema):
     validation_id: str | None = None
     diagnostics: OrderDiagnostics | None = None
     external_send_performed: bool | None = None
+
+
+class CurrentOrderArtifact(PublicSchema):
+    vendor_name: str
+    quote_id: str
+    artifact_id: str
+    sha256: str
+    size_bytes: int
+
+
+class CurrentOrderRow(PublicSchema):
+    id: str
+    isbn13: str | None
+    title: str
+    author: str
+    publisher: str | None
+    edition: str | None
+    quantity: int
+    unit_price: int
+    line_total_won: int
+
+
+class CurrentOrder(PublicSchema):
+    revision_id: str
+    revision_number: int
+    approval_revision_id: str
+    quote_id: str
+    vendor_name: str
+    budget_won: int
+    total_won: int
+    difference_won: int
+    state: str
+    row_version: int
+    sent: bool
+    artifacts: list[CurrentOrderArtifact]
+    rows: list[CurrentOrderRow]
+
+
+class CurrentOrderResponse(PublicSchema):
+    order: CurrentOrder | None
 
 
 class OrderSentResponse(PublicSchema):
@@ -477,6 +616,7 @@ class ReceivingDifferenceDetails(PublicSchema):
     received: str | int | None = None
     isbn13: str | None = None
     title: str | None = None
+    edition: str | None = None
     scanned: int | None = None
     scanned_quantity: int | None = None
 
@@ -547,6 +687,30 @@ class DifferenceDispositionResponse(PublicSchema):
     difference_id: str
     disposition: str
     row_version: int
+
+
+class ReceivingProgressRow(PublicSchema):
+    order_row_id: str
+    isbn13: str | None
+    title: str
+    edition: str | None
+    ordered_quantity: int
+    delivered_quantity: int
+    scanned_quantity: int
+    unit_price: int
+
+
+class ReceivingStatusResponse(PublicSchema):
+    order_revision_id: str | None
+    active_session_id: str | None
+    delivery_count: int
+    ordered_quantity: int
+    delivered_quantity: int
+    scanned_quantity: int
+    unresolved_difference_count: int
+    can_complete: bool
+    blocking_reasons: list[str]
+    rows: list[ReceivingProgressRow]
 
 
 class AuditSnapshot(PublicSchema):
@@ -672,6 +836,8 @@ OPERATION_RESPONSE_MODELS: dict[str, type[BaseModel]] = {
     "transitionWorkspace": WorkspaceStateResponse,
     "createComparisonJob": ComparisonJobResponse,
     "uploadSources": UploadResponse,
+    "listProcurementImports": ProcurementImportPage,
+    "composeProcurementImport": ProcurementImportComposeResponse,
     "listUploadRepairs": UploadRepairPage,
     "listSources": SourcePage,
     "listWorkspaceJobs": JobPage,
@@ -697,12 +863,15 @@ OPERATION_RESPONSE_MODELS: dict[str, type[BaseModel]] = {
     "requestApprovalChanges": ApprovalDecisionResponse,
     "commentApproval": ApprovalCommentResponse,
     "listQuotes": QuotePage,
+    "getQuote": QuoteDetailResponse,
     "createQuote": QuoteResponse,
     "matchQuoteRow": QuoteMatchResponse,
     "createOrder": OrderResponse,
+    "getCurrentOrder": CurrentOrderResponse,
     "markOrderSent": OrderSentResponse,
     "listDeliveries": DeliveryPage,
     "listReceivingDifferences": ReceivingDifferencePage,
+    "getReceivingStatus": ReceivingStatusResponse,
     "createDelivery": DeliveryResponse,
     "startScanSession": ScanSessionResponse,
     "recordScan": ScanResponse,

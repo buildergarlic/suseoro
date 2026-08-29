@@ -7,9 +7,22 @@ export type WorkroomMode =
   | "APPROVAL"
   | "RECEIVING";
 
+export type WorkroomAction =
+  | "APPROVE_LIST"
+  | "REQUEST_CHANGES"
+  | "ADD_QUOTE"
+  | "SELECT_QUOTE"
+  | "DOWNLOAD_ORDER"
+  | "MARK_ORDER_SENT"
+  | "ADD_DELIVERY"
+  | "START_SCAN"
+  | "SCAN_BOOK"
+  | "SET_DISPOSITION"
+  | "COMPLETE_RECEIVING";
+
 interface WorkflowPolicy {
   label: string;
-  stage: 0 | 1 | 2;
+  stage: 0 | 1 | 2 | 3;
   mode: WorkroomMode;
   owner: "담당자" | "검토자" | "자동 처리" | "완료";
   operatorPriority: number | null;
@@ -99,7 +112,7 @@ const POLICIES: Record<string, WorkflowPolicy> = {
   },
   COMPLETED: {
     label: "완료",
-    stage: 2,
+    stage: 3,
     mode: "RECEIVING",
     owner: "완료",
     operatorPriority: null,
@@ -115,6 +128,25 @@ const FALLBACK: WorkflowPolicy = {
   operatorPriority: null,
   reviewerPriority: null,
 };
+
+const ACTION_STATES: Record<WorkroomAction, readonly string[]> = {
+  APPROVE_LIST: ["APPROVAL_PENDING"],
+  REQUEST_CHANGES: ["APPROVAL_PENDING"],
+  ADD_QUOTE: ["APPROVED", "QUOTE_REVIEW"],
+  SELECT_QUOTE: ["QUOTE_REVIEW"],
+  DOWNLOAD_ORDER: ["ORDER_READY"],
+  MARK_ORDER_SENT: ["ORDER_READY"],
+  ADD_DELIVERY: ["ORDER_SENT", "RECEIVING"],
+  START_SCAN: ["ORDER_SENT", "RECEIVING"],
+  SCAN_BOOK: ["RECEIVING"],
+  SET_DISPOSITION: ["RECEIVING"],
+  COMPLETE_RECEIVING: ["RECEIVING"],
+};
+
+const REVIEWER_ACTIONS = new Set<WorkroomAction>([
+  "APPROVE_LIST",
+  "REQUEST_CHANGES",
+]);
 
 export function workflowPolicy(status: string): WorkflowPolicy {
   return POLICIES[status] ?? FALLBACK;
@@ -135,4 +167,13 @@ export function primaryPriority(user: User, status: string): number | null {
 
 export function canOperate(user: User): boolean {
   return user.roles.includes("OPERATOR");
+}
+
+export function canPerformAction(
+  user: User,
+  status: string,
+  action: WorkroomAction,
+): boolean {
+  const role = REVIEWER_ACTIONS.has(action) ? "REVIEWER" : "OPERATOR";
+  return user.roles.includes(role) && ACTION_STATES[action].includes(status);
 }

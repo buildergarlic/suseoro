@@ -18,6 +18,7 @@ def _approved(fixture):
         actor_id=fixture.operator_id,
         actor_roles=("OPERATOR",),
         workspace_version=fixture.workspace_version(),
+        candidate_collection_revision=fixture.candidate_collection_revision(),
         budget_won=40_000,
         reason="승인 요청",
         idempotency_key="request",

@@ -24,6 +24,9 @@ class CanonicalField(str, Enum):
     PUBLISHER = "publisher"
     QUANTITY = "quantity"
     UNIT_PRICE = "unit_price"
+    LIST_PRICE = "list_price"
+    EDITION = "edition"
+    OUT_OF_STOCK = "out_of_stock"
     REGISTRATION_NUMBER = "registration_number"
     CALL_NUMBER = "call_number"
 

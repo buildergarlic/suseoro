@@ -34,6 +34,17 @@ OUTSIDER_ID = "550e8400-e29b-41d4-a716-446655440205"
 NOW = "2026-08-28T12:34:56Z"
 
 
+def _workspace_response(name: str) -> dict[str, object]:
+    return {
+        "id": WORKSPACE_ID,
+        "name": name,
+        "status": "DRAFT",
+        "row_version": 1,
+        "created_at": NOW,
+        "updated_at": NOW,
+    }
+
+
 def _seed_database(settings: Settings) -> None:
     with connect(settings.database_path) as connection:
         apply_migrations(connection)
@@ -122,7 +133,7 @@ def test_same_idempotency_key_and_request_returns_completed_response(
             route="POST /api/v2/workspaces",
             key="client-key-1",
             status=201,
-            body={"id": WORKSPACE_ID, "name": "Admissions"},
+            body=_workspace_response("Admissions"),
         )
         replay = reserve_idempotency_key(
             connection,
@@ -135,7 +146,7 @@ def test_same_idempotency_key_and_request_returns_completed_response(
 
     assert replay is not None
     assert replay.status == 201
-    assert replay.body == {"id": WORKSPACE_ID, "name": "Admissions"}
+    assert replay.body == _workspace_response("Admissions")
 
 
 def test_same_idempotency_key_with_different_request_is_409(data_dir: Path) -> None:
@@ -201,7 +212,7 @@ def test_concurrent_duplicate_reservation_returns_in_progress_then_replays(
             route="POST /api/v2/workspaces",
             key="concurrent-key",
             status=201,
-            body={"id": WORKSPACE_ID},
+            body=_workspace_response("Concurrent"),
         )
         first_connection.commit()
         replay = reserve_idempotency_key(
@@ -220,7 +231,7 @@ def test_concurrent_duplicate_reservation_returns_in_progress_then_replays(
 
     assert replay is not None
     assert replay.status == 201
-    assert replay.body == {"id": WORKSPACE_ID}
+    assert replay.body == _workspace_response("Concurrent")
 
 
 def test_if_match_dependency_requires_and_parses_integer_etags() -> None:

@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/v2", tags=["approvals"])
 class ApprovalRequest(BaseModel):
     budget_won: int = Field(ge=0)
     reason: str = Field(min_length=1, max_length=500)
+    candidate_collection_revision: int = Field(ge=0)
 
 
 class ApprovalAction(BaseModel):
@@ -80,10 +81,23 @@ def list_approvals(
             "budget_won": row["budget_won"],
             "expected_total_won": row["expected_total_won"],
             "sha256": row["sha256"],
+            "candidate_collection_revision": row["candidate_collection_revision"],
+            "candidate_count": connection.execute(
+                "SELECT COUNT(*) FROM approval_rows WHERE approval_revision_id = ?",
+                (row["id"],),
+            ).fetchone()[0],
+            "decision": connection.execute(
+                "SELECT decision FROM approval_decisions WHERE approval_revision_id = ?",
+                (row["id"],),
+            ).fetchone(),
+            "request_reason": row["reason"],
             "created_at": row["created_at"],
         }
         for row in rows
     ]
+    for item in items:
+        decision = item["decision"]
+        item["decision"] = decision["decision"] if decision is not None else None
     return page(
         items,
         limit=limit,
@@ -130,6 +144,7 @@ def request_approval(
         actor_id=user.id,
         actor_roles=user.roles,
         workspace_version=workspace_version,
+        candidate_collection_revision=payload.candidate_collection_revision,
         budget_won=payload.budget_won,
         reason=payload.reason,
         idempotency_key=idempotency_key,

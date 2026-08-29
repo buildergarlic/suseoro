@@ -431,6 +431,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/procurement-imports/{import_id}/compose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 파싱된 파일을 견적·납품에 반영하기 */
+        post: operations["composeProcurementImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/quotes/{quote_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 견적 자세히 보기 */
+        get: operations["getQuote"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/quotes/{quote_id}/matches": {
         parameters: {
             query?: never;
@@ -756,6 +790,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/workspaces/{workspace_id}/orders/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 현재 발주 버전 보기 */
+        get: operations["getCurrentOrder"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/workspaces/{workspace_id}/procurement-imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 견적·납품 파일 처리 상태 보기 */
+        get: operations["listProcurementImports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/workspaces/{workspace_id}/quotes": {
         parameters: {
             query?: never;
@@ -800,6 +868,23 @@ export interface paths {
         };
         /** 납품 차이 목록을 조건별로 보기 */
         get: operations["listReceivingDifferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/workspaces/{workspace_id}/receiving/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 납품 검수 진행 상황 보기 */
+        get: operations["getReceivingStatus"];
         put?: never;
         post?: never;
         delete?: never;
@@ -931,10 +1016,14 @@ export interface components {
         };
         /** ApprovalCandidatePayload */
         ApprovalCandidatePayload: {
+            /** Approval Row Id */
+            approval_row_id: string;
             /** Author */
             author: string;
             /** Candidate Id */
             candidate_id: string;
+            /** Edition */
+            edition: string | null;
             /** Isbn13 */
             isbn13: string | null;
             /** Quantity */
@@ -979,6 +1068,7 @@ export interface components {
         };
         /** ApprovalDetailResponse */
         ApprovalDetailResponse: {
+            metadata: components["schemas"]["ApprovalReviewMetadata"];
             payload: components["schemas"]["ApprovalPayload"];
             /** Revision Id */
             revision_id: string;
@@ -986,6 +1076,13 @@ export interface components {
             revision_number: number;
             /** Sha256 */
             sha256: string;
+        };
+        /** ApprovalExclusionSummary */
+        ApprovalExclusionSummary: {
+            /** Count */
+            count: number;
+            /** Reason */
+            reason: string;
         };
         /** ApprovalPage */
         ApprovalPage: {
@@ -998,15 +1095,32 @@ export interface components {
         ApprovalPayload: {
             /** Budget Won */
             budget_won: number;
+            /** Candidate Collection Revision */
+            candidate_collection_revision: number;
             /** Candidates */
             candidates: components["schemas"]["ApprovalCandidatePayload"][];
             /** Expected Total Won */
             expected_total_won: number;
         };
+        /** ApprovalPreviousRevision */
+        ApprovalPreviousRevision: {
+            /** Added Count */
+            added_count: number;
+            /** Price Changed Count */
+            price_changed_count: number;
+            /** Quantity Changed Count */
+            quantity_changed_count: number;
+            /** Removed Count */
+            removed_count: number;
+            /** Revision Number */
+            revision_number: number | null;
+        };
         /** ApprovalRequest */
         ApprovalRequest: {
             /** Budget Won */
             budget_won: number;
+            /** Candidate Collection Revision */
+            candidate_collection_revision: number;
             /** Reason */
             reason: string;
         };
@@ -1014,6 +1128,8 @@ export interface components {
         ApprovalRequestResponse: {
             /** Budget Won */
             budget_won: number;
+            /** Candidate Collection Revision */
+            candidate_collection_revision: number;
             /** Expected Total Won */
             expected_total_won: number;
             /** Revision Id */
@@ -1027,16 +1143,50 @@ export interface components {
             /** State */
             state: string;
         };
+        /** ApprovalReviewMetadata */
+        ApprovalReviewMetadata: {
+            /** Auto Excluded Count */
+            auto_excluded_count: number;
+            /** Auto Exclusions */
+            auto_exclusions: components["schemas"]["ApprovalExclusionSummary"][];
+            /** Candidate Count */
+            candidate_count: number;
+            /** Catalog As Of Local Date */
+            catalog_as_of_local_date: string | null;
+            /** Created At */
+            created_at: string;
+            /** Decision */
+            decision: string | null;
+            /** Decision Reason */
+            decision_reason: string | null;
+            previous_revision: components["schemas"]["ApprovalPreviousRevision"];
+            /** Request Reason */
+            request_reason: string;
+            /** Requested By Display Name */
+            requested_by_display_name: string;
+            /** Source Counts Verified */
+            source_counts_verified: boolean;
+            /** Unresolved Complete */
+            unresolved_complete: boolean;
+        };
         /** ApprovalSummary */
         ApprovalSummary: {
             /** Budget Won */
             budget_won: number;
+            /** Candidate Collection Revision */
+            candidate_collection_revision: number;
+            /** Candidate Count */
+            candidate_count: number;
             /** Created At */
             created_at: string;
+            /** Decision */
+            decision: string | null;
             /** Expected Total Won */
             expected_total_won: number;
             /** Id */
             id: string;
+            /** Request Reason */
+            request_reason: string;
             /** Revision Number */
             revision_number: number;
             /** Sha256 */
@@ -1121,6 +1271,10 @@ export interface components {
             confirm_repair_configuration: boolean;
             /** Files */
             files: string[];
+            /** Procurement Kind */
+            procurement_kind?: string | null;
+            /** Reason */
+            reason?: string | null;
             /** Repair Generation */
             repair_generation?: number | null;
             /** Repair Obligation Id */
@@ -1133,6 +1287,8 @@ export interface components {
             requested_through_local_date?: string | null;
             /** @default UNKNOWN */
             role: components["schemas"]["DocumentRole"];
+            /** Target Revision Id */
+            target_revision_id?: string | null;
             /** Vendor Scope */
             vendor_scope?: string | null;
         };
@@ -1350,6 +1506,73 @@ export interface components {
             status: string;
             /** Workspace Status */
             workspace_status: string;
+        };
+        /** CurrentOrder */
+        CurrentOrder: {
+            /** Approval Revision Id */
+            approval_revision_id: string;
+            /** Artifacts */
+            artifacts: components["schemas"]["CurrentOrderArtifact"][];
+            /** Budget Won */
+            budget_won: number;
+            /** Difference Won */
+            difference_won: number;
+            /** Quote Id */
+            quote_id: string;
+            /** Revision Id */
+            revision_id: string;
+            /** Revision Number */
+            revision_number: number;
+            /** Row Version */
+            row_version: number;
+            /** Rows */
+            rows: components["schemas"]["CurrentOrderRow"][];
+            /** Sent */
+            sent: boolean;
+            /** State */
+            state: string;
+            /** Total Won */
+            total_won: number;
+            /** Vendor Name */
+            vendor_name: string;
+        };
+        /** CurrentOrderArtifact */
+        CurrentOrderArtifact: {
+            /** Artifact Id */
+            artifact_id: string;
+            /** Quote Id */
+            quote_id: string;
+            /** Sha256 */
+            sha256: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Vendor Name */
+            vendor_name: string;
+        };
+        /** CurrentOrderResponse */
+        CurrentOrderResponse: {
+            order: components["schemas"]["CurrentOrder"] | null;
+        };
+        /** CurrentOrderRow */
+        CurrentOrderRow: {
+            /** Author */
+            author: string;
+            /** Edition */
+            edition: string | null;
+            /** Id */
+            id: string;
+            /** Isbn13 */
+            isbn13: string | null;
+            /** Line Total Won */
+            line_total_won: number;
+            /** Publisher */
+            publisher: string | null;
+            /** Quantity */
+            quantity: number;
+            /** Title */
+            title: string;
+            /** Unit Price */
+            unit_price: number;
         };
         /** DeliveryCreate */
         DeliveryCreate: {
@@ -1633,8 +1856,6 @@ export interface components {
         OrderArtifact: {
             /** Artifact Id */
             artifact_id: string;
-            /** Path */
-            path: string;
             /** Quote Id */
             quote_id: string;
             /** Sha256 */
@@ -1707,11 +1928,6 @@ export interface components {
              */
             external_send_performed: boolean | null;
             /**
-             * Path
-             * @default null
-             */
-            path: string | null;
-            /**
              * Revision Id
              * @default null
              */
@@ -1761,6 +1977,86 @@ export interface components {
             /** Transmission Id */
             transmission_id: string;
         };
+        /** ProcurementImportComposeResponse */
+        ProcurementImportComposeResponse: {
+            /** Import Id */
+            import_id: string;
+            /** Kind */
+            kind: string;
+            /** Result Id */
+            result_id: string;
+            /** Row Version */
+            row_version: number;
+            /** State */
+            state: string;
+            /** Status */
+            status: string;
+        };
+        /** ProcurementImportItem */
+        ProcurementImportItem: {
+            /** Completed At */
+            completed_at: string | null;
+            /** Count Confidence */
+            count_confidence: string;
+            /** Created At */
+            created_at: string;
+            /** Detected Format */
+            detected_format: string;
+            /** Filename */
+            filename: string;
+            /** Import Id */
+            import_id: string;
+            /** Kind */
+            kind: string;
+            mapping_required: components["schemas"]["MappingRequired"] | null;
+            /** Parser Version */
+            parser_version: string;
+            /** Processed Rows */
+            processed_rows: number;
+            /** Result Id */
+            result_id: string | null;
+            /** Row Error Count */
+            row_error_count: number;
+            /** Rows */
+            rows: components["schemas"]["ProcurementImportRow"][];
+            /** Source Id */
+            source_id: string;
+            /** Status */
+            status: string;
+            /** Target Revision Id */
+            target_revision_id: string;
+            /** Template Version */
+            template_version: string | null;
+            /** Total Rows */
+            total_rows: number;
+            /** Vendor Name */
+            vendor_name: string;
+        };
+        /** ProcurementImportPage */
+        ProcurementImportPage: {
+            /** Items */
+            items: components["schemas"]["ProcurementImportItem"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** ProcurementImportProvenance */
+        ProcurementImportProvenance: {
+            /** Sheet */
+            sheet: string | null;
+            /** Source Row */
+            source_row: number;
+        };
+        /** ProcurementImportRow */
+        ProcurementImportRow: {
+            error: components["schemas"]["UploadItemError"] | null;
+            provenance: components["schemas"]["ProcurementImportProvenance"];
+            /** Result Row Id */
+            result_row_id: string | null;
+            /** Source Row Id */
+            source_row_id: string;
+            /** Status */
+            status: string;
+        };
         /** QueuedJobResponse */
         QueuedJobResponse: {
             /** Job Id */
@@ -1776,6 +2072,46 @@ export interface components {
             reason: string;
             /** Rows */
             rows: components["schemas"]["QuoteRowInput"][];
+            /** Vendor Name */
+            vendor_name: string;
+        };
+        /** QuoteDetailResponse */
+        QuoteDetailResponse: {
+            /** Approval Revision Id */
+            approval_revision_id: string;
+            /** Budget Overrun Won */
+            budget_overrun_won: number;
+            /** Created At */
+            created_at: string;
+            /** Discount Won */
+            discount_won: number;
+            /** List Mismatch Count */
+            list_mismatch_count: number;
+            /** List Total Won */
+            list_total_won: number;
+            /** Missing Price Count */
+            missing_price_count: number;
+            /** Needs Review Count */
+            needs_review_count: number;
+            /** Out Of Stock Count */
+            out_of_stock_count: number;
+            /** Quote Id */
+            quote_id: string;
+            reconciliation: components["schemas"]["QuoteReconciliation"];
+            /** Requires Reapproval */
+            requires_reapproval: boolean;
+            /** Revision Number */
+            revision_number: number;
+            /** Row Version */
+            row_version: number;
+            /** Rows */
+            rows: components["schemas"]["QuoteRowResponse"][];
+            /** State */
+            state: string;
+            /** Total Won */
+            total_won: number;
+            /** Unmatched Count */
+            unmatched_count: number;
             /** Vendor Name */
             vendor_name: string;
         };
@@ -1917,17 +2253,33 @@ export interface components {
         };
         /** QuoteSummary */
         QuoteSummary: {
+            /** Approval Revision Id */
+            approval_revision_id: string;
             /** Budget Overrun Won */
             budget_overrun_won: number;
             /** Created At */
             created_at: string;
+            /** Discount Won */
+            discount_won: number;
             /** Id */
             id: string;
+            /** List Mismatch Count */
+            list_mismatch_count: number;
+            /** List Total Won */
+            list_total_won: number;
+            /** Missing Price Count */
+            missing_price_count: number;
+            /** Needs Review Count */
+            needs_review_count: number;
+            /** Out Of Stock Count */
+            out_of_stock_count: number;
             reconciliation: components["schemas"]["QuoteReconciliation"];
             /** Requires Reapproval */
             requires_reapproval: boolean;
             /** Total Won */
             total_won: number;
+            /** Unmatched Count */
+            unmatched_count: number;
             /** Vendor Name */
             vendor_name: string;
         };
@@ -1958,6 +2310,11 @@ export interface components {
         };
         /** ReceivingDifferenceDetails */
         ReceivingDifferenceDetails: {
+            /**
+             * Edition
+             * @default null
+             */
+            edition: string | null;
             /**
              * Expected
              * @default null
@@ -1995,6 +2352,48 @@ export interface components {
             items: components["schemas"]["ReceivingDifference"][];
             /** Next Cursor */
             next_cursor: string | null;
+        };
+        /** ReceivingProgressRow */
+        ReceivingProgressRow: {
+            /** Delivered Quantity */
+            delivered_quantity: number;
+            /** Edition */
+            edition: string | null;
+            /** Isbn13 */
+            isbn13: string | null;
+            /** Order Row Id */
+            order_row_id: string;
+            /** Ordered Quantity */
+            ordered_quantity: number;
+            /** Scanned Quantity */
+            scanned_quantity: number;
+            /** Title */
+            title: string;
+            /** Unit Price */
+            unit_price: number;
+        };
+        /** ReceivingStatusResponse */
+        ReceivingStatusResponse: {
+            /** Active Session Id */
+            active_session_id: string | null;
+            /** Blocking Reasons */
+            blocking_reasons: string[];
+            /** Can Complete */
+            can_complete: boolean;
+            /** Delivered Quantity */
+            delivered_quantity: number;
+            /** Delivery Count */
+            delivery_count: number;
+            /** Order Revision Id */
+            order_revision_id: string | null;
+            /** Ordered Quantity */
+            ordered_quantity: number;
+            /** Rows */
+            rows: components["schemas"]["ReceivingProgressRow"][];
+            /** Scanned Quantity */
+            scanned_quantity: number;
+            /** Unresolved Difference Count */
+            unresolved_difference_count: number;
         };
         /** RestoreRequest */
         RestoreRequest: {
@@ -2126,6 +2525,8 @@ export interface components {
             error: components["schemas"]["UploadItemError"] | null;
             /** Filename */
             filename: string;
+            /** Procurement Import Id */
+            procurement_import_id: string | null;
             /** Repair Generation */
             repair_generation: number | null;
             /** Repair Obligation Id */
@@ -4661,6 +5062,177 @@ export interface operations {
             };
         };
     };
+    composeProcurementImport: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+                "Idempotency-Key": string;
+                "X-Request-ID": string;
+                /** @description CSRF 방지 토큰 */
+                "X-CSRF-Token": string;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: {
+                suseoro_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcurementImportComposeResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    getQuote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                quote_id: string;
+            };
+            cookie?: {
+                suseoro_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuoteDetailResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
     matchQuoteRow: {
         parameters: {
             query?: never;
@@ -6501,6 +7073,126 @@ export interface operations {
             };
         };
     };
+    getCurrentOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: {
+                suseoro_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurrentOrderResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    listProcurementImports: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: {
+                suseoro_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcurementImportPage"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
     listQuotes: {
         parameters: {
             query?: {
@@ -6820,6 +7512,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReceivingDifferencePage"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description 구조화된 오류 */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    getReceivingStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: {
+                suseoro_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReceivingStatusResponse"];
                 };
             };
             /** @description 구조화된 오류 */

@@ -921,6 +921,7 @@ def test_multipart_upload_streams_each_file_and_keeps_partial_success(
         "error",
         "repair_obligation_id",
         "repair_generation",
+        "procurement_import_id",
     }
     assert set(body["items"][0]) == upload_item_fields
     assert set(body["items"][1]) == upload_item_fields
@@ -3190,6 +3191,7 @@ def test_openapi_common_error_statuses_follow_runtime_dependency_surfaces(
         "startScanSession",
         "setReceivingDisposition",
         "completeReceiving",
+        "composeProcurementImport",
     }
     idempotent_operations = {
         "login",
@@ -3222,6 +3224,7 @@ def test_openapi_common_error_statuses_follow_runtime_dependency_surfaces(
         "recordScan",
         "setReceivingDisposition",
         "completeReceiving",
+        "composeProcurementImport",
         "runV1Migration",
         "activateV1CatalogCandidate",
         "createBackup",

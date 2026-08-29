@@ -174,6 +174,10 @@
       "ApprovalCandidatePayload": {
         "additionalProperties": false,
         "properties": {
+          "approval_row_id": {
+            "title": "Approval Row Id",
+            "type": "string"
+          },
           "author": {
             "title": "Author",
             "type": "string"
@@ -181,6 +185,17 @@
           "candidate_id": {
             "title": "Candidate Id",
             "type": "string"
+          },
+          "edition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edition"
           },
           "isbn13": {
             "anyOf": [
@@ -207,9 +222,11 @@
           }
         },
         "required": [
+          "approval_row_id",
           "author",
           "candidate_id",
           "isbn13",
+          "edition",
           "quantity",
           "title",
           "unit_price"
@@ -310,6 +327,9 @@
       "ApprovalDetailResponse": {
         "additionalProperties": false,
         "properties": {
+          "metadata": {
+            "$ref": "#/components/schemas/ApprovalReviewMetadata"
+          },
           "payload": {
             "$ref": "#/components/schemas/ApprovalPayload"
           },
@@ -330,9 +350,29 @@
           "revision_id",
           "revision_number",
           "sha256",
-          "payload"
+          "payload",
+          "metadata"
         ],
         "title": "ApprovalDetailResponse",
+        "type": "object"
+      },
+      "ApprovalExclusionSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "count"
+        ],
+        "title": "ApprovalExclusionSummary",
         "type": "object"
       },
       "ApprovalPage": {
@@ -371,6 +411,10 @@
             "title": "Budget Won",
             "type": "integer"
           },
+          "candidate_collection_revision": {
+            "title": "Candidate Collection Revision",
+            "type": "integer"
+          },
           "candidates": {
             "items": {
               "$ref": "#/components/schemas/ApprovalCandidatePayload"
@@ -385,10 +429,52 @@
         },
         "required": [
           "budget_won",
+          "candidate_collection_revision",
           "candidates",
           "expected_total_won"
         ],
         "title": "ApprovalPayload",
+        "type": "object"
+      },
+      "ApprovalPreviousRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "added_count": {
+            "title": "Added Count",
+            "type": "integer"
+          },
+          "price_changed_count": {
+            "title": "Price Changed Count",
+            "type": "integer"
+          },
+          "quantity_changed_count": {
+            "title": "Quantity Changed Count",
+            "type": "integer"
+          },
+          "removed_count": {
+            "title": "Removed Count",
+            "type": "integer"
+          },
+          "revision_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Number"
+          }
+        },
+        "required": [
+          "revision_number",
+          "added_count",
+          "removed_count",
+          "quantity_changed_count",
+          "price_changed_count"
+        ],
+        "title": "ApprovalPreviousRevision",
         "type": "object"
       },
       "ApprovalRequest": {
@@ -396,6 +482,11 @@
           "budget_won": {
             "minimum": 0.0,
             "title": "Budget Won",
+            "type": "integer"
+          },
+          "candidate_collection_revision": {
+            "minimum": 0.0,
+            "title": "Candidate Collection Revision",
             "type": "integer"
           },
           "reason": {
@@ -407,7 +498,8 @@
         },
         "required": [
           "budget_won",
-          "reason"
+          "reason",
+          "candidate_collection_revision"
         ],
         "title": "ApprovalRequest",
         "type": "object"
@@ -417,6 +509,10 @@
         "properties": {
           "budget_won": {
             "title": "Budget Won",
+            "type": "integer"
+          },
+          "candidate_collection_revision": {
+            "title": "Candidate Collection Revision",
             "type": "integer"
           },
           "expected_total_won": {
@@ -450,10 +546,103 @@
           "sha256",
           "expected_total_won",
           "budget_won",
+          "candidate_collection_revision",
           "state",
           "row_version"
         ],
         "title": "ApprovalRequestResponse",
+        "type": "object"
+      },
+      "ApprovalReviewMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_excluded_count": {
+            "title": "Auto Excluded Count",
+            "type": "integer"
+          },
+          "auto_exclusions": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalExclusionSummary"
+            },
+            "title": "Auto Exclusions",
+            "type": "array"
+          },
+          "candidate_count": {
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "catalog_as_of_local_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog As Of Local Date"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Reason"
+          },
+          "previous_revision": {
+            "$ref": "#/components/schemas/ApprovalPreviousRevision"
+          },
+          "request_reason": {
+            "title": "Request Reason",
+            "type": "string"
+          },
+          "requested_by_display_name": {
+            "title": "Requested By Display Name",
+            "type": "string"
+          },
+          "source_counts_verified": {
+            "title": "Source Counts Verified",
+            "type": "boolean"
+          },
+          "unresolved_complete": {
+            "title": "Unresolved Complete",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "candidate_count",
+          "catalog_as_of_local_date",
+          "unresolved_complete",
+          "source_counts_verified",
+          "auto_excluded_count",
+          "auto_exclusions",
+          "previous_revision",
+          "request_reason",
+          "requested_by_display_name",
+          "created_at",
+          "decision",
+          "decision_reason"
+        ],
+        "title": "ApprovalReviewMetadata",
         "type": "object"
       },
       "ApprovalSummary": {
@@ -463,9 +652,28 @@
             "title": "Budget Won",
             "type": "integer"
           },
+          "candidate_collection_revision": {
+            "title": "Candidate Collection Revision",
+            "type": "integer"
+          },
+          "candidate_count": {
+            "title": "Candidate Count",
+            "type": "integer"
+          },
           "created_at": {
             "title": "Created At",
             "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
           },
           "expected_total_won": {
             "title": "Expected Total Won",
@@ -473,6 +681,10 @@
           },
           "id": {
             "title": "Id",
+            "type": "string"
+          },
+          "request_reason": {
+            "title": "Request Reason",
             "type": "string"
           },
           "revision_number": {
@@ -490,6 +702,10 @@
           "budget_won",
           "expected_total_won",
           "sha256",
+          "candidate_collection_revision",
+          "candidate_count",
+          "decision",
+          "request_reason",
           "created_at"
         ],
         "title": "ApprovalSummary",
@@ -742,6 +958,28 @@
             "title": "Files",
             "type": "array"
           },
+          "procurement_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Procurement Kind"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
           "repair_generation": {
             "anyOf": [
               {
@@ -800,6 +1038,17 @@
           "role": {
             "$ref": "#/components/schemas/DocumentRole",
             "default": "UNKNOWN"
+          },
+          "target_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Revision Id"
           },
           "vendor_scope": {
             "anyOf": [
@@ -1538,6 +1787,215 @@
           "row_version"
         ],
         "title": "ComparisonJobResponse",
+        "type": "object"
+      },
+      "CurrentOrder": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_revision_id": {
+            "title": "Approval Revision Id",
+            "type": "string"
+          },
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/CurrentOrderArtifact"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "budget_won": {
+            "title": "Budget Won",
+            "type": "integer"
+          },
+          "difference_won": {
+            "title": "Difference Won",
+            "type": "integer"
+          },
+          "quote_id": {
+            "title": "Quote Id",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "revision_number": {
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/CurrentOrderRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "sent": {
+            "title": "Sent",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "total_won": {
+            "title": "Total Won",
+            "type": "integer"
+          },
+          "vendor_name": {
+            "title": "Vendor Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision_id",
+          "revision_number",
+          "approval_revision_id",
+          "quote_id",
+          "vendor_name",
+          "budget_won",
+          "total_won",
+          "difference_won",
+          "state",
+          "row_version",
+          "sent",
+          "artifacts",
+          "rows"
+        ],
+        "title": "CurrentOrder",
+        "type": "object"
+      },
+      "CurrentOrderArtifact": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "quote_id": {
+            "title": "Quote Id",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "vendor_name": {
+            "title": "Vendor Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vendor_name",
+          "quote_id",
+          "artifact_id",
+          "sha256",
+          "size_bytes"
+        ],
+        "title": "CurrentOrderArtifact",
+        "type": "object"
+      },
+      "CurrentOrderResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "order": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentOrder"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "order"
+        ],
+        "title": "CurrentOrderResponse",
+        "type": "object"
+      },
+      "CurrentOrderRow": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "title": "Author",
+            "type": "string"
+          },
+          "edition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edition"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isbn13": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn13"
+          },
+          "line_total_won": {
+            "title": "Line Total Won",
+            "type": "integer"
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_price": {
+            "title": "Unit Price",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "isbn13",
+          "title",
+          "author",
+          "publisher",
+          "edition",
+          "quantity",
+          "unit_price",
+          "line_total_won"
+        ],
+        "title": "CurrentOrderRow",
         "type": "object"
       },
       "DeliveryCreate": {
@@ -2445,10 +2903,6 @@
             "title": "Artifact Id",
             "type": "string"
           },
-          "path": {
-            "title": "Path",
-            "type": "string"
-          },
           "quote_id": {
             "title": "Quote Id",
             "type": "string"
@@ -2470,7 +2924,6 @@
           "vendor_name",
           "quote_id",
           "artifact_id",
-          "path",
           "sha256",
           "size_bytes"
         ],
@@ -2663,18 +3116,6 @@
             "default": null,
             "title": "External Send Performed"
           },
-          "path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Path"
-          },
           "revision_id": {
             "anyOf": [
               {
@@ -2805,6 +3246,280 @@
         "title": "OrderSentResponse",
         "type": "object"
       },
+      "ProcurementImportComposeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "import_id": {
+            "title": "Import Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "result_id": {
+            "title": "Result Id",
+            "type": "string"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "import_id",
+          "kind",
+          "status",
+          "result_id",
+          "state",
+          "row_version"
+        ],
+        "title": "ProcurementImportComposeResponse",
+        "type": "object"
+      },
+      "ProcurementImportItem": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "count_confidence": {
+            "title": "Count Confidence",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "detected_format": {
+            "title": "Detected Format",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "import_id": {
+            "title": "Import Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "mapping_required": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MappingRequired"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parser_version": {
+            "title": "Parser Version",
+            "type": "string"
+          },
+          "processed_rows": {
+            "title": "Processed Rows",
+            "type": "integer"
+          },
+          "result_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Id"
+          },
+          "row_error_count": {
+            "title": "Row Error Count",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ProcurementImportRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target_revision_id": {
+            "title": "Target Revision Id",
+            "type": "string"
+          },
+          "template_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Version"
+          },
+          "total_rows": {
+            "title": "Total Rows",
+            "type": "integer"
+          },
+          "vendor_name": {
+            "title": "Vendor Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "import_id",
+          "kind",
+          "source_id",
+          "filename",
+          "vendor_name",
+          "target_revision_id",
+          "status",
+          "detected_format",
+          "parser_version",
+          "template_version",
+          "total_rows",
+          "processed_rows",
+          "row_error_count",
+          "count_confidence",
+          "mapping_required",
+          "result_id",
+          "rows",
+          "created_at",
+          "completed_at"
+        ],
+        "title": "ProcurementImportItem",
+        "type": "object"
+      },
+      "ProcurementImportPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProcurementImportItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ProcurementImportPage",
+        "type": "object"
+      },
+      "ProcurementImportProvenance": {
+        "additionalProperties": false,
+        "properties": {
+          "sheet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet"
+          },
+          "source_row": {
+            "title": "Source Row",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sheet",
+          "source_row"
+        ],
+        "title": "ProcurementImportProvenance",
+        "type": "object"
+      },
+      "ProcurementImportRow": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UploadItemError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ProcurementImportProvenance"
+          },
+          "result_row_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Row Id"
+          },
+          "source_row_id": {
+            "title": "Source Row Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_row_id",
+          "status",
+          "provenance",
+          "error",
+          "result_row_id"
+        ],
+        "title": "ProcurementImportRow",
+        "type": "object"
+      },
       "QueuedJobResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2859,6 +3574,112 @@
           "reason"
         ],
         "title": "QuoteCreate",
+        "type": "object"
+      },
+      "QuoteDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_revision_id": {
+            "title": "Approval Revision Id",
+            "type": "string"
+          },
+          "budget_overrun_won": {
+            "title": "Budget Overrun Won",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "discount_won": {
+            "title": "Discount Won",
+            "type": "integer"
+          },
+          "list_mismatch_count": {
+            "title": "List Mismatch Count",
+            "type": "integer"
+          },
+          "list_total_won": {
+            "title": "List Total Won",
+            "type": "integer"
+          },
+          "missing_price_count": {
+            "title": "Missing Price Count",
+            "type": "integer"
+          },
+          "needs_review_count": {
+            "title": "Needs Review Count",
+            "type": "integer"
+          },
+          "out_of_stock_count": {
+            "title": "Out Of Stock Count",
+            "type": "integer"
+          },
+          "quote_id": {
+            "title": "Quote Id",
+            "type": "string"
+          },
+          "reconciliation": {
+            "$ref": "#/components/schemas/QuoteReconciliation"
+          },
+          "requires_reapproval": {
+            "title": "Requires Reapproval",
+            "type": "boolean"
+          },
+          "revision_number": {
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "row_version": {
+            "title": "Row Version",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/QuoteRowResponse"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "total_won": {
+            "title": "Total Won",
+            "type": "integer"
+          },
+          "unmatched_count": {
+            "title": "Unmatched Count",
+            "type": "integer"
+          },
+          "vendor_name": {
+            "title": "Vendor Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "quote_id",
+          "revision_number",
+          "state",
+          "row_version",
+          "total_won",
+          "list_total_won",
+          "discount_won",
+          "budget_overrun_won",
+          "out_of_stock_count",
+          "missing_price_count",
+          "list_mismatch_count",
+          "needs_review_count",
+          "unmatched_count",
+          "requires_reapproval",
+          "reconciliation",
+          "rows",
+          "approval_revision_id",
+          "vendor_name",
+          "created_at"
+        ],
+        "title": "QuoteDetailResponse",
         "type": "object"
       },
       "QuoteMatch": {
@@ -3278,6 +4099,10 @@
       "QuoteSummary": {
         "additionalProperties": false,
         "properties": {
+          "approval_revision_id": {
+            "title": "Approval Revision Id",
+            "type": "string"
+          },
           "budget_overrun_won": {
             "title": "Budget Overrun Won",
             "type": "integer"
@@ -3286,9 +4111,33 @@
             "title": "Created At",
             "type": "string"
           },
+          "discount_won": {
+            "title": "Discount Won",
+            "type": "integer"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "list_mismatch_count": {
+            "title": "List Mismatch Count",
+            "type": "integer"
+          },
+          "list_total_won": {
+            "title": "List Total Won",
+            "type": "integer"
+          },
+          "missing_price_count": {
+            "title": "Missing Price Count",
+            "type": "integer"
+          },
+          "needs_review_count": {
+            "title": "Needs Review Count",
+            "type": "integer"
+          },
+          "out_of_stock_count": {
+            "title": "Out Of Stock Count",
+            "type": "integer"
           },
           "reconciliation": {
             "$ref": "#/components/schemas/QuoteReconciliation"
@@ -3301,6 +4150,10 @@
             "title": "Total Won",
             "type": "integer"
           },
+          "unmatched_count": {
+            "title": "Unmatched Count",
+            "type": "integer"
+          },
           "vendor_name": {
             "title": "Vendor Name",
             "type": "string"
@@ -3308,9 +4161,17 @@
         },
         "required": [
           "id",
+          "approval_revision_id",
           "vendor_name",
           "total_won",
+          "list_total_won",
+          "discount_won",
           "budget_overrun_won",
+          "out_of_stock_count",
+          "missing_price_count",
+          "list_mismatch_count",
+          "needs_review_count",
+          "unmatched_count",
           "requires_reapproval",
           "reconciliation",
           "created_at"
@@ -3396,6 +4257,18 @@
       "ReceivingDifferenceDetails": {
         "additionalProperties": false,
         "properties": {
+          "edition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Edition"
+          },
           "expected": {
             "anyOf": [
               {
@@ -3505,6 +4378,148 @@
           "next_cursor"
         ],
         "title": "ReceivingDifferencePage",
+        "type": "object"
+      },
+      "ReceivingProgressRow": {
+        "additionalProperties": false,
+        "properties": {
+          "delivered_quantity": {
+            "title": "Delivered Quantity",
+            "type": "integer"
+          },
+          "edition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edition"
+          },
+          "isbn13": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn13"
+          },
+          "order_row_id": {
+            "title": "Order Row Id",
+            "type": "string"
+          },
+          "ordered_quantity": {
+            "title": "Ordered Quantity",
+            "type": "integer"
+          },
+          "scanned_quantity": {
+            "title": "Scanned Quantity",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_price": {
+            "title": "Unit Price",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "order_row_id",
+          "isbn13",
+          "title",
+          "edition",
+          "ordered_quantity",
+          "delivered_quantity",
+          "scanned_quantity",
+          "unit_price"
+        ],
+        "title": "ReceivingProgressRow",
+        "type": "object"
+      },
+      "ReceivingStatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "active_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Session Id"
+          },
+          "blocking_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blocking Reasons",
+            "type": "array"
+          },
+          "can_complete": {
+            "title": "Can Complete",
+            "type": "boolean"
+          },
+          "delivered_quantity": {
+            "title": "Delivered Quantity",
+            "type": "integer"
+          },
+          "delivery_count": {
+            "title": "Delivery Count",
+            "type": "integer"
+          },
+          "order_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Revision Id"
+          },
+          "ordered_quantity": {
+            "title": "Ordered Quantity",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ReceivingProgressRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "scanned_quantity": {
+            "title": "Scanned Quantity",
+            "type": "integer"
+          },
+          "unresolved_difference_count": {
+            "title": "Unresolved Difference Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "order_revision_id",
+          "active_session_id",
+          "delivery_count",
+          "ordered_quantity",
+          "delivered_quantity",
+          "scanned_quantity",
+          "unresolved_difference_count",
+          "can_complete",
+          "blocking_reasons",
+          "rows"
+        ],
+        "title": "ReceivingStatusResponse",
         "type": "object"
       },
       "RestoreRequest": {
@@ -3913,6 +4928,17 @@
             "title": "Filename",
             "type": "string"
           },
+          "procurement_import_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Procurement Import Id"
+          },
           "repair_generation": {
             "anyOf": [
               {
@@ -3957,7 +4983,8 @@
           "source_id",
           "error",
           "repair_obligation_id",
-          "repair_generation"
+          "repair_generation",
+          "procurement_import_id"
         ],
         "title": "UploadItem",
         "type": "object"
@@ -8416,6 +9443,277 @@
         ]
       }
     },
+    "/api/v2/procurement-imports/{import_id}/compose": {
+      "post": {
+        "operationId": "composeProcurementImport",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "title": "Import Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Request-ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "suseoro_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suseoro Session"
+            }
+          },
+          {
+            "description": "CSRF 방지 토큰",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcurementImportComposeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          }
+        },
+        "security": [
+          {
+            "CsrfCookie": [],
+            "CsrfHeader": [],
+            "SessionCookie": []
+          }
+        ],
+        "summary": "파싱된 파일을 견적·납품에 반영하기",
+        "tags": [
+          "procurement"
+        ]
+      }
+    },
+    "/api/v2/quotes/{quote_id}": {
+      "get": {
+        "operationId": "getQuote",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "quote_id",
+            "required": true,
+            "schema": {
+              "title": "Quote Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "suseoro_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suseoro Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "견적 자세히 보기",
+        "tags": [
+          "procurement"
+        ]
+      }
+    },
     "/api/v2/quotes/{quote_id}/matches": {
       "post": {
         "operationId": "matchQuoteRow",
@@ -11617,6 +12915,192 @@
         ]
       }
     },
+    "/api/v2/workspaces/{workspace_id}/orders/current": {
+      "get": {
+        "operationId": "getCurrentOrder",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "suseoro_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suseoro Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "현재 발주 버전 보기",
+        "tags": [
+          "procurement"
+        ]
+      }
+    },
+    "/api/v2/workspaces/{workspace_id}/procurement-imports": {
+      "get": {
+        "operationId": "listProcurementImports",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "suseoro_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suseoro Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcurementImportPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "견적·납품 파일 처리 상태 보기",
+        "tags": [
+          "procurement"
+        ]
+      }
+    },
     "/api/v2/workspaces/{workspace_id}/quotes": {
       "get": {
         "operationId": "listQuotes",
@@ -12277,6 +13761,99 @@
           }
         ],
         "summary": "납품 차이 목록을 조건별로 보기",
+        "tags": [
+          "deliveries"
+        ]
+      }
+    },
+    "/api/v2/workspaces/{workspace_id}/receiving/status": {
+      "get": {
+        "operationId": "getReceivingStatus",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "suseoro_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suseoro Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceivingStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "구조화된 오류"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "납품 검수 진행 상황 보기",
         "tags": [
           "deliveries"
         ]

@@ -495,6 +495,7 @@ def test_bulk_candidate_decision_is_state_guarded_and_reports_missing_items(
         actor_id=fixture.operator_id,
         actor_roles=("OPERATOR",),
         workspace_version=fixture.workspace_version(),
+        candidate_collection_revision=fixture.candidate_collection_revision(),
         budget_won=50_000,
         reason="상태 검증용 승인 요청",
         idempotency_key="state-guard-request",

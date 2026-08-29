@@ -27,6 +27,7 @@ from suseoro.api.routes.candidates import router as candidates_router
 from suseoro.api.routes.deliveries import router as deliveries_router
 from suseoro.api.routes.events import router as events_router
 from suseoro.api.routes.procurement import router as procurement_router
+from suseoro.api.routes.procurement_imports import router as procurement_imports_router
 from suseoro.api.routes.sources import router as sources_router
 from suseoro.api.routes.workspaces import router as workspaces_router
 from suseoro.api.schemas import (
@@ -123,6 +124,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         candidates_router,
         approvals_router,
         procurement_router,
+        procurement_imports_router,
         deliveries_router,
         events_router,
         audit_router,

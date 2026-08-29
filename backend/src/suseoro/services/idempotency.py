@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from suseoro.security.sessions import format_utc, utc_now
+from suseoro.services.public_replay import sanitize_persisted_response
 
 
 @dataclass(frozen=True)
@@ -85,7 +86,15 @@ def reserve_idempotency_key(
         raise IdempotencyConflict()
     if row["response_status"] is None:
         raise IdempotencyConflict("IDEMPOTENCY_REQUEST_IN_PROGRESS")
-    return StoredResponse(row["response_status"], json.loads(row["response_body"]))
+    try:
+        stored_body = json.loads(row["response_body"])
+    except (TypeError, json.JSONDecodeError) as error:
+        raise HTTPException(
+            status_code=409, detail={"code": "HISTORICAL_REPLAY_INVALID"}
+        ) from error
+    return StoredResponse(
+        row["response_status"], sanitize_persisted_response(route, stored_body)
+    )
 
 
 def complete_idempotent_request(

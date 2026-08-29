@@ -138,10 +138,9 @@ def transition_workspace(
             },
         )
         before = {"state": workspace["status"], "row_version": workspace["row_version"]}
-        after = {
+        result = {
             "state": updated["status"],
             "row_version": updated["row_version"],
-            "reason": reason.strip(),
         }
         record_audit_event(
             connection,
@@ -151,10 +150,10 @@ def transition_workspace(
             entity_type="acquisition_workspace",
             entity_id=workspace_id,
             before=before,
-            after=after,
+            after={**result, "reason": reason.strip()},
             request_id=request_id,
         )
-        return after
+        return result
 
     return idempotent_mutation(
         connection,

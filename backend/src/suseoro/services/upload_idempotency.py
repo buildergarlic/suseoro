@@ -20,12 +20,22 @@ from suseoro.services.idempotency import (
     StoredResponse,
     request_hash,
 )
+from suseoro.services.public_replay import sanitize_persisted_response
 
 _BUSY_TIMEOUT_MILLISECONDS = 25
 _INITIAL_BACKOFF_SECONDS = 0.01
 _MAX_BACKOFF_SECONDS = 0.1
 _RETRY_HEADERS = {"Retry-After": "1"}
 _UNKNOWN_REJECTED_REPLAY_MAX_BYTES = 100 * 1024 * 1024
+
+
+def _stored_json(value: object) -> Any:
+    try:
+        return json.loads(value)  # type: ignore[arg-type]
+    except (TypeError, json.JSONDecodeError) as error:
+        raise HTTPException(
+            status_code=409, detail={"code": "HISTORICAL_REPLAY_INVALID"}
+        ) from error
 
 
 @dataclass(frozen=True)
@@ -76,13 +86,13 @@ def _active_lease(row, now) -> bool:
     )
 
 
-def _replay_or_conflict(row, fingerprint: str) -> StoredResponse | None:
+def _replay_or_conflict(row, fingerprint: str, *, route: str) -> StoredResponse | None:
     if row["request_fingerprint"] != fingerprint:
         raise IdempotencyConflict()
     if row["state"] == "COMPLETED":
         return StoredResponse(
             status=int(row["response_status"]),
-            body=json.loads(row["response_body"]),
+            body=sanitize_persisted_response(route, _stored_json(row["response_body"])),
         )
     return None
 
@@ -127,9 +137,9 @@ def upload_scope_replay_allowance(
         response_body: Any = None
         metadata: Any = None
         if claim is not None and claim["state"] == "COMPLETED":
-            response_body = json.loads(claim["response_body"])
+            response_body = _stored_json(claim["response_body"])
             if claim["request_metadata_json"]:
-                metadata = json.loads(claim["request_metadata_json"])
+                metadata = _stored_json(claim["request_metadata_json"])
         else:
             legacy = connection.execute(
                 """
@@ -144,7 +154,7 @@ def upload_scope_replay_allowance(
                 or not legacy["response_body"]
             ):
                 return None
-            response_body = json.loads(legacy["response_body"])
+            response_body = _stored_json(legacy["response_body"])
 
         metadata_files = metadata.get("files") if isinstance(metadata, dict) else None
         if isinstance(metadata_files, list) and metadata_files:
@@ -232,11 +242,14 @@ def _existing_upload_idempotency_response(
     if row is None:
         return None
 
-    stored_body = json.loads(row["response_body"]) if row["response_body"] else None
+    stored_body = _stored_json(row["response_body"]) if row["response_body"] else None
     if row["request_hash"] == canonical_digest:
         if row["response_status"] is None or stored_body is None:
             raise IdempotencyConflict("IDEMPOTENCY_REQUEST_IN_PROGRESS")
-        return StoredResponse(status=int(row["response_status"]), body=stored_body)
+        return StoredResponse(
+            status=int(row["response_status"]),
+            body=sanitize_persisted_response(route, stored_body),
+        )
     canonical_claim = connection.execute(
         """
         SELECT request_fingerprint
@@ -301,7 +314,10 @@ def _existing_upload_idempotency_response(
         raise IdempotencyConflict()
     if row["response_status"] is None or stored_body is None:
         raise IdempotencyConflict("IDEMPOTENCY_REQUEST_IN_PROGRESS")
-    return StoredResponse(status=int(row["response_status"]), body=stored_body)
+    return StoredResponse(
+        status=int(row["response_status"]),
+        body=sanitize_persisted_response(route, stored_body),
+    )
 
 
 def validate_existing_upload_idempotency_key(
@@ -408,7 +424,9 @@ def acquire_upload_claim(
             observed = _claim_row(connection, scope)
             now = utc_now()
             if observed is not None:
-                replay = _replay_or_conflict(observed, fingerprint)
+                replay = _replay_or_conflict(
+                    observed, fingerprint, route=scope["route"]
+                )
                 if replay is not None:
                     return replay
                 if _active_lease(observed, now):
@@ -419,7 +437,9 @@ def acquire_upload_claim(
                     if current is None:
                         connection.rollback()
                         continue
-                    replay = _replay_or_conflict(current, fingerprint)
+                    replay = _replay_or_conflict(
+                        current, fingerprint, route=scope["route"]
+                    )
                     if replay is not None:
                         connection.rollback()
                         return replay

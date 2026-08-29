@@ -22,6 +22,7 @@ def _request(fixture, *, actor_id=None, key="approval-request", reason="최초 �
         actor_id=actor_id or fixture.operator_id,
         actor_roles=("OPERATOR",),
         workspace_version=fixture.workspace_version(),
+        candidate_collection_revision=fixture.candidate_collection_revision(),
         budget_won=50_000,
         reason=reason,
         idempotency_key=key,
@@ -63,10 +64,12 @@ def test_approval_revision_is_canonical_hashed_and_immutable(tmp_path) -> None:
     payload = json.loads(revision["canonical_json"])
     assert payload == {
         "budget_won": 50_000,
+        "candidate_collection_revision": fixture.candidate_collection_revision(),
         "candidates": [
             {
                 "author": "이민진",
                 "candidate_id": candidate_id,
+                "edition": None,
                 "isbn13": "9788937464010",
                 "quantity": 2,
                 "title": "파친코",
@@ -74,6 +77,13 @@ def test_approval_revision_is_canonical_hashed_and_immutable(tmp_path) -> None:
             }
         ],
         "expected_total_won": 24_000,
+        "review_snapshot": {
+            "auto_excluded_count": 0,
+            "auto_exclusions": [],
+            "catalog_as_of_local_date": None,
+            "source_counts_verified": True,
+            "unresolved_complete": True,
+        },
     }
     with pytest.raises(Exception, match="scope mismatch"):
         fixture.connection.execute(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import Response as BinaryResponse
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,8 @@ from suseoro.api.dependencies import (
     require_request_id,
 )
 from suseoro.api.errors import domain_not_found
+from suseoro.api.schemas import OrderResponse
+from suseoro.config import Settings
 from suseoro.workflow.orders import OrderService
 from suseoro.workflow.quotes import QuoteService
 
@@ -28,6 +30,11 @@ ORDER_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.
 
 class OrderDownloadResponse(BinaryResponse):
     media_type = ORDER_MEDIA_TYPE
+
+
+def _order_service(request: Request, connection: sqlite3.Connection) -> OrderService:
+    settings: Settings = request.app.state.settings
+    return OrderService(connection, settings.exports_dir / "orders")
 
 
 class QuoteRowInput(BaseModel):
@@ -105,9 +112,17 @@ def list_quotes(
     items = [
         {
             "id": row["id"],
+            "approval_revision_id": row["approval_revision_id"],
             "vendor_name": row["vendor_name"],
             "total_won": row["total_won"],
+            "list_total_won": row["list_total_won"],
+            "discount_won": row["discount_won"],
             "budget_overrun_won": row["budget_overrun_won"],
+            "out_of_stock_count": row["out_of_stock_count"],
+            "missing_price_count": row["missing_price_count"],
+            "list_mismatch_count": row["list_mismatch_count"],
+            "needs_review_count": row["needs_review_count"],
+            "unmatched_count": row["unmatched_count"],
             "requires_reapproval": bool(row["requires_reapproval"]),
             "reconciliation": json.loads(row["reconciliation_json"]),
             "created_at": row["created_at"],
@@ -117,6 +132,171 @@ def list_quotes(
     return page(
         items, limit=limit, cursor_values=lambda item: (item["created_at"], item["id"])
     )
+
+
+def _quote_rows(connection: sqlite3.Connection, quote_id: str):
+    return [
+        {
+            "quote_row_id": row["id"],
+            "approval_row_id": row["approval_row_id"],
+            "match_status": row["match_status"],
+            "isbn13": row["isbn13"],
+            "title": row["title"],
+            "author": row["author"],
+            "publisher": row["publisher"],
+            "edition": row["edition"],
+            "quantity": row["quantity"],
+            "unit_price": row["unit_price"],
+            "list_price": row["list_price"],
+            "out_of_stock": bool(row["out_of_stock"]),
+            "line_total_won": row["line_total_won"],
+        }
+        for row in connection.execute(
+            "SELECT * FROM vendor_quote_rows WHERE quote_id = ? ORDER BY created_at, id",
+            (quote_id,),
+        ).fetchall()
+    ]
+
+
+@router.get(
+    "/quotes/{quote_id}",
+    summary="견적 자세히 보기",
+    operation_id="getQuote",
+)
+def get_quote(
+    quote_id: str,
+    user: AuthenticatedUser = Depends(current_user),
+    connection: sqlite3.Connection = Depends(database_connection),
+):
+    row = connection.execute(
+        """
+        SELECT quote.*, workspace.status AS state,
+               workspace.row_version AS workspace_row_version
+        FROM vendor_quotes AS quote
+        JOIN acquisition_workspaces AS workspace
+          ON workspace.id = quote.workspace_id
+         AND workspace.school_id = quote.school_id
+        WHERE quote.id = ? AND quote.school_id = ? AND quote.sealed_at IS NOT NULL
+        """,
+        (quote_id, user.school_id),
+    ).fetchone()
+    if row is None:
+        raise domain_not_found("QUOTE_NOT_FOUND")
+    return {
+        "quote_id": row["id"],
+        "revision_number": row["revision_number"],
+        "approval_revision_id": row["approval_revision_id"],
+        "vendor_name": row["vendor_name"],
+        "created_at": row["created_at"],
+        "state": row["state"],
+        "row_version": row["workspace_row_version"],
+        "total_won": row["total_won"],
+        "list_total_won": row["list_total_won"],
+        "discount_won": row["discount_won"],
+        "budget_overrun_won": row["budget_overrun_won"],
+        "out_of_stock_count": row["out_of_stock_count"],
+        "missing_price_count": row["missing_price_count"],
+        "list_mismatch_count": row["list_mismatch_count"],
+        "needs_review_count": row["needs_review_count"],
+        "unmatched_count": row["unmatched_count"],
+        "requires_reapproval": bool(row["requires_reapproval"]),
+        "reconciliation": json.loads(row["reconciliation_json"]),
+        "rows": _quote_rows(connection, quote_id),
+    }
+
+
+@router.get(
+    "/workspaces/{workspace_id}/orders/current",
+    summary="현재 발주 버전 보기",
+    operation_id="getCurrentOrder",
+)
+def get_current_order(
+    workspace_id: str,
+    user: AuthenticatedUser = Depends(current_user),
+    connection: sqlite3.Connection = Depends(database_connection),
+):
+    order = connection.execute(
+        """
+        SELECT revision.*, current.transmission_id,
+               workspace.status AS state,
+               workspace.row_version AS workspace_row_version,
+               approval.budget_won,
+               quote.vendor_name
+        FROM workspace_current_orders AS current
+        JOIN order_revisions AS revision ON revision.id = current.order_revision_id
+        JOIN acquisition_workspaces AS workspace
+          ON workspace.id = current.workspace_id
+         AND workspace.school_id = current.school_id
+        JOIN approval_revisions AS approval
+          ON approval.id = revision.approval_revision_id
+        JOIN vendor_quotes AS quote ON quote.id = revision.quote_id
+        WHERE current.workspace_id = ? AND current.school_id = ?
+          AND revision.sealed_at IS NOT NULL
+        """,
+        (workspace_id, user.school_id),
+    ).fetchone()
+    if order is None:
+        return {"order": None}
+    rows = [
+        dict(row)
+        for row in connection.execute(
+            """
+            SELECT id, isbn13, title, author, publisher, edition,
+                   quantity, unit_price, line_total_won
+            FROM order_rows WHERE order_revision_id = ? ORDER BY created_at, id
+            """,
+            (order["id"],),
+        ).fetchall()
+    ]
+    artifacts = [
+        {
+            "vendor_name": row["vendor_name"],
+            "quote_id": row["quote_id"],
+            "artifact_id": row["artifact_id"],
+            "sha256": row["sha256"],
+            "size_bytes": row["size_bytes"],
+        }
+        for row in connection.execute(
+            """
+            SELECT link.vendor_name, link.quote_id, link.artifact_id,
+                   artifact.sha256, artifact.size_bytes
+            FROM order_vendor_artifacts AS link
+            JOIN generated_artifacts AS artifact ON artifact.id = link.artifact_id
+            WHERE link.order_revision_id = ? ORDER BY link.vendor_name, link.id
+            """,
+            (order["id"],),
+        ).fetchall()
+    ]
+    total = sum(int(row["line_total_won"]) for row in rows)
+    return {
+        "order": {
+            "revision_id": order["id"],
+            "revision_number": order["revision_number"],
+            "approval_revision_id": order["approval_revision_id"],
+            "quote_id": order["quote_id"],
+            "vendor_name": order["vendor_name"],
+            "budget_won": order["budget_won"],
+            "total_won": total,
+            "difference_won": int(order["budget_won"]) - total,
+            "state": order["state"],
+            "row_version": order["workspace_row_version"],
+            "sent": order["transmission_id"] is not None,
+            "artifacts": artifacts,
+            "rows": rows,
+        }
+    }
+
+
+def _public_order_result(result: dict[str, object]) -> dict[str, object]:
+    public = {key: value for key, value in result.items() if key != "path"}
+    artifacts = public.get("artifacts")
+    if isinstance(artifacts, list):
+        public["artifacts"] = [
+            {key: value for key, value in item.items() if key != "path"}
+            for item in artifacts
+            if isinstance(item, dict)
+        ]
+    return public
 
 
 @router.post(
@@ -191,6 +371,7 @@ def match_quote_row(
 def create_order(
     workspace_id: str,
     payload: OrderCreate,
+    request: Request,
     response: Response,
     user: AuthenticatedUser = Depends(current_user),
     connection: sqlite3.Connection = Depends(database_connection),
@@ -198,7 +379,7 @@ def create_order(
     idempotency_key: str = Depends(require_idempotency_key),
     request_id: str = Depends(require_request_id),
 ):
-    result = OrderService(connection).generate_revision(
+    result = _order_service(request, connection).generate_revision(
         school_id=user.school_id,
         workspace_id=workspace_id,
         approval_revision_id=payload.approval_revision_id,
@@ -217,7 +398,9 @@ def create_order(
         advanced_split_enabled=payload.advanced_split_enabled,
     )
     response.headers["ETag"] = f'"{result["row_version"]}"'
-    return result
+    return OrderResponse.model_validate(_public_order_result(result)).model_dump(
+        mode="json"
+    )
 
 
 @router.get(
@@ -259,6 +442,7 @@ def download_order(
 def mark_order_sent(
     order_revision_id: str,
     payload: OrderSent,
+    request: Request,
     response: Response,
     user: AuthenticatedUser = Depends(current_user),
     connection: sqlite3.Connection = Depends(database_connection),
@@ -266,7 +450,7 @@ def mark_order_sent(
     idempotency_key: str = Depends(require_idempotency_key),
     request_id: str = Depends(require_request_id),
 ):
-    result = OrderService(connection).mark_sent(
+    result = _order_service(request, connection).mark_sent(
         school_id=user.school_id,
         workspace_id=payload.workspace_id,
         order_revision_id=order_revision_id,

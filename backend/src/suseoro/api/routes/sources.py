@@ -615,6 +615,9 @@ def upload_sources(
     repair_generation: int | None = Form(None),
     replacement_source_document_id: str | None = Form(None),
     confirm_repair_configuration: bool = Form(False),
+    procurement_kind: str | None = Form(None),
+    target_revision_id: str | None = Form(None),
+    reason: str | None = Form(None),
     user: AuthenticatedUser = Depends(require_role("OPERATOR")),
     connection: sqlite3.Connection = Depends(database_connection),
     idempotency_key: str = Depends(require_idempotency_key),
@@ -634,6 +637,23 @@ def upload_sources(
     ):
         raise HTTPException(
             status_code=422, detail={"code": "INVALID_REPLACEMENT_REQUEST"}
+        )
+    procurement_kind = procurement_kind.strip().upper() if procurement_kind else None
+    procurement_fields_present = any(
+        value is not None for value in (procurement_kind, target_revision_id, reason)
+    )
+    if procurement_fields_present and (
+        procurement_kind not in {"QUOTE", "DELIVERY"}
+        or not target_revision_id
+        or not reason
+        or not reason.strip()
+        or role != DocumentRole.VENDOR_QUOTE
+        or len(files) != 1
+        or repair_obligation_id is not None
+        or replacement_source_document_id is not None
+    ):
+        raise HTTPException(
+            status_code=422, detail={"code": "INVALID_PROCUREMENT_IMPORT"}
         )
     normalized_vendor_scope = vendor_scope.strip() or "*" if vendor_scope else "*"
     if repair_obligation_id is not None:
@@ -806,7 +826,10 @@ def upload_sources(
                     {
                         "filename": filename,
                         "staged": None,
-                        "error": {"code": code, "message": str(error)},
+                        "error": {
+                            "code": code,
+                            "message": public_error_message(code),
+                        },
                     }
                 )
             finally:
@@ -824,6 +847,14 @@ def upload_sources(
                     "requested_through_local_date": (
                         requested_through.isoformat() if requested_through else None
                     ),
+                }
+            )
+        if procurement_kind is not None:
+            request_body.update(
+                {
+                    "procurement_kind": procurement_kind,
+                    "target_revision_id": target_revision_id,
+                    "reason": reason.strip() if reason else None,
                 }
             )
         if repair_obligation_id is not None:
@@ -1081,6 +1112,7 @@ def upload_sources(
                         "error": item["error"],
                         "repair_obligation_id": obligation_id,
                         "repair_generation": obligation_generation,
+                        "procurement_import_id": None,
                     }
                 )
                 continue
@@ -1157,6 +1189,29 @@ def upload_sources(
                 ),
             )
             accepted_ids.append(source_id)
+            procurement_import_id = None
+            if procurement_kind is not None and target_revision_id is not None:
+                procurement_import_id = str(uuid.uuid4())
+                connection.execute(
+                    """
+                    INSERT INTO procurement_source_imports (
+                        id, school_id, workspace_id, source_document_id, kind,
+                        target_revision_id, vendor_name, reason, actor_id, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        procurement_import_id,
+                        user.school_id,
+                        workspace_id,
+                        source_id,
+                        procurement_kind,
+                        target_revision_id,
+                        vendor_scope.strip() or "*",
+                        reason.strip() if reason else "",
+                        user.id,
+                        now,
+                    ),
+                )
             items.append(
                 {
                     "filename": item["filename"],
@@ -1165,6 +1220,7 @@ def upload_sources(
                     "error": None,
                     "repair_obligation_id": repair_obligation_id,
                     "repair_generation": repair_generation,
+                    "procurement_import_id": procurement_import_id,
                 }
             )
             if repair_obligation_id is not None:
@@ -1460,6 +1516,27 @@ def get_source(
     return _source_with_discovery(connection, row)
 
 
+def _reject_imported_source_mutation(
+    connection: sqlite3.Connection,
+    *,
+    school_id: str,
+    source_id: str,
+) -> None:
+    consumed = connection.execute(
+        """
+        SELECT 1 FROM procurement_source_imports
+        WHERE school_id = ? AND source_document_id = ? AND status = 'IMPORTED'
+        LIMIT 1
+        """,
+        (school_id, source_id),
+    ).fetchone()
+    if consumed is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "SOURCE_ALREADY_IMPORTED"},
+        )
+
+
 @router.patch(
     "/sources/{source_id}/mapping",
     summary="자료 역할과 열 연결 저장하기",
@@ -1491,6 +1568,11 @@ def update_source_mapping(
         connection.rollback()
         response.headers["ETag"] = f'"{replay.body["row_version"]}"'
         return replay.body
+    _reject_imported_source_mutation(
+        connection,
+        school_id=user.school_id,
+        source_id=source_id,
+    )
     current = _source_row(connection, user.school_id, source_id)
     if current is None:
         connection.rollback()
@@ -1657,6 +1739,11 @@ def parse_source(
     if replay is not None:
         connection.rollback()
         return replay.body
+    _reject_imported_source_mutation(
+        connection,
+        school_id=user.school_id,
+        source_id=source_id,
+    )
     source_state = connection.execute(
         """
         SELECT COALESCE(config.role, document.role) AS configured_role,

@@ -641,7 +641,11 @@ export function CandidatePanel({
     try {
       const transition = await api.requestApproval(
         workspace.id,
-        { budget_won: approvedBudget, reason: "후보 검토 완료" },
+        {
+          budget_won: approvedBudget,
+          candidate_collection_revision: snapshotRevisionRef.current,
+          reason: "후보 검토 완료",
+        },
         workspace.row_version,
       );
       onWorkspaceChange({

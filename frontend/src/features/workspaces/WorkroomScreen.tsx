@@ -2,8 +2,12 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import type { Job, SuseoroApi, User, Workspace } from "../../api/client";
+import { ApprovalPanel, ChangesRequestedNotice } from "../approvals/ApprovalPanel";
 import { CandidatePanel } from "../candidates/CandidatePanel";
 import { IngestionPanel } from "../ingestion/IngestionPanel";
+import { OrderPanel } from "../orders/OrderPanel";
+import { QuotePanel } from "../quotes/QuotePanel";
+import { ReceivingPanel } from "../receiving/ReceivingPanel";
 import { canOperate, workflowPolicy } from "./workflowPolicy";
 
 interface WorkroomScreenProps {
@@ -18,7 +22,9 @@ const RETRYABLE_JOB_STATES = new Set(["FAILED", "PARTIAL", "CANCELLED"]);
 function completedSummary(stage: number): string {
   return stage === 0
     ? "추천자료와 보유 장서를 비교해 수서 후보를 만들었습니다."
-    : "후보 승인과 서점 발주를 마쳤습니다.";
+    : stage === 1
+      ? "후보 승인과 서점 발주를 마쳤습니다."
+      : "도착한 책의 납품 검수까지 마쳐 이 작업을 완료했습니다.";
 }
 
 function CurrentStage({
@@ -50,12 +56,17 @@ function CurrentStage({
     const mode = workflowPolicy(workspace.status).mode;
     if (mode === "CANDIDATES") {
       return (
-        <CandidatePanel
-          api={api}
-          onWorkspaceChange={onWorkspaceChange}
-          user={user}
-          workspace={workspace}
-        />
+        <>
+          {workspace.status === "CHANGES_REQUESTED" ? (
+            <ChangesRequestedNotice api={api} workspace={workspace} />
+          ) : null}
+          <CandidatePanel
+            api={api}
+            onWorkspaceChange={onWorkspaceChange}
+            user={user}
+            workspace={workspace}
+          />
+        </>
       );
     }
     if (mode === "ANALYZING") {
@@ -124,23 +135,15 @@ function CurrentStage({
     );
   }
   if (stage === 1) {
-    return (
-      <div className="calm-placeholder">
-        <h3>승인과 발주 진행</h3>
-        {workspace.status === "APPROVAL_PENDING" ? (
-          <p role="status">승인을 요청했습니다. 검토 담당자에게 전달했습니다.</p>
-        ) : (
-          <p>현재 승인 상태와 발주 준비 내용을 이 자리에서 확인합니다.</p>
-        )}
-      </div>
-    );
+    if (workspace.status === "APPROVAL_PENDING") {
+      return <ApprovalPanel api={api} onWorkspaceChange={onWorkspaceChange} user={user} workspace={workspace} />;
+    }
+    if (workspace.status === "ORDER_READY") {
+      return <OrderPanel api={api} onWorkspaceChange={onWorkspaceChange} user={user} workspace={workspace} />;
+    }
+    return <QuotePanel api={api} onWorkspaceChange={onWorkspaceChange} user={user} workspace={workspace} />;
   }
-  return (
-    <div className="calm-placeholder">
-      <h3>납품된 책 확인</h3>
-      <p>도착한 책을 스캔하고 주문 내용과 차분히 맞춰봅니다.</p>
-    </div>
-  );
+  return <ReceivingPanel api={api} onWorkspaceChange={onWorkspaceChange} user={user} workspace={workspace} />;
 }
 
 interface WorkspaceWorkroomProps extends WorkroomScreenProps {

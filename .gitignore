@@ -11,6 +11,7 @@ __pycache__/
 node_modules/
 dist/
 coverage/
+output/playwright/test-results/
 
 # Local database and application data
 *.sqlite3

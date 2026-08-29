@@ -20,6 +20,9 @@ _SYNONYMS = {
     "publisher": {"출판사", "발행처", "출판", "발행사"},
     "quantity": {"수량", "부수", "권수", "주문수량"},
     "unit_price": {"단가", "정가", "가격", "공급가", "판매가"},
+    "list_price": {"표시가격", "소비자가", "권장소비자가", "listprice"},
+    "edition": {"판본", "판", "개정판", "edition"},
+    "out_of_stock": {"품절", "품절여부", "재고없음", "outofstock"},
     "registration_number": {"등록번호", "도서등록번호", "원부번호"},
     "call_number": {"청구기호", "분류기호", "청구번호"},
 }

@@ -25,6 +25,7 @@ const validUploadResponse = {
       filename: "books.csv",
       status: "ACCEPTED",
       source_id: "source-upload",
+      procurement_import_id: null,
       error: null,
       repair_obligation_id: null,
       repair_generation: null,
@@ -39,6 +40,7 @@ const validUploadErrorResponse = {
       filename: "broken.exe",
       status: "FAILED",
       source_id: null,
+      procurement_import_id: null,
       error: { code: "UNSUPPORTED_FILE_TYPE", message: "지원하지 않는 형식입니다." },
       repair_obligation_id: "repair-1",
       repair_generation: 1,
@@ -64,6 +66,43 @@ const validErroredJobCommandResponse = {
   stage: "FAILED",
   error: { type: "JobFailure", code: "JOB_FAILED", message: "다시 시도해 주세요." },
 } satisfies Schemas["JobCommandResponse"];
+
+const validProcurementImport = {
+  import_id: "import-1",
+  source_id: "source-1",
+  kind: "QUOTE",
+  target_revision_id: "approval-1",
+  vendor_name: "푸른서점",
+  status: "READY",
+  filename: "quote.xlsx",
+  detected_format: "XLSX",
+  parser_version: "xlsx-v1",
+  template_version: null,
+  total_rows: 1,
+  processed_rows: 1,
+  row_error_count: 0,
+  count_confidence: "EXACT",
+  mapping_required: null,
+  result_id: null,
+  rows: [{
+    source_row_id: "source-row-1",
+    status: "SUCCESS",
+    provenance: { sheet: "견적", source_row: 2 },
+    error: null,
+    result_row_id: null,
+  }],
+  created_at: "2026-08-29T00:00:00Z",
+  completed_at: null,
+} satisfies Schemas["ProcurementImportItem"];
+
+const validProcurementCompose = {
+  import_id: "import-1",
+  kind: "QUOTE",
+  status: "IMPORTED",
+  result_id: "quote-1",
+  state: "QUOTE_REVIEW",
+  row_version: 2,
+} satisfies Schemas["ProcurementImportComposeResponse"];
 
 const validQueuedJobResponse = {
   job_id: "job-parse",
@@ -141,6 +180,7 @@ const validApprovalResponse = {
   sha256: "b".repeat(64),
   expected_total_won: 24_000,
   budget_won: 30_000,
+  candidate_collection_revision: 5,
   state: "AWAITING_APPROVAL",
   row_version: 3,
 } satisfies Schemas["ApprovalRequestResponse"];
@@ -179,6 +219,21 @@ const mutationContractCases: MutationContractCase[] = [
       ...validUploadResponse,
       items: validUploadResponse.items.map(
         ({ repair_obligation_id: _repairObligationId, ...item }) => item,
+      ),
+    },
+    valid: validUploadResponse,
+    invoke: (client) =>
+      client.uploadSources("workspace-1", {
+        files: [new File(["제목\n책\n"], "books.csv", { type: "text/csv" })],
+        role: "PURCHASE_REQUEST",
+      }),
+  },
+  {
+    name: "upload procurement import link",
+    malformed: {
+      ...validUploadResponse,
+      items: validUploadResponse.items.map(
+        ({ procurement_import_id: _procurementImportId, ...item }) => item,
       ),
     },
     valid: validUploadResponse,
@@ -320,9 +375,15 @@ const mutationContractCases: MutationContractCase[] = [
     invoke: (client) =>
       client.requestApproval(
         "workspace-1",
-        { budget_won: 30_000, reason: "승인 요청" },
+        { budget_won: 30_000, candidate_collection_revision: 5, reason: "승인 요청" },
         2,
       ),
+  },
+  {
+    name: "procurement compose unexpected property",
+    malformed: { ...validProcurementCompose, unexpected: true },
+    valid: validProcurementCompose,
+    invoke: (client) => client.composeProcurementImport("import-1", 1),
   },
 ];
 
@@ -534,6 +595,7 @@ describe("생성 계약을 쓰는 API client", () => {
               filename: "corrected.csv",
               status: "ACCEPTED",
               source_id: "source-corrected",
+              procurement_import_id: null,
               error: null,
               repair_obligation_id: null,
               repair_generation: null,
@@ -557,6 +619,57 @@ describe("생성 계약을 쓰는 API client", () => {
     expect(outgoing?.get("requested_through_local_date")).toBeNull();
     expect(outgoing?.get("replacement_source_document_id")).toBe("source-original");
     expect((outgoing?.get("files") as File).name).toBe("corrected.csv");
+  });
+
+  test("견적 파일 intent와 durable 결과 조회·조합 계약을 그대로 보낸다", async () => {
+    const requests: Request[] = [];
+    let uploadForm: FormData | undefined;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(
+        typeof input === "string" ? new URL(input, window.location.href) : input,
+        init,
+      );
+      requests.push(request);
+      if (request.method === "POST" && request.url.includes("/sources")) {
+        uploadForm = init?.body as FormData;
+        return new Response(JSON.stringify({
+          job_id: "job-1",
+          items: [{
+            ...validUploadResponse.items[0],
+            procurement_import_id: "import-1",
+          }],
+        }), { status: 202, headers: { "Content-Type": "application/json" } });
+      }
+      if (request.method === "POST") {
+        return new Response(JSON.stringify(validProcurementCompose), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        items: [validProcurementImport], next_cursor: null,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    const client = createApiClient();
+
+    await client.uploadSources("workspace-1", {
+      files: [new File(["xlsx"], "quote.xlsx")],
+      role: "VENDOR_QUOTE",
+      vendorScope: "푸른서점",
+      procurementKind: "QUOTE",
+      targetRevisionId: "approval-1",
+      reason: "견적 비교",
+    });
+    const imports = await client.listProcurementImports("workspace-1");
+    const composed = await client.composeProcurementImport("import-1", 1);
+
+    expect(uploadForm?.get("procurement_kind")).toBe("QUOTE");
+    expect(uploadForm?.get("target_revision_id")).toBe("approval-1");
+    expect(uploadForm?.get("reason")).toBe("견적 비교");
+    expect(imports.items[0]?.rows[0]?.provenance).toEqual({ sheet: "견적", source_row: 2 });
+    expect(requests[2]?.headers.get("If-Match")).toBe('"1"');
+    expect(requests[2]?.headers.get("Idempotency-Key")).toBeTruthy();
+    expect(composed.result_id).toBe("quote-1");
   });
 
   const retryableActions: Array<{
@@ -609,7 +722,7 @@ describe("생성 계약을 쓰는 API client", () => {
       run: (client) =>
         client.requestApproval(
           "workspace-1",
-          { budget_won: 50000, reason: "검토 완료" },
+          { budget_won: 50000, candidate_collection_revision: 5, reason: "검토 완료" },
           1,
         ),
       success: {
@@ -618,6 +731,7 @@ describe("생성 계약을 쓰는 API client", () => {
         sha256: "a".repeat(64),
         expected_total_won: 12000,
         budget_won: 50000,
+        candidate_collection_revision: 5,
         state: "APPROVAL_PENDING",
         row_version: 2,
       },
@@ -838,6 +952,7 @@ describe("생성 계약을 쓰는 API client", () => {
                     filename: "books.csv",
                     status: "ACCEPTED",
                     source_id: "source-valid",
+                    procurement_import_id: null,
                     error: null,
                     repair_obligation_id: null,
                     repair_generation: null,

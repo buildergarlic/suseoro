@@ -490,10 +490,44 @@ class JobRepository:
             ).fetchone()
             is not None
         )
+        has_count_evidence = (
+            self.connection.execute(
+                """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'job_file_result_count_evidence'
+            """
+            ).fetchone()
+            is not None
+        )
         history_projection = (
-            "COALESCE(history.confidence, 'EXACT') AS count_confidence"
+            (
+                "CASE WHEN evidence.confidence = 'EXACT' "
+                "THEN evidence.successful_rows ELSE result.processed_rows END "
+                "AS effective_processed_rows, "
+                "CASE WHEN evidence.confidence = 'EXACT' "
+                "THEN evidence.error_rows ELSE result.row_error_count END "
+                "AS effective_row_error_count, "
+                "COALESCE(evidence.confidence, history.confidence, 'EXACT') "
+                "AS count_confidence"
+            )
+            if has_count_history and has_count_evidence
+            else (
+                "result.processed_rows AS effective_processed_rows, "
+                "result.row_error_count AS effective_row_error_count, "
+                "COALESCE(history.confidence, 'EXACT') AS count_confidence"
+            )
             if has_count_history
-            else "'UNVERIFIED' AS count_confidence"
+            else (
+                "result.processed_rows AS effective_processed_rows, "
+                "result.row_error_count AS effective_row_error_count, "
+                "'UNVERIFIED' AS count_confidence"
+            )
+        )
+        evidence_join = (
+            "LEFT JOIN job_file_result_count_evidence evidence "
+            "ON evidence.job_file_result_id = result.id"
+            if has_count_evidence
+            else ""
         )
         history_join = (
             "LEFT JOIN job_file_result_count_history history "
@@ -508,6 +542,7 @@ class JobRepository:
             JOIN source_documents document ON document.id = result.source_document_id
             JOIN source_files file ON file.id = document.source_file_id
             {history_join}
+            {evidence_join}
             WHERE result.job_id = ?
             ORDER BY file.original_filename, result.source_document_id
             """,
@@ -531,8 +566,8 @@ class JobRepository:
                     "filename": row["original_filename"],
                     "status": row["status"],
                     "total_rows": row["total_rows"],
-                    "processed_rows": row["processed_rows"],
-                    "row_error_count": row["row_error_count"],
+                    "processed_rows": row["effective_processed_rows"],
+                    "row_error_count": row["effective_row_error_count"],
                     "count_confidence": row["count_confidence"],
                     "error": error,
                     "mapping_required": mapping_required,

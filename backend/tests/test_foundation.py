@@ -492,7 +492,7 @@ def test_0008_preserves_populated_0007_claims_and_backfills_failed_items(
         "error_code": "UNSUPPORTED_FILE_TYPE",
     }
     assert foreign_keys == []
-    assert latest == "0015_task8_round5_mapping_provenance"
+    assert latest == "0017_task9_procurement_file_imports"
 
 
 def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
@@ -512,6 +512,8 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
             "0010a_task8_round4_upgrade_prelude",
             "0011_task8_round3_integrity",
             "0012_task8_round4_integrity",
+            "0016_task9_prerequisite_integrity",
+            "0017_task9_procurement_file_imports",
         }:
             shutil.copy2(source, old_dir / source.name)
     fixture = make_workflow_fixture(
@@ -772,7 +774,7 @@ def test_0005a_upgrades_c714_state_and_disposition_values_without_data_loss(
         fixture.connection.execute(
             "SELECT migration_id FROM schema_migrations ORDER BY migration_id DESC LIMIT 1"
         ).fetchone()[0]
-        == "0015_task8_round5_mapping_provenance"
+        == "0017_task9_procurement_file_imports"
     )
 
 

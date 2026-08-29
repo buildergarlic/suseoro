@@ -143,6 +143,17 @@ class WorkflowFixture:
             (self.workspace_id,),
         ).fetchone()["row_version"]
 
+    def candidate_collection_revision(self) -> int:
+        return int(
+            self.connection.execute(
+                """
+                SELECT candidate_collection_revision
+                FROM acquisition_workspaces WHERE id = ?
+                """,
+                (self.workspace_id,),
+            ).fetchone()["candidate_collection_revision"]
+        )
+
 
 def make_workflow_fixture(
     tmp_path: Path,

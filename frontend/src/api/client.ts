@@ -18,6 +18,11 @@ export interface MutationOptions {
   requestId?: string;
 }
 
+export interface OrderDownload {
+  blob: Blob;
+  filename: string;
+}
+
 export interface UploadInput {
   files: File[];
   role: Schemas["DocumentRole"];
@@ -28,6 +33,9 @@ export interface UploadInput {
   repairGeneration?: number;
   confirmRepairConfiguration?: boolean;
   replacementSourceId?: string;
+  procurementKind?: "QUOTE" | "DELIVERY";
+  targetRevisionId?: string;
+  reason?: string;
 }
 
 export interface CandidateFilters {
@@ -61,6 +69,13 @@ export interface SuseoroApi {
     input: UploadInput,
   ): Promise<Schemas["UploadResponse"]>;
   getJob(jobId: string): Promise<Job>;
+  listProcurementImports(
+    workspaceId: string,
+  ): Promise<Schemas["ProcurementImportPage"]>;
+  composeProcurementImport(
+    importId: string,
+    version: number,
+  ): Promise<Schemas["ProcurementImportComposeResponse"]>;
   retryJob(jobId: string): Promise<Schemas["JobCommandResponse"]>;
   cancelJob(jobId: string): Promise<Schemas["JobCommandResponse"]>;
   parseSource(sourceId: string): Promise<Schemas["QueuedJobResponse"]>;
@@ -98,6 +113,70 @@ export interface SuseoroApi {
     input: Schemas["ApprovalRequest"],
     version: number,
   ): Promise<Schemas["ApprovalRequestResponse"]>;
+  listApprovals(workspaceId: string): Promise<Schemas["ApprovalPage"]>;
+  getApproval(revisionId: string): Promise<Schemas["ApprovalDetailResponse"]>;
+  approveApproval(
+    revisionId: string,
+    workspaceId: string,
+    reason: string,
+    version: number,
+  ): Promise<Schemas["ApprovalDecisionResponse"]>;
+  requestApprovalChanges(
+    revisionId: string,
+    workspaceId: string,
+    reason: string,
+    version: number,
+  ): Promise<Schemas["ApprovalDecisionResponse"]>;
+  listQuotes(workspaceId: string): Promise<Schemas["QuotePage"]>;
+  getQuote(quoteId: string): Promise<Schemas["QuoteDetailResponse"]>;
+  createQuote(
+    workspaceId: string,
+    input: Schemas["QuoteCreate"],
+    version: number,
+  ): Promise<Schemas["QuoteResponse"]>;
+  getCurrentOrder(workspaceId: string): Promise<Schemas["CurrentOrderResponse"]>;
+  createOrder(
+    workspaceId: string,
+    input: Schemas["OrderCreate"],
+    version: number,
+  ): Promise<Schemas["OrderResponse"]>;
+  downloadOrder(orderRevisionId: string): Promise<OrderDownload>;
+  markOrderSent(
+    orderRevisionId: string,
+    workspaceId: string,
+    reason: string,
+    version: number,
+  ): Promise<Schemas["OrderSentResponse"]>;
+  listDeliveries(workspaceId: string): Promise<Schemas["DeliveryPage"]>;
+  listReceivingDifferences(
+    workspaceId: string,
+  ): Promise<Schemas["ReceivingDifferencePage"]>;
+  getReceivingStatus(workspaceId: string): Promise<Schemas["ReceivingStatusResponse"]>;
+  createDelivery(
+    workspaceId: string,
+    input: Schemas["DeliveryCreate"],
+    version: number,
+  ): Promise<Schemas["DeliveryResponse"]>;
+  startScanSession(
+    workspaceId: string,
+    input: Schemas["ScanStart"],
+    version: number,
+  ): Promise<Schemas["ScanSessionResponse"]>;
+  recordScan(
+    sessionId: string,
+    input: Schemas["ScanRecord"],
+    options?: MutationOptions,
+  ): Promise<Schemas["ScanResponse"]>;
+  setReceivingDisposition(
+    differenceId: string,
+    input: Schemas["DifferenceDisposition"],
+    version: number,
+  ): Promise<Schemas["DifferenceDispositionResponse"]>;
+  completeReceiving(
+    workspaceId: string,
+    reason: string,
+    version: number,
+  ): Promise<Schemas["WorkspaceStateResponse"]>;
 }
 
 export class ApiClientError extends Error {
@@ -230,11 +309,71 @@ const validUploadItem = exactObject<Schemas["UploadItem"]>({
   error: nullable(validUploadItemError),
   repair_obligation_id: nullable(stringValue),
   repair_generation: nullable(integerValue),
+  procurement_import_id: nullable(stringValue),
 });
 
 const validUpload = exactObject<Schemas["UploadResponse"]>({
   job_id: nullable(stringValue),
   items: arrayOf(validUploadItem),
+});
+
+const validProcurementImportProvenance = exactObject<
+  Schemas["ProcurementImportProvenance"]
+>({
+  sheet: nullable(stringValue),
+  source_row: integerValue,
+});
+
+const validProcurementImportRow = exactObject<
+  Schemas["ProcurementImportRow"]
+>({
+  source_row_id: stringValue,
+  status: stringValue,
+  provenance: validProcurementImportProvenance,
+  error: nullable(validUploadItemError),
+  result_row_id: nullable(stringValue),
+});
+
+const validProcurementImport = exactObject<
+  Schemas["ProcurementImportItem"]
+>({
+  import_id: stringValue,
+  source_id: stringValue,
+  kind: stringValue,
+  target_revision_id: stringValue,
+  vendor_name: stringValue,
+  status: stringValue,
+  filename: stringValue,
+  detected_format: stringValue,
+  parser_version: stringValue,
+  template_version: nullable(stringValue),
+  total_rows: integerValue,
+  processed_rows: integerValue,
+  row_error_count: integerValue,
+  count_confidence: stringValue,
+  mapping_required: nullable(validMappingRequired),
+  result_id: nullable(stringValue),
+  rows: arrayOf(validProcurementImportRow),
+  created_at: stringValue,
+  completed_at: nullable(stringValue),
+});
+
+const validProcurementImportPage = exactObject<
+  Schemas["ProcurementImportPage"]
+>({
+  items: arrayOf(validProcurementImport),
+  next_cursor: nullable(stringValue),
+});
+
+const validProcurementImportCompose = exactObject<
+  Schemas["ProcurementImportComposeResponse"]
+>({
+  import_id: stringValue,
+  kind: stringValue,
+  status: stringValue,
+  result_id: stringValue,
+  state: stringValue,
+  row_version: integerValue,
 });
 
 const validJobCommand = exactObject<Schemas["JobCommandResponse"]>({
@@ -304,6 +443,158 @@ const validApproval = exactObject<Schemas["ApprovalRequestResponse"]>({
   sha256: stringValue,
   expected_total_won: integerValue,
   budget_won: integerValue,
+  candidate_collection_revision: integerValue,
+  state: stringValue,
+  row_version: integerValue,
+});
+
+const validApprovalDecision = exactObject<Schemas["ApprovalDecisionResponse"]>({
+  revision_id: stringValue,
+  decision: stringValue,
+  state: stringValue,
+  row_version: integerValue,
+});
+
+const validQuoteReconciliation = exactObject<Schemas["QuoteReconciliation"]>({
+  duplicate_isbns: arrayOf(stringValue),
+  price_conflicts: arrayOf(stringValue),
+});
+
+const validQuoteRow = exactObject<Schemas["QuoteRowResponse"]>({
+  quote_row_id: stringValue,
+  approval_row_id: nullable(stringValue),
+  match_status: stringValue,
+  isbn13: nullable(stringValue),
+  title: stringValue,
+  author: stringValue,
+  publisher: nullable(stringValue),
+  edition: nullable(stringValue),
+  quantity: integerValue,
+  unit_price: nullable(integerValue),
+  list_price: nullable(integerValue),
+  out_of_stock: booleanValue,
+  line_total_won: integerValue,
+});
+
+const validQuote = exactObject<Schemas["QuoteResponse"]>({
+  quote_id: stringValue,
+  revision_number: integerValue,
+  state: stringValue,
+  row_version: integerValue,
+  total_won: integerValue,
+  list_total_won: integerValue,
+  discount_won: integerValue,
+  budget_overrun_won: integerValue,
+  out_of_stock_count: integerValue,
+  missing_price_count: integerValue,
+  list_mismatch_count: integerValue,
+  needs_review_count: integerValue,
+  unmatched_count: integerValue,
+  requires_reapproval: booleanValue,
+  reconciliation: validQuoteReconciliation,
+  rows: arrayOf(validQuoteRow),
+});
+
+const validOrderAllocation = exactObject<Schemas["OrderAllocation"]>({
+  candidate_id: stringValue,
+  quote_id: stringValue,
+  quote_row_id: stringValue,
+  vendor_name: stringValue,
+  quantity: integerValue,
+  unit_price: integerValue,
+});
+
+const validOrderArtifact = exactObject<Schemas["OrderArtifact"]>({
+  vendor_name: stringValue,
+  quote_id: stringValue,
+  artifact_id: stringValue,
+  sha256: stringValue,
+  size_bytes: integerValue,
+});
+
+const validOverAllocation = exactObject<Schemas["OrderOverAllocation"]>({
+  candidate_id: stringValue,
+  expected: integerValue,
+  allocated: integerValue,
+});
+
+const validOrderDiagnostics = exactObject<Schemas["OrderDiagnostics"]>({
+  missing_candidate_ids: arrayOf(stringValue),
+  duplicate_candidate_ids: arrayOf(stringValue),
+  over_allocations: arrayOf(validOverAllocation),
+  price_conflict_candidate_ids: arrayOf(stringValue),
+  unmapped_quote_row_ids: arrayOf(stringValue),
+});
+
+const validOrder = exactObject<Schemas["OrderResponse"]>({
+  status: stringValue,
+  state: stringValue,
+  row_version: integerValue,
+  revision_id: nullable(stringValue),
+  revision_number: nullable(integerValue),
+  artifact_id: nullable(stringValue),
+  sha256: nullable(stringValue),
+  size_bytes: nullable(integerValue),
+  artifacts: nullable(arrayOf(validOrderArtifact)),
+  allocations: nullable(arrayOf(validOrderAllocation)),
+  validation_id: nullable(stringValue),
+  diagnostics: nullable(validOrderDiagnostics),
+  external_send_performed: nullable(booleanValue),
+});
+
+const validOrderSent = exactObject<Schemas["OrderSentResponse"]>({
+  transmission_id: stringValue,
+  state: stringValue,
+  row_version: integerValue,
+  external_send_performed: booleanValue,
+});
+
+const validDifferenceDetails = exactObject<Schemas["ReceivingDifferenceDetails"]>({
+  expected: nullable((value): value is string | number => stringValue(value) || finiteNumber(value)),
+  received: nullable((value): value is string | number => stringValue(value) || finiteNumber(value)),
+  isbn13: nullable(stringValue),
+  title: nullable(stringValue),
+  edition: nullable(stringValue),
+  scanned: nullable(integerValue),
+  scanned_quantity: nullable(integerValue),
+});
+
+const validDeliveryDifference = exactObject<Schemas["DeliveryDifferenceResult"]>({
+  id: stringValue,
+  kind: stringValue,
+  details: validDifferenceDetails,
+});
+
+const validDelivery = exactObject<Schemas["DeliveryResponse"]>({
+  delivery_batch_id: stringValue,
+  delivery_number: integerValue,
+  received_quantity: integerValue,
+  differences: arrayOf(validDeliveryDifference),
+  state: stringValue,
+  row_version: integerValue,
+});
+
+const validScanSession = exactObject<Schemas["ScanSessionResponse"]>({
+  session_id: stringValue,
+  state: stringValue,
+  row_version: integerValue,
+});
+
+const validScan = exactObject<Schemas["ScanResponse"]>({
+  event_id: stringValue,
+  code: stringValue,
+  isbn13: nullable(stringValue),
+  scanned_quantity: integerValue,
+  order_row_id: nullable(stringValue),
+});
+
+const validDisposition = exactObject<Schemas["DifferenceDispositionResponse"]>({
+  difference_id: stringValue,
+  disposition: stringValue,
+  row_version: integerValue,
+});
+
+const validWorkspaceState = exactObject<Schemas["WorkspaceStateResponse"]>({
   state: stringValue,
   row_version: integerValue,
 });
@@ -650,6 +941,15 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
       if (input.replacementSourceId) {
         form.set("replacement_source_document_id", input.replacementSourceId);
       }
+      if (input.procurementKind) {
+        form.set("procurement_kind", input.procurementKind);
+      }
+      if (input.targetRevisionId) {
+        form.set("target_revision_id", input.targetRevisionId);
+      }
+      if (input.reason) {
+        form.set("reason", input.reason);
+      }
       const files = await Promise.all(
         input.files.map(async (file) => ({
           filename: file.name,
@@ -684,6 +984,9 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
               confirm_repair_configuration:
                 input.confirmRepairConfiguration ?? false,
               replacement_source_document_id: input.replacementSourceId ?? null,
+              procurement_kind: input.procurementKind ?? null,
+              target_revision_id: input.targetRevisionId ?? null,
+              reason: input.reason ?? null,
             },
             validateResponse: validUpload,
           },
@@ -692,6 +995,28 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
     },
     getJob: async (jobId) =>
       (await request<Job>(`/api/v2/jobs/${jobId}`)).data,
+    listProcurementImports: async (workspaceId) =>
+      (
+        await request<Schemas["ProcurementImportPage"]>(
+          `/api/v2/workspaces/${workspaceId}/procurement-imports`,
+          { validateResponse: validProcurementImportPage },
+        )
+      ).data,
+    composeProcurementImport: async (importId, version) =>
+      (
+        await request<Schemas["ProcurementImportComposeResponse"]>(
+          `/api/v2/procurement-imports/${importId}/compose`,
+          {
+            method: "POST",
+            version,
+            mutation: true,
+            csrf: true,
+            logicalAction: `procurement-imports:compose:${importId}`,
+            logicalPayload: { import_id: importId, row_version: version },
+            validateResponse: validProcurementImportCompose,
+          },
+        )
+      ).data,
     retryJob: async (jobId) =>
       (
         await request<Schemas["JobCommandResponse"]>(
@@ -833,6 +1158,244 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             logicalAction: `workspaces:approval:${workspaceId}`,
             logicalPayload: { ...input, row_version: version },
             validateResponse: validApproval,
+          },
+        )
+      ).data,
+    listApprovals: async (workspaceId) =>
+      await collectCursorPages(async (cursor) => {
+        const query = new URLSearchParams({ limit: "100" });
+        if (cursor) query.set("cursor", cursor);
+        return (
+          await request<Schemas["ApprovalPage"]>(
+            `/api/v2/workspaces/${workspaceId}/approvals?${query.toString()}`,
+          )
+        ).data;
+      }),
+    getApproval: async (revisionId) =>
+      (
+        await request<Schemas["ApprovalDetailResponse"]>(
+          `/api/v2/approvals/${revisionId}`,
+        )
+      ).data,
+    approveApproval: async (revisionId, workspaceId, reason, version) =>
+      (
+        await request<Schemas["ApprovalDecisionResponse"]>(
+          `/api/v2/approvals/${revisionId}/approve`,
+          {
+            method: "POST",
+            body: { workspace_id: workspaceId, reason },
+            version,
+            mutation: true,
+            csrf: true,
+            logicalAction: `approvals:approve:${revisionId}`,
+            logicalPayload: { workspace_id: workspaceId, reason, row_version: version },
+            validateResponse: validApprovalDecision,
+          },
+        )
+      ).data,
+    requestApprovalChanges: async (revisionId, workspaceId, reason, version) =>
+      (
+        await request<Schemas["ApprovalDecisionResponse"]>(
+          `/api/v2/approvals/${revisionId}/changes-request`,
+          {
+            method: "POST",
+            body: { workspace_id: workspaceId, reason },
+            version,
+            mutation: true,
+            csrf: true,
+            logicalAction: `approvals:changes:${revisionId}`,
+            logicalPayload: { workspace_id: workspaceId, reason, row_version: version },
+            validateResponse: validApprovalDecision,
+          },
+        )
+      ).data,
+    listQuotes: async (workspaceId) =>
+      await collectCursorPages(async (cursor) => {
+        const query = new URLSearchParams({ limit: "100" });
+        if (cursor) query.set("cursor", cursor);
+        return (
+          await request<Schemas["QuotePage"]>(
+            `/api/v2/workspaces/${workspaceId}/quotes?${query.toString()}`,
+          )
+        ).data;
+      }),
+    getQuote: async (quoteId) =>
+      (
+        await request<Schemas["QuoteDetailResponse"]>(
+          `/api/v2/quotes/${quoteId}`,
+        )
+      ).data,
+    createQuote: async (workspaceId, input, version) =>
+      (
+        await request<Schemas["QuoteResponse"]>(
+          `/api/v2/workspaces/${workspaceId}/quotes`,
+          {
+            method: "POST",
+            body: input,
+            version,
+            mutation: true,
+            csrf: true,
+            logicalAction: `quotes:create:${workspaceId}`,
+            logicalPayload: { ...input, row_version: version },
+            validateResponse: validQuote,
+          },
+        )
+      ).data,
+    getCurrentOrder: async (workspaceId) =>
+      (
+        await request<Schemas["CurrentOrderResponse"]>(
+          `/api/v2/workspaces/${workspaceId}/orders/current`,
+        )
+      ).data,
+    createOrder: async (workspaceId, input, version) =>
+      (
+        await request<Schemas["OrderResponse"]>(
+          `/api/v2/workspaces/${workspaceId}/orders`,
+          {
+            method: "POST",
+            body: input,
+            version,
+            mutation: true,
+            csrf: true,
+            logicalAction: `orders:create:${workspaceId}`,
+            logicalPayload: { ...input, row_version: version },
+            validateResponse: validOrder,
+          },
+        )
+      ).data,
+    downloadOrder: async (orderRevisionId) => {
+      const response = await fetch(
+        `${baseUrl}/api/v2/orders/${orderRevisionId}/download`,
+        { credentials: "include", headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } },
+      );
+      if (!response.ok) {
+        let body: unknown;
+        try {
+          body = await response.json();
+        } catch {
+          body = undefined;
+        }
+        throw new ApiClientError(response.status, errorDetail(response.status, body));
+      }
+      const disposition = response.headers.get("Content-Disposition") ?? "";
+      const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? `order-${orderRevisionId}.xlsx`;
+      return { blob: await response.blob(), filename };
+    },
+    markOrderSent: async (orderRevisionId, workspaceId, reason, version) =>
+      (
+        await request<Schemas["OrderSentResponse"]>(
+          `/api/v2/orders/${orderRevisionId}/sent`,
+          {
+            method: "POST",
+            body: { workspace_id: workspaceId, reason },
+            version,
+            mutation: true,
+            csrf: true,
+            logicalAction: `orders:sent:${orderRevisionId}`,
+            logicalPayload: { workspace_id: workspaceId, reason, row_version: version },
+            validateResponse: validOrderSent,
+          },
+        )
+      ).data,
+    listDeliveries: async (workspaceId) =>
+      (
+        await request<Schemas["DeliveryPage"]>(
+          `/api/v2/workspaces/${workspaceId}/deliveries?limit=100`,
+        )
+      ).data,
+    listReceivingDifferences: async (workspaceId) =>
+      await collectCursorPages(async (cursor) => {
+        const query = new URLSearchParams({ limit: "100", active: "true" });
+        if (cursor) query.set("cursor", cursor);
+        return (
+          await request<Schemas["ReceivingDifferencePage"]>(
+            `/api/v2/workspaces/${workspaceId}/receiving/differences?${query.toString()}`,
+          )
+        ).data;
+      }),
+    getReceivingStatus: async (workspaceId) =>
+      (
+        await request<Schemas["ReceivingStatusResponse"]>(
+          `/api/v2/workspaces/${workspaceId}/receiving/status`,
+        )
+      ).data,
+    createDelivery: async (workspaceId, input, version) =>
+      (
+        await request<Schemas["DeliveryResponse"]>(
+          `/api/v2/workspaces/${workspaceId}/deliveries`,
+          {
+            method: "POST",
+            body: input,
+            version,
+            mutation: true,
+            csrf: true,
+            logicalAction: `deliveries:create:${workspaceId}`,
+            logicalPayload: { ...input, row_version: version },
+            validateResponse: validDelivery,
+          },
+        )
+      ).data,
+    startScanSession: async (workspaceId, input, version) =>
+      (
+        await request<Schemas["ScanSessionResponse"]>(
+          `/api/v2/workspaces/${workspaceId}/scans/sessions`,
+          {
+            method: "POST",
+            body: input,
+            version,
+            mutation: true,
+            csrf: true,
+            logicalAction: `scans:start:${workspaceId}`,
+            logicalPayload: { ...input, row_version: version },
+            validateResponse: validScanSession,
+          },
+        )
+      ).data,
+    recordScan: async (sessionId, input, command) =>
+      (
+        await request<Schemas["ScanResponse"]>(
+          `/api/v2/scans/sessions/${sessionId}/events`,
+          {
+            method: "POST",
+            body: input,
+            mutation: true,
+            csrf: true,
+            command,
+            logicalAction: `scans:event:${sessionId}`,
+            logicalPayload: input,
+            validateResponse: validScan,
+          },
+        )
+      ).data,
+    setReceivingDisposition: async (differenceId, input, version) =>
+      (
+        await request<Schemas["DifferenceDispositionResponse"]>(
+          `/api/v2/receiving/differences/${differenceId}`,
+          {
+            method: "PATCH",
+            body: input,
+            version,
+            mutation: true,
+            csrf: true,
+            logicalAction: `receiving:disposition:${differenceId}`,
+            logicalPayload: { ...input, row_version: version },
+            validateResponse: validDisposition,
+          },
+        )
+      ).data,
+    completeReceiving: async (workspaceId, reason, version) =>
+      (
+        await request<Schemas["WorkspaceStateResponse"]>(
+          `/api/v2/workspaces/${workspaceId}/receiving/complete`,
+          {
+            method: "POST",
+            body: { reason },
+            version,
+            mutation: true,
+            csrf: true,
+            logicalAction: `receiving:complete:${workspaceId}`,
+            logicalPayload: { reason, row_version: version },
+            validateResponse: validWorkspaceState,
           },
         )
       ).data,

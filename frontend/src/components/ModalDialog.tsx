@@ -26,10 +26,17 @@ export function ModalDialog({
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const returnFocus = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
     const target =
       initialFocusRef?.current ?? panel?.querySelector<HTMLElement>(FOCUSABLE);
     target?.focus();
+    return () => {
+      const active = document.activeElement;
+      if (active === document.body || (active !== null && panel?.contains(active))) {
+        returnFocus?.focus();
+      }
+    };
   }, [initialFocusRef]);
 
   function keepFocusInside(event: ReactKeyboardEvent<HTMLDivElement>) {

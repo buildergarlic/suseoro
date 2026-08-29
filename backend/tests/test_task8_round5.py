@@ -30,6 +30,7 @@ CAPTURE_ID = "0010b_task8_round5_count_capture"
 RESTORATION_ID = "0013_task8_round5_count_restoration"
 CANDIDATE_REVISION_ID = "0014_task8_round5_candidate_revision"
 MAPPING_PROVENANCE_ID = "0015_task8_round5_mapping_provenance"
+TASK9_PREREQUISITE_ID = "0016_task9_prerequisite_integrity"
 COMMITTED_0011_SHA256 = (
     "eb22db853d9488c3fdc0a95ad0eafd2e4c79884d41d6d313b272cb49822242b0"
 )
@@ -50,6 +51,7 @@ def _round4_directory(tmp_path: Path) -> Path:
             RESTORATION_ID,
             CANDIDATE_REVISION_ID,
             MAPPING_PROVENANCE_ID,
+            TASK9_PREREQUISITE_ID,
         },
     )
 
@@ -65,6 +67,7 @@ def _0010_directory(tmp_path: Path) -> Path:
             RESTORATION_ID,
             CANDIDATE_REVISION_ID,
             MAPPING_PROVENANCE_ID,
+            TASK9_PREREQUISITE_ID,
         },
     )
 
@@ -79,6 +82,7 @@ def _0011_directory(tmp_path: Path) -> Path:
             RESTORATION_ID,
             CANDIDATE_REVISION_ID,
             MAPPING_PROVENANCE_ID,
+            TASK9_PREREQUISITE_ID,
         },
     )
 
@@ -91,7 +95,7 @@ def _file_result(fixture, job_id: str) -> dict[str, object]:
     )
 
 
-def test_populated_0010_upgrade_preserves_exact_partial_counts_per_job(
+def test_populated_0010_upgrade_preserves_partial_counts_but_requires_evidence(
     tmp_path: Path,
 ) -> None:
     """Replacing immutable per-job counts with current source rows is data corruption."""
@@ -116,7 +120,7 @@ def test_populated_0010_upgrade_preserves_exact_partial_counts_per_job(
         10,
         "PARTIAL",
     )
-    assert _file_result(fixture, job_id)["count_confidence"] == "EXACT"
+    assert _file_result(fixture, job_id)["count_confidence"] == "UNVERIFIED"
 
 
 def test_populated_0010_failed_result_preserves_nonzero_processed_count(
@@ -249,7 +253,7 @@ def test_already_0012_with_pre_rewrite_capture_restores_exact_counts(
         10,
         "PARTIAL",
     )
-    assert _file_result(fixture, job_id)["count_confidence"] == "EXACT"
+    assert _file_result(fixture, job_id)["count_confidence"] == "UNVERIFIED"
 
 
 def test_missing_prelude_repair_does_not_rerun_0012_count_reconstruction(

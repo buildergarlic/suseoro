@@ -8,6 +8,8 @@ import sqlite3
 import uuid
 from typing import Any
 
+from fastapi import HTTPException
+
 from suseoro.api.dependencies import may_approve_own_change
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.audit import record_audit_event
@@ -65,6 +67,17 @@ class ApprovalService:
             error_type=ApprovalError,
         )
 
+    def _require_participant(
+        self, school_id: str, actor_id: str, roles: tuple[str, ...]
+    ) -> None:
+        if "REVIEWER" in roles:
+            self._require_reviewer(school_id, actor_id, roles)
+            return
+        if "OPERATOR" in roles:
+            self._require_operator(school_id, actor_id, roles)
+            return
+        raise ApprovalError("ROLE_REQUIRED")
+
     def _workspace(self, school_id: str, workspace_id: str):
         row = self.connection.execute(
             "SELECT * FROM acquisition_workspaces WHERE id = ? AND school_id = ?",
@@ -111,6 +124,7 @@ class ApprovalService:
         workspace_id: str,
         actor_id: str,
         budget_won: int,
+        candidate_collection_revision: int,
         reason: str,
     ) -> dict[str, object]:
         if (
@@ -128,17 +142,55 @@ class ApprovalService:
                 "author": row["author"],
                 "candidate_id": row["candidate_id"],
                 "isbn13": row["isbn13"],
+                "edition": row["edition"],
                 "quantity": row["quantity"],
                 "title": row["title"],
                 "unit_price": row["unit_price"],
             }
             for row in rows
         ]
+        active_catalog = self.connection.execute(
+            """
+            SELECT as_of_local_date, created_at
+            FROM catalog_versions
+            WHERE school_id = ? AND status = 'ACTIVE'
+            ORDER BY activated_at DESC, id DESC LIMIT 1
+            """,
+            (school_id,),
+        ).fetchone()
+        excluded_rows = self.connection.execute(
+            """
+            SELECT COALESCE(NULLIF(TRIM(reason), ''), '자동 제외') AS reason,
+                   COUNT(*) AS n
+            FROM candidate_decisions
+            WHERE school_id = ? AND workspace_id = ? AND outcome = 'EXCLUDED'
+            GROUP BY COALESCE(NULLIF(TRIM(reason), ''), '자동 제외')
+            ORDER BY n DESC, reason
+            """,
+            (school_id, workspace_id),
+        ).fetchall()
+        review_snapshot = {
+            "catalog_as_of_local_date": (
+                active_catalog["as_of_local_date"]
+                or str(active_catalog["created_at"])[:10]
+                if active_catalog is not None
+                else None
+            ),
+            "unresolved_complete": True,
+            "source_counts_verified": True,
+            "auto_excluded_count": sum(int(row["n"]) for row in excluded_rows),
+            "auto_exclusions": [
+                {"reason": row["reason"], "count": int(row["n"])}
+                for row in excluded_rows
+            ],
+        }
         canonical_json = _canonical(
             {
                 "budget_won": budget_won,
+                "candidate_collection_revision": candidate_collection_revision,
                 "candidates": canonical_rows,
                 "expected_total_won": expected_total,
+                "review_snapshot": review_snapshot,
             }
         )
         sha256 = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
@@ -156,8 +208,8 @@ class ApprovalService:
             INSERT INTO approval_revisions (
                 id, school_id, workspace_id, revision_number, canonical_json,
                 sha256, budget_won, expected_total_won, created_by_user_id,
-                reason, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                reason, created_at, candidate_collection_revision
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 revision_id,
@@ -171,6 +223,7 @@ class ApprovalService:
                 actor_id,
                 reason,
                 now,
+                candidate_collection_revision,
             ),
         )
         for row in rows:
@@ -209,7 +262,60 @@ class ApprovalService:
             "sha256": sha256,
             "expected_total_won": expected_total,
             "budget_won": budget_won,
+            "candidate_collection_revision": candidate_collection_revision,
         }
+
+    def _require_verified_source_counts(
+        self, *, school_id: str, workspace_id: str
+    ) -> None:
+        unverified = self.connection.execute(
+            """
+            SELECT result.source_document_id
+            FROM workspace_sources AS link
+            JOIN source_documents AS document
+              ON document.id = link.source_document_id
+            JOIN job_file_results AS result
+              ON result.source_document_id = link.source_document_id
+            JOIN durable_jobs AS job ON job.id = result.job_id
+            LEFT JOIN job_file_result_count_history AS history
+              ON history.job_file_result_id = result.id
+            LEFT JOIN job_file_result_count_evidence AS evidence
+              ON evidence.job_file_result_id = result.id
+            WHERE link.school_id = ? AND link.workspace_id = ?
+              AND document.role = 'PURCHASE_REQUEST'
+              AND job.job_type IN ('INGEST', 'PARSE')
+              AND result.status IN ('SUCCESS', 'PARTIAL', 'FAILED')
+              AND COALESCE(
+                    evidence.confidence, history.confidence, 'EXACT'
+                  ) = 'UNVERIFIED'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM job_file_results AS newer
+                  JOIN durable_jobs AS newer_job ON newer_job.id = newer.job_id
+                  WHERE newer.source_document_id = result.source_document_id
+                    AND newer_job.job_type IN ('INGEST', 'PARSE')
+                    AND newer.status IN ('SUCCESS', 'PARTIAL', 'FAILED')
+                    AND (
+                        newer.updated_at > result.updated_at
+                        OR (
+                            newer.updated_at = result.updated_at
+                            AND newer.id > result.id
+                        )
+                    )
+              )
+            ORDER BY result.source_document_id
+            LIMIT 1
+            """,
+            (school_id, workspace_id),
+        ).fetchone()
+        if unverified is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "SOURCE_COUNTS_UNVERIFIED",
+                    "source_document_id": unverified["source_document_id"],
+                },
+            )
 
     def request_approval(
         self,
@@ -219,6 +325,7 @@ class ApprovalService:
         actor_id: str,
         actor_roles: tuple[str, ...],
         workspace_version: int,
+        candidate_collection_revision: int,
         budget_won: int,
         reason: str,
         idempotency_key: str,
@@ -227,6 +334,7 @@ class ApprovalService:
         body = {
             "workspace_id": workspace_id,
             "workspace_version": workspace_version,
+            "candidate_collection_revision": candidate_collection_revision,
             "budget_won": budget_won,
             "reason": reason,
         }
@@ -238,6 +346,25 @@ class ApprovalService:
             workspace = self._workspace(school_id, workspace_id)
             if workspace["status"] not in {"CANDIDATE_REVIEW", "CHANGES_REQUESTED"}:
                 raise ApprovalError("APPROVAL_REQUEST_STATE_INVALID")
+            current_collection_revision = int(
+                workspace["candidate_collection_revision"]
+            )
+            if candidate_collection_revision != current_collection_revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "CANDIDATE_COLLECTION_CHANGED",
+                        "accepted_candidate_collection_revision": (
+                            candidate_collection_revision
+                        ),
+                        "current_candidate_collection_revision": (
+                            current_collection_revision
+                        ),
+                    },
+                )
+            self._require_verified_source_counts(
+                school_id=school_id, workspace_id=workspace_id
+            )
             unresolved = self.connection.execute(
                 """
                 SELECT COUNT(*) AS n FROM candidate_decisions
@@ -252,6 +379,7 @@ class ApprovalService:
                 workspace_id=workspace_id,
                 actor_id=actor_id,
                 budget_won=budget_won,
+                candidate_collection_revision=current_collection_revision,
                 reason=reason.strip(),
             )
             updated = update_with_version(
@@ -304,7 +432,7 @@ class ApprovalService:
         actor_id: str,
         actor_roles: tuple[str, ...],
     ) -> dict[str, object]:
-        self._require_reviewer(school_id, actor_id, actor_roles)
+        self._require_participant(school_id, actor_id, actor_roles)
         row = self.connection.execute(
             """
             SELECT * FROM approval_revisions
@@ -314,11 +442,108 @@ class ApprovalService:
         ).fetchone()
         if row is None:
             raise ApprovalError("APPROVAL_REVISION_NOT_FOUND")
+        payload = json.loads(row["canonical_json"])
+        snapshot = payload.pop("review_snapshot", {})
+        approval_rows = self.connection.execute(
+            """
+            SELECT id, candidate_id, edition
+            FROM approval_rows WHERE approval_revision_id = ?
+            """,
+            (revision_id,),
+        ).fetchall()
+        row_by_candidate = {item["candidate_id"]: item for item in approval_rows}
+        payload["candidates"] = [
+            {
+                **candidate,
+                "approval_row_id": row_by_candidate[candidate["candidate_id"]]["id"],
+                "edition": row_by_candidate[candidate["candidate_id"]]["edition"],
+            }
+            for candidate in payload["candidates"]
+        ]
+        previous = self.connection.execute(
+            """
+            SELECT id, revision_number FROM approval_revisions
+            WHERE school_id = ? AND workspace_id = ? AND sealed_at IS NOT NULL
+              AND revision_number < ?
+            ORDER BY revision_number DESC LIMIT 1
+            """,
+            (school_id, row["workspace_id"], row["revision_number"]),
+        ).fetchone()
+        previous_rows: dict[str, sqlite3.Row] = {}
+        if previous is not None:
+            previous_rows = {
+                item["candidate_id"]: item
+                for item in self.connection.execute(
+                    """
+                    SELECT candidate_id, quantity, unit_price
+                    FROM approval_rows WHERE approval_revision_id = ?
+                    """,
+                    (previous["id"],),
+                ).fetchall()
+            }
+        current_rows = {
+            item["candidate_id"]: item
+            for item in self.connection.execute(
+                """
+                SELECT candidate_id, quantity, unit_price
+                FROM approval_rows WHERE approval_revision_id = ?
+                """,
+                (revision_id,),
+            ).fetchall()
+        }
+        shared = set(current_rows) & set(previous_rows)
+        decision = self.connection.execute(
+            """
+            SELECT decision, reason FROM approval_decisions
+            WHERE approval_revision_id = ?
+            """,
+            (revision_id,),
+        ).fetchone()
+        requester = self.connection.execute(
+            "SELECT display_name FROM users WHERE id = ? AND school_id = ?",
+            (row["created_by_user_id"], school_id),
+        ).fetchone()
         return {
             "revision_id": row["id"],
             "revision_number": row["revision_number"],
             "sha256": row["sha256"],
-            "payload": json.loads(row["canonical_json"]),
+            "payload": {
+                **payload,
+                "candidate_collection_revision": row["candidate_collection_revision"],
+            },
+            "metadata": {
+                "candidate_count": len(current_rows),
+                "catalog_as_of_local_date": snapshot.get("catalog_as_of_local_date"),
+                "unresolved_complete": bool(snapshot.get("unresolved_complete", False)),
+                "source_counts_verified": bool(
+                    snapshot.get("source_counts_verified", False)
+                ),
+                "auto_excluded_count": int(snapshot.get("auto_excluded_count", 0)),
+                "auto_exclusions": list(snapshot.get("auto_exclusions", [])),
+                "previous_revision": {
+                    "revision_number": (
+                        previous["revision_number"] if previous is not None else None
+                    ),
+                    "added_count": len(set(current_rows) - set(previous_rows)),
+                    "removed_count": len(set(previous_rows) - set(current_rows)),
+                    "quantity_changed_count": sum(
+                        current_rows[key]["quantity"] != previous_rows[key]["quantity"]
+                        for key in shared
+                    ),
+                    "price_changed_count": sum(
+                        current_rows[key]["unit_price"]
+                        != previous_rows[key]["unit_price"]
+                        for key in shared
+                    ),
+                },
+                "request_reason": row["reason"],
+                "requested_by_display_name": (
+                    requester["display_name"] if requester is not None else ""
+                ),
+                "created_at": row["created_at"],
+                "decision": decision["decision"] if decision is not None else None,
+                "decision_reason": decision["reason"] if decision is not None else None,
+            },
         }
 
     def comment(
@@ -780,11 +1005,17 @@ class ApprovalService:
             revision: dict[str, object] | None = None
             state = workspace["status"]
             if reapproval:
+                current_collection_revision = int(
+                    self._workspace(school_id, workspace_id)[
+                        "candidate_collection_revision"
+                    ]
+                )
                 revision = self._create_revision(
                     school_id=school_id,
                     workspace_id=workspace_id,
                     actor_id=actor_id,
                     budget_won=budget_won,
+                    candidate_collection_revision=current_collection_revision,
                     reason=reason.strip(),
                 )
                 state = "APPROVAL_PENDING"
