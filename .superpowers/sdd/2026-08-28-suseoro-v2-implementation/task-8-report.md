@@ -454,7 +454,7 @@ D296F53AAB8FD5208F90F00A0011FE9E4A6123CDD29898BA0A399A094509A203
 새 migration `0008_upload_repair_and_job_discovery.sql`의 SHA-256은
 `8CA289F58AE22F4B6AE325DA1A3CC971ECE9E08C8A5142CBC5C1A48D7A05849D`,
 `0009_repair_recovery_transition.sql`은
-`7D020CD41D6C7A3AB9FAC0F43DAA873336ACAC889FD5FA171E19A4459D6383`,
+`7D020CD41D6C7A3AB9FAC0F43DAA873336ACACAC889FD5FA171E19A4459D6383`,
 `0010_source_correction_recovery.sql`은
 `53935B8765516454A85FF1E13253180139A4E36978F575D3E562EFD05FAF9C79`이다. `0001`~`0007`의 hash는
 기존 기준과 같고, 특히 `0006b_upload_idempotency_fencing.sql`은
@@ -464,3 +464,101 @@ D296F53AAB8FD5208F90F00A0011FE9E4A6123CDD29898BA0A399A094509A203
 0008→0009→0010으로 올린 뒤 foreign-key/integrity, 복구 의무 backfill, transition trigger를 검증했다.
 세 새 migration만 제외한 `git diff --exit-code 4ccff0b -- backend/src/suseoro/db/migrations`는 exit 0이었다.
 plan/progress ledger와 Task 10의 ASGI pre-parser cap은 수정하지 않았다. 최종 blocker는 없다.
+
+## 검토 수정 라운드 3 (2026-08-29)
+
+검토 commit `84b00db`의 11개 Important 지적을 behavior-specific regression으로 재현하고 닫았다.
+배포된 `0008`~`0010`은 byte-for-byte 보존하고, parse/config generation과 복구 pending source/count
+무결성만 더하는 forward-only `0011_task8_round3_integrity.sql`을 추가했다. 기존 세 화면과 주요 한국어
+copy는 바꾸지 않았고 새 화면도 만들지 않았다.
+
+### Backend: server 권위 source 집합과 원자적 실행 fence
+
+- 비교 command의 source 목록은 browser가 전송한 최대 100개 배열에 의존하지 않는다. 서버가 workspace의
+  모든 `PURCHASE_REQUEST` source를 결정론적으로 도출하며 101개 regression으로 고정했다. legacy 배열이
+  오면 현재 권위 집합과 정확히 같을 때만 허용한다. 대규모 id 집합은 SQLite bind placeholder가 아니라
+  `json_each`로 조회한다.
+- migrated `UNKNOWN` 복구 의무는 사용자가 role을 명시적으로 확인해야 한다. vendor scope와 inclusive delta
+  날짜까지 같은 writer fence에서 한 번 bind하고, replacement upload 성공만으로는 의무를 닫지 않는다.
+  replacement는 `pending_source_document_id`로 남고 현재 config generation 아래 parse가 끝나며 성공 logical
+  row가 있을 때만 `RESOLVED`가 된다. mapping-required, parser 실패, 전 행 오류는 계속 비교를 막는다.
+- mapping PATCH는 `source_rows`와 parse readiness를 원자적으로 무효화하고 config `row_version`을 올린다.
+  `source_documents.parsed_config_version`이 현재 config version과 일치하는 성공 reparse만 비교 source가 될 수
+  있다. parser는 읽기 시작과 저장 직전에 generation을 다시 확인한다.
+- COMPARE 각 claim batch의 `BEGIN IMMEDIATE` 안에서 source membership/role/config generation/parsed generation,
+  file SHA-256, parser/completion marker, logical-row count/digest, unresolved repair, 전역 parser job, active catalog를
+  다시 확인한 뒤에만 comparison/candidate row를 쓴다. drift는 output row 0건으로 원자 실패한다.
+- 한 source가 둘 이상의 workspace에 연결됐으면 source-global parse/mapping을 시작하지 않는다. 단일 owner로
+  queue된 뒤 공유된 경우 worker가 다시 차단하고, 어느 workspace에서 시작했든 같은 school의 active
+  INGEST/PARSE가 모든 linked workspace의 비교를 막는다.
+- 파일 결과의 `processed_rows`는 성공 logical book row만 세고 `row_error_count`를 별도로 영속/노출한다.
+  성공 1행 + 오류 1행은 정확히 `1권 읽음 · 확인 필요 1`로 표시된다.
+- parsed source 교체는 client가 추측한 role/config를 받지 않고 서버의 role, vendor scope, inclusive delta 날짜,
+  mapping과 remembered template를 모두 이어받는다. VENDOR_QUOTE와 delta replacement regression을 추가했다.
+
+### Frontend: 전체 reload, mutation validator와 후보 reconciliation
+
+- source/repair/job discovery는 cursor를 끝까지 순회하고 id를 deduplicate하며 cursor cycle은 안전하게 중단한다.
+  mapping이 여러 개 있어도 다른 active parse job을 병렬로 bounded polling한다. failed COMPARE retry는 모든
+  repair page를 읽기 전에는 fail-closed이며, server-derived comparison command body는 `{}`다.
+- migrated UNKNOWN 복구 행은 자료 종류 selector를 먼저 보여주고 vendor/delta이면 서버가 보존한 scope/date를
+  그대로 확인한다. 명시 확인 없이는 파일 picker가 upload를 시작하지 않는다.
+- 모든 mutation success는 generated type만 믿고 key를 지우지 않는다. login/upload/retry/cancel/parse/mapping/
+  comparison/lock/autosave/approval response의 runtime shape를 확인하며 `{}`나 잘린 2xx는 ambiguous로 취급해
+  동일 logical-action key를 유지한다. 동시 malformed-first/success-last 순서에서도 retry는 같은 key다.
+- 후보 initial page와 load-more는 id/row version으로 canonicalize한다. mutation이 확정한 outcome은 이전 page가
+  다시 넣지 못하고, server response outcome/quantity/version이 panel row와 authoritative summary를 갱신한다.
+  검색/page generation 및 mutation epoch fence로 오래된 응답이 count와 예상 금액을 되돌리지 못한다.
+
+### RED / GREEN과 전체 gate
+
+production 변경 전에 새 backend round-3 묶음은 `8 failed`였고, 101 source, UNKNOWN confirmation,
+mapping generation, locked compare drift, shared source, mixed counts, vendor/delta replacement를 각각 RED로
+확인했다. 전역 shared-job과 mapping-required repair probe를 추가해 최종 묶음은 `10 passed`다. Frontend
+round-3 behavior는 처음 `6 failed`였고, 기존 unresolved-repair retry regression도 함께 실패했다. 별도
+UNKNOWN confirmation UI probe도 `1 failed -> 1 passed`였으며 최종 focused behavior 8개가 모두 통과했다.
+
+첫 full compatibility 실행은 새 의도와 맞지 않는 과거 exact fixture/assertion 때문에
+`17 failed, 420 passed`였다. active-processing/readiness precedence 두 곳은 production에서 바로잡고, 나머지는
+초기 INGEST를 끝내지 않은 mapping fixture, 0011을 prerequisite 없이 복사한 reduced migration fixture,
+parsed generation/catalog이 없는 recovery snapshot, 즉시 RESOLVED를 기대한 구계약 assertion만 수정했다.
+17개 focused rerun은 모두 통과했고 최종 결과는 다음과 같다.
+
+```text
+tests/test_task8_round3.py                          10 passed in 6.32s
+backend full pytest                                439 passed in 113.68s
+npm ci                                               audited 265, 0 vulnerabilities
+npm test -- --run                                    3 files, 81 passed in 53.40s
+npm run typecheck                                    exit 0
+npm run lint                                         exit 0, warning 0
+npm run build                                        36 modules, exit 0
+dist JS                                              304.88 kB / 93.59 kB gzip
+uvx ruff@0.16.5 format --check src tests             107 files already formatted
+uvx ruff@0.16.5 check src tests                      All checks passed
+python -m compileall -q src tests                    exit 0
+uv lock --check                                      resolved 36 packages
+uv build                                             sdist + wheel built
+npm ls --all                                         exit 0
+dangerous-execution diff scan                        0 matches
+private-key/token signature diff scan                0 matches
+git diff --check                                     exit 0
+```
+
+OpenAPI와 generated TypeScript type은 각각 연속 두 번 생성해 deterministic hash를 확인했다.
+
+```text
+backend/openapi.json
+03C47B144A4FA6A7CE5B7AD1505E48488DD16A86F9C8267164A9AB2FAA4B25AB
+
+frontend/src/api/types.ts
+CF0AB91AA9B19D2233516856D09D67EDF2C70314049E882072052D0A0BE2776B
+```
+
+새 `0011_task8_round3_integrity.sql`의 SHA-256은
+`EB22DB853D9488C3FDC0A95AD0EAFD2E4C79884D41D6D313B272CB49822242B0`이다. 기존 migration은
+`git diff --exit-code 84b00db -- backend/src/suseoro/db/migrations
+':(exclude)backend/src/suseoro/db/migrations/0011_task8_round3_integrity.sql'` exit 0으로 보존을 확인했다.
+특히 `0008`은 `8CA289F58AE22F4B6AE325DA1A3CC971ECE9E08C8A5142CBC5C1A48D7A05849D`,
+`0009`는 `7D020CD41D6C7A3AB9FAC0F43DAA873336ACACAC889FD5FA171E19A4459D6383`, `0010`은
+`53935B8765516454A85FF1E13253180139A4E36978F575D3E562EFD05FAF9C79`로 round-2 기준과 같다.
+plan/progress ledger와 Task 10 ASGI pre-parser cap은 수정하지 않았고 blocker는 없다.

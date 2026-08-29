@@ -62,7 +62,7 @@ from suseoro.ingestion.file_store import (
 from suseoro.jobs.handlers import parser_version_for_format
 from suseoro.jobs.public_errors import comparison_file_failure, job_failure
 from suseoro.jobs.repository import JobRepository
-from suseoro.jobs.source_snapshot import source_rows_snapshot
+from suseoro.jobs.source_snapshot import authoritative_comparison_sources
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.audit import record_audit_event
 from suseoro.services.idempotency import (
@@ -221,6 +221,7 @@ def _reserve_repair_generation(
     upload_claim_id: str,
     actor_id: str,
     request_id: str,
+    confirm_configuration: bool = False,
 ) -> None:
     """Reserve the newest user selection before the upload mutation lock.
 
@@ -231,7 +232,8 @@ def _reserve_repair_generation(
         reservation.execute("BEGIN IMMEDIATE")
         current = reservation.execute(
             """
-            SELECT generation, resolved_source_document_id, role,
+            SELECT generation, resolved_source_document_id,
+                   pending_source_document_id, role,
                    vendor_scope, requested_start_local_date,
                    requested_through_local_date,
                    active_upload_claim_id, workspace.status AS workspace_status,
@@ -278,6 +280,14 @@ def _reserve_repair_generation(
             raise HTTPException(
                 status_code=422, detail={"code": "UPLOAD_REPAIR_ROLE_MISMATCH"}
             )
+        if current["role"] == "UNKNOWN" and (
+            not confirm_configuration or role == DocumentRole.UNKNOWN
+        ):
+            reservation.rollback()
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "UPLOAD_REPAIR_CONFIGURATION_CONFIRMATION_REQUIRED"},
+            )
         if current["role"] != "UNKNOWN" and (
             current["vendor_scope"] != vendor_scope
             or current["requested_start_local_date"] != requested_start_local_date
@@ -307,6 +317,17 @@ def _reserve_repair_generation(
                     format_utc(utc_now()),
                     obligation_id,
                 ),
+            )
+            record_audit_event(
+                reservation,
+                actor_id=actor_id,
+                school_id=school_id,
+                action="UPLOAD_REPAIR_CONFIGURATION_CONFIRMED",
+                entity_type="upload_repair_obligation",
+                entity_id=obligation_id,
+                before={"role": "UNKNOWN", "generation": current["generation"]},
+                after={"role": role.value, "generation": generation},
+                request_id=request_id,
             )
         else:
             reservation.execute(
@@ -466,13 +487,36 @@ def _workspace_exists(connection, school_id: str, workspace_id: str) -> bool:
     )
 
 
+def _source_processing_active(
+    connection: sqlite3.Connection, *, school_id: str, source_id: str
+) -> bool:
+    return (
+        connection.execute(
+            """
+            SELECT 1
+            FROM durable_jobs AS job,
+                 json_each(job.payload_json, '$.source_document_ids') AS source
+            WHERE job.school_id = ?
+              AND job.job_type IN ('INGEST', 'PARSE')
+              AND job.status IN ('QUEUED', 'RUNNING', 'CANCEL_REQUESTED')
+              AND source.value = ?
+            LIMIT 1
+            """,
+            (school_id, source_id),
+        ).fetchone()
+        is not None
+    )
+
+
 def _source_row(connection, school_id: str, source_id: str):
     return connection.execute(
         """
         SELECT document.*, file.sha256, file.size_bytes, file.original_filename,
                COALESCE(config.role, document.role) AS configured_role,
                COALESCE(config.row_version, 1) AS row_version,
-               COALESCE(config.mapping_json, '{}') AS mapping_json
+               COALESCE(config.mapping_json, '{}') AS mapping_json,
+               COALESCE(config.vendor_scope, '*') AS configured_vendor_scope,
+               COALESCE(config.remember_template, 0) AS remember_template
         FROM source_documents document
         JOIN source_files file ON file.id = document.source_file_id
         LEFT JOIN source_configurations config ON config.source_document_id = document.id
@@ -492,6 +536,11 @@ def _source(row) -> dict[str, Any]:
         "status": row["status"],
         "detected_format": row["detected_format"],
         "mapping": json.loads(row["mapping_json"]),
+        "vendor_scope": row["configured_vendor_scope"],
+        "remember_template": bool(row["remember_template"]),
+        "requested_start_local_date": row["requested_start_local_date"],
+        "requested_through_local_date": row["requested_through_local_date"],
+        "parsed_config_version": row["parsed_config_version"],
         "row_version": row["row_version"],
         "created_at": row["created_at"],
         "completed_at": row["completed_at"],
@@ -558,6 +607,7 @@ def upload_sources(
     repair_obligation_id: str | None = Form(None),
     repair_generation: int | None = Form(None),
     replacement_source_document_id: str | None = Form(None),
+    confirm_repair_configuration: bool = Form(False),
     user: AuthenticatedUser = Depends(require_role("OPERATOR")),
     connection: sqlite3.Connection = Depends(database_connection),
     idempotency_key: str = Depends(require_idempotency_key),
@@ -592,6 +642,13 @@ def upload_sources(
         if repair_contract is None:
             raise HTTPException(
                 status_code=409, detail={"code": "UPLOAD_REPAIR_SUPERSEDED"}
+            )
+        if repair_contract["role"] == "UNKNOWN" and (
+            not confirm_repair_configuration or role == DocumentRole.UNKNOWN
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "UPLOAD_REPAIR_CONFIGURATION_CONFIRMATION_REQUIRED"},
             )
         if repair_contract["role"] != "UNKNOWN":
             if repair_contract["role"] != role.value:
@@ -648,7 +705,7 @@ def upload_sources(
         DocumentRole.CATALOG_DELTA_UPDATE,
     }
     requested_start = requested_through = None
-    if role in delta_roles:
+    if role in delta_roles and replacement_source_document_id is None:
         if not requested_start_local_date or not requested_through_local_date:
             raise HTTPException(
                 status_code=422, detail={"code": "DELTA_WINDOW_REQUIRED"}
@@ -664,7 +721,9 @@ def upload_sources(
             raise HTTPException(
                 status_code=422, detail={"code": "INVALID_DELTA_WINDOW"}
             )
-    elif requested_start_local_date or requested_through_local_date:
+    elif replacement_source_document_id is None and (
+        requested_start_local_date or requested_through_local_date
+    ):
         raise HTTPException(status_code=422, detail={"code": "INVALID_DELTA_WINDOW"})
     replay_max_batch_bytes = (
         max(settings.upload_max_batch_bytes, replay_allowance.max_batch_bytes)
@@ -746,21 +805,24 @@ def upload_sources(
             finally:
                 upload.file.close()
 
-        request_body = {
-            "workspace_id": workspace_id,
-            "role": role.value,
-            "vendor_scope": vendor_scope.strip() or "*",
-            "requested_start_local_date": (
-                requested_start.isoformat() if requested_start else None
-            ),
-            "requested_through_local_date": (
-                requested_through.isoformat() if requested_through else None
-            ),
-            "files": client_files,
-        }
+        request_body = {"workspace_id": workspace_id, "files": client_files}
+        if replacement_source_document_id is None:
+            request_body.update(
+                {
+                    "role": role.value,
+                    "vendor_scope": vendor_scope.strip() or "*",
+                    "requested_start_local_date": (
+                        requested_start.isoformat() if requested_start else None
+                    ),
+                    "requested_through_local_date": (
+                        requested_through.isoformat() if requested_through else None
+                    ),
+                }
+            )
         if repair_obligation_id is not None:
             request_body["repair_obligation_id"] = repair_obligation_id
             request_body["repair_generation"] = repair_generation
+            request_body["confirm_repair_configuration"] = confirm_repair_configuration
         if replacement_source_document_id is not None:
             request_body["replacement_source_document_id"] = (
                 replacement_source_document_id
@@ -811,6 +873,7 @@ def upload_sources(
                 upload_claim_id=upload_lease.id,
                 actor_id=user.id,
                 request_id=request_id,
+                confirm_configuration=confirm_repair_configuration,
             )
         begin_upload_mutation(
             connection,
@@ -845,6 +908,8 @@ def upload_sources(
             return legacy_replay.body
 
         replacement_contract = None
+        source_mapping_json = "{}"
+        source_remember_template = 0
         if replacement_source_document_id is not None:
             if any(item["staged"] is None for item in prepared):
                 raise HTTPException(
@@ -854,6 +919,11 @@ def upload_sources(
             replacement_contract = connection.execute(
                 """
                 SELECT COALESCE(config.role, document.role) AS configured_role,
+                       COALESCE(config.vendor_scope, '*') AS vendor_scope,
+                       COALESCE(config.mapping_json, '{}') AS mapping_json,
+                       COALESCE(config.remember_template, 0) AS remember_template,
+                       document.requested_start_local_date,
+                       document.requested_through_local_date,
                        config.row_version,
                        (
                          SELECT COUNT(*) FROM workspace_sources all_links
@@ -876,7 +946,6 @@ def upload_sources(
             ).fetchone()
             if (
                 replacement_contract is None
-                or replacement_contract["configured_role"] != role.value
                 or replacement_contract["configured_role"] == DocumentRole.UNKNOWN.value
             ):
                 raise HTTPException(
@@ -888,6 +957,26 @@ def upload_sources(
                     status_code=409,
                     detail={"code": "SOURCE_REPLACEMENT_SHARED"},
                 )
+            role = DocumentRole(replacement_contract["configured_role"])
+            vendor_scope = replacement_contract["vendor_scope"]
+            source_mapping_json = replacement_contract["mapping_json"]
+            source_remember_template = int(replacement_contract["remember_template"])
+            requested_start_local_date = replacement_contract[
+                "requested_start_local_date"
+            ]
+            requested_through_local_date = replacement_contract[
+                "requested_through_local_date"
+            ]
+            requested_start = (
+                date.fromisoformat(requested_start_local_date)
+                if requested_start_local_date
+                else None
+            )
+            requested_through = (
+                date.fromisoformat(requested_through_local_date)
+                if requested_through_local_date
+                else None
+            )
 
         workspace_status = connection.execute(
             "SELECT status FROM acquisition_workspaces WHERE id = ? AND school_id = ?",
@@ -1047,10 +1136,18 @@ def upload_sources(
                 """
                 INSERT INTO source_configurations (
                     source_document_id, school_id, role, mapping_json,
-                    vendor_scope, updated_at
-                ) VALUES (?, ?, ?, '{}', ?, ?)
+                    vendor_scope, remember_template, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (source_id, user.school_id, role, vendor_scope.strip() or "*", now),
+                (
+                    source_id,
+                    user.school_id,
+                    role,
+                    source_mapping_json,
+                    vendor_scope.strip() or "*",
+                    source_remember_template,
+                    now,
+                ),
             )
             accepted_ids.append(source_id)
             items.append(
@@ -1064,12 +1161,15 @@ def upload_sources(
                 }
             )
             if repair_obligation_id is not None:
-                previous_source_id = repair_obligation["resolved_source_document_id"]
-                resolved = connection.execute(
+                previous_source_id = (
+                    repair_obligation["pending_source_document_id"]
+                    or repair_obligation["resolved_source_document_id"]
+                )
+                accepted = connection.execute(
                     """
                     UPDATE upload_repair_obligations
-                    SET status = 'RESOLVED', resolved_source_document_id = ?,
-                        updated_at = ?
+                    SET status = 'REPAIRING', pending_source_document_id = ?,
+                        resolved_source_document_id = NULL, updated_at = ?
                     WHERE id = ? AND status = 'REPAIRING' AND generation = ?
                       AND active_upload_claim_id = ?
                     """,
@@ -1081,7 +1181,7 @@ def upload_sources(
                         upload_lease.id,
                     ),
                 )
-                if resolved.rowcount != 1:
+                if accepted.rowcount != 1:
                     raise HTTPException(
                         status_code=409, detail={"code": "UPLOAD_REPAIR_SUPERSEDED"}
                     )
@@ -1098,7 +1198,7 @@ def upload_sources(
                     connection,
                     actor_id=user.id,
                     school_id=user.school_id,
-                    action="UPLOAD_REPAIR_RESOLVED",
+                    action="UPLOAD_REPAIR_REPLACEMENT_ACCEPTED",
                     entity_type="upload_repair_obligation",
                     entity_id=repair_obligation_id,
                     before={
@@ -1106,7 +1206,7 @@ def upload_sources(
                         "generation": repair_generation,
                         "source_id": previous_source_id,
                     },
-                    after={"status": "RESOLVED", "source_id": source_id},
+                    after={"status": "REPAIRING", "pending_source_id": source_id},
                     request_id=request_id,
                 )
 
@@ -1151,7 +1251,11 @@ def upload_sources(
                 school_id=user.school_id,
                 workspace_id=workspace_id,
                 job_type="INGEST",
-                payload={"source_document_ids": accepted_ids, "role": role},
+                payload={
+                    "source_document_ids": accepted_ids,
+                    "role": role,
+                    "request_id": request_id,
+                },
                 progress_total=len(accepted_ids),
             )
         result = {"job_id": job.id if job else None, "items": items}
@@ -1251,7 +1355,9 @@ def list_sources(
         SELECT document.*, file.sha256, file.size_bytes, file.original_filename,
                COALESCE(config.role, document.role) AS configured_role,
                COALESCE(config.row_version, 1) AS row_version,
-               COALESCE(config.mapping_json, '{{}}') AS mapping_json
+               COALESCE(config.mapping_json, '{{}}') AS mapping_json,
+               COALESCE(config.vendor_scope, '*') AS configured_vendor_scope,
+               COALESCE(config.remember_template, 0) AS remember_template
         FROM workspace_sources link
         JOIN source_documents document ON document.id = link.source_document_id
         JOIN source_files file ON file.id = document.source_file_id
@@ -1296,7 +1402,8 @@ def list_upload_repairs(
         parameters.extend((decoded[0], decoded[0], decoded[1]))
     rows = connection.execute(
         f"""
-        SELECT id, filename, error_code, status, generation, role,
+        SELECT id, filename, error_code, status, generation, role, vendor_scope,
+               requested_start_local_date, requested_through_local_date,
                resolved_source_document_id, created_at, updated_at
         FROM upload_repair_obligations
         WHERE {" AND ".join(clauses)}
@@ -1315,6 +1422,10 @@ def list_upload_repairs(
             "status": row["status"],
             "generation": row["generation"],
             "role": row["role"],
+            "vendor_scope": row["vendor_scope"],
+            "requested_start_local_date": row["requested_start_local_date"],
+            "requested_through_local_date": row["requested_through_local_date"],
+            "configuration_confirmation_required": row["role"] == "UNKNOWN",
             "resolved_source_id": row["resolved_source_document_id"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -1386,6 +1497,11 @@ def update_source_mapping(
         """,
         (source_id, user.school_id),
     ).fetchall()
+    if len(linked_workspaces) != 1:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "SOURCE_SHARED_ACROSS_WORKSPACES"},
+        )
     comparison_authoritative = (
         current["configured_role"] == DocumentRole.PURCHASE_REQUEST.value
         or payload.role == DocumentRole.PURCHASE_REQUEST
@@ -1416,6 +1532,12 @@ def update_source_mapping(
                 status_code=409,
                 detail={"code": "SOURCE_COMPARISON_IN_PROGRESS"},
             )
+    if _source_processing_active(
+        connection, school_id=user.school_id, source_id=source_id
+    ):
+        raise HTTPException(
+            status_code=409, detail={"code": "SOURCE_PROCESSING_IN_PROGRESS"}
+        )
     from suseoro.services.concurrency import VersionConflict
 
     updated = connection.execute(
@@ -1438,6 +1560,18 @@ def update_source_mapping(
     )
     if updated.rowcount != 1:
         raise VersionConflict(current["row_version"], submitted_version)
+    connection.execute(
+        "DELETE FROM source_rows WHERE source_document_id = ?", (source_id,)
+    )
+    connection.execute(
+        """
+        UPDATE source_documents
+        SET status = 'PENDING', completed_at = NULL,
+            parsed_config_version = NULL
+        WHERE id = ? AND school_id = ?
+        """,
+        (source_id, user.school_id),
+    )
     row = _source_row(connection, user.school_id, source_id)
     result = _source(row)
     record_audit_event(
@@ -1486,7 +1620,7 @@ def parse_source(
     idempotency_key: str = Depends(require_idempotency_key),
     request_id: str = Depends(require_request_id),
 ):
-    row = connection.execute(
+    linked_rows = connection.execute(
         """
         SELECT link.workspace_id, workspace.status AS workspace_status
         FROM source_documents document
@@ -1495,9 +1629,15 @@ def parse_source(
         WHERE document.id = ? AND document.school_id = ?
         """,
         (source_id, user.school_id),
-    ).fetchone()
-    if row is None:
+    ).fetchall()
+    if not linked_rows:
         raise domain_not_found("SOURCE_NOT_FOUND")
+    if len(linked_rows) != 1:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "SOURCE_SHARED_ACROSS_WORKSPACES"},
+        )
+    row = linked_rows[0]
     route = f"POST /api/v2/sources/{source_id}/parse"
     replay = reserve_idempotency_key(
         connection,
@@ -1535,11 +1675,29 @@ def parse_source(
             status_code=409,
             detail={"code": "SOURCE_COMPARISON_IN_PROGRESS"},
         )
+    if _source_processing_active(
+        connection, school_id=user.school_id, source_id=source_id
+    ):
+        raise HTTPException(
+            status_code=409, detail={"code": "SOURCE_PROCESSING_IN_PROGRESS"}
+        )
+    connection.execute(
+        "DELETE FROM source_rows WHERE source_document_id = ?", (source_id,)
+    )
+    connection.execute(
+        """
+        UPDATE source_documents
+        SET status = 'PENDING', completed_at = NULL,
+            parsed_config_version = NULL
+        WHERE id = ? AND school_id = ?
+        """,
+        (source_id, user.school_id),
+    )
     job = JobRepository(connection).create(
         school_id=user.school_id,
         workspace_id=row["workspace_id"],
         job_type="PARSE",
-        payload={"source_document_ids": [source_id]},
+        payload={"source_document_ids": [source_id], "request_id": request_id},
         progress_total=1,
     )
     result = {"job_id": job.id, "status": job.status}
@@ -1963,62 +2121,31 @@ def _refresh_compare_payload_for_retry(
     if unresolved_repairs is not None:
         raise HTTPException(status_code=409, detail={"code": "UPLOAD_REPAIR_REQUIRED"})
 
-    raw_document_ids = job.payload.get("source_document_ids")
-    if not isinstance(raw_document_ids, list) or not raw_document_ids:
-        raise HTTPException(
-            status_code=422, detail={"code": "COMPARISON_SOURCES_NOT_READY"}
-        )
-    requested_document_ids = tuple(
-        dict.fromkeys(item for item in raw_document_ids if isinstance(item, str))
+    source_snapshot = authoritative_comparison_sources(
+        connection, school_id=job.school_id, workspace_id=job.workspace_id
     )
-    if len(requested_document_ids) != len(raw_document_ids):
-        raise HTTPException(
-            status_code=422, detail={"code": "COMPARISON_SOURCES_NOT_READY"}
-        )
-    documents = connection.execute(
-        """
-        SELECT document.id, document.status, document.parser_version,
-               document.completed_at, file.sha256,
-               COALESCE(config.role, document.role) AS role,
-               COALESCE(config.row_version, 1) AS config_version,
-               COALESCE(config.mapping_json, '{{}}') AS mapping_json
-        FROM source_documents AS document
-        JOIN source_files AS file ON file.id = document.source_file_id
-        JOIN workspace_sources AS link ON link.source_document_id = document.id
-        LEFT JOIN source_configurations AS config
-          ON config.source_document_id = document.id
-        WHERE link.workspace_id = ? AND link.school_id = ?
-          AND COALESCE(config.role, document.role) = 'PURCHASE_REQUEST'
-        ORDER BY link.created_at, document.id
-        """,
-        (job.workspace_id, job.school_id),
-    ).fetchall()
-    documents_by_id = {row["id"]: row for row in documents}
-    if (
-        not documents_by_id
-        or not set(requested_document_ids).issubset(documents_by_id)
-        or any(row["status"] not in {"SUCCESS", "ROW_ERROR"} for row in documents)
+    if not source_snapshot or any(
+        item["status"] not in {"SUCCESS", "ROW_ERROR"}
+        or item["parsed_config_version"] != item["config_version"]
+        for item in source_snapshot
     ):
         raise HTTPException(
             status_code=422, detail={"code": "COMPARISON_SOURCES_NOT_READY"}
         )
-    document_ids = (
-        *requested_document_ids,
-        *(row["id"] for row in documents if row["id"] not in requested_document_ids),
-    )
-    placeholders = ",".join("?" for _ in document_ids)
+    document_ids = tuple(item["id"] for item in source_snapshot)
+    source_ids_json = json.dumps(document_ids)
     active_processing = connection.execute(
-        f"""
+        """
         SELECT 1
         FROM durable_jobs AS processing,
              json_each(processing.payload_json, '$.source_document_ids') AS source
-        WHERE processing.school_id = ? AND processing.workspace_id = ?
+        WHERE processing.school_id = ?
           AND processing.job_type IN ('INGEST', 'PARSE')
           AND processing.status IN ('QUEUED', 'RUNNING', 'CANCEL_REQUESTED')
-          AND source.value IN ({placeholders})
+          AND source.value IN (SELECT value FROM json_each(?))
         LIMIT 1
         """,
-        (job.school_id, job.workspace_id, *document_ids),
+        (job.school_id, source_ids_json),
     ).fetchone()
     if active_processing is not None:
         raise HTTPException(
@@ -2034,24 +2161,6 @@ def _refresh_compare_payload_for_retry(
     if active_catalog is None:
         raise HTTPException(status_code=409, detail={"code": "ACTIVE_CATALOG_REQUIRED"})
 
-    source_snapshot: list[dict[str, Any]] = []
-    for document_id in document_ids:
-        document = documents_by_id[document_id]
-        row_count, row_digest = source_rows_snapshot(connection, document_id)
-        source_snapshot.append(
-            {
-                "id": document_id,
-                "role": document["role"],
-                "status": document["status"],
-                "sha256": document["sha256"],
-                "config_version": document["config_version"],
-                "mapping_json": document["mapping_json"],
-                "parser_version": document["parser_version"],
-                "completed_at": document["completed_at"],
-                "row_count": row_count,
-                "row_digest": row_digest,
-            }
-        )
     upgraded = {
         "source_document_ids": list(document_ids),
         "catalog_version_id": active_catalog["id"],
@@ -2059,17 +2168,19 @@ def _refresh_compare_payload_for_retry(
         "source_snapshot": source_snapshot,
     }
     immutable_downstream = connection.execute(
-        f"""
+        """
         SELECT 1
         FROM approval_rows AS approval
         JOIN candidate_decisions AS candidate ON candidate.id = approval.candidate_id
         JOIN recommendations AS recommendation
           ON recommendation.id = candidate.recommendation_id
         WHERE approval.workspace_id = ?
-          AND recommendation.source_document_id IN ({placeholders})
+          AND recommendation.source_document_id IN (
+              SELECT value FROM json_each(?)
+          )
         LIMIT 1
         """,
-        (job.workspace_id, *document_ids),
+        (job.workspace_id, source_ids_json),
     ).fetchone()
     if immutable_downstream is not None:
         raise HTTPException(
@@ -2080,7 +2191,7 @@ def _refresh_compare_payload_for_retry(
     # catalog before it failed.  The fresh snapshot must never reuse that
     # unfenced output or mix catalog generations.
     connection.execute(
-        f"""
+        """
         DELETE FROM edit_locks
         WHERE school_id = ? AND entity_type = 'candidate_decision'
           AND entity_id IN (
@@ -2089,41 +2200,51 @@ def _refresh_compare_payload_for_retry(
               JOIN recommendations AS recommendation
                 ON recommendation.id = candidate.recommendation_id
               WHERE candidate.workspace_id = ?
-                AND recommendation.source_document_id IN ({placeholders})
+                AND recommendation.source_document_id IN (
+                    SELECT value FROM json_each(?)
+                )
           )
         """,
-        (job.school_id, job.workspace_id, *document_ids),
+        (job.school_id, job.workspace_id, source_ids_json),
     )
     connection.execute(
-        f"""
+        """
         DELETE FROM comparison_row_results
-        WHERE workspace_id = ? AND source_document_id IN ({placeholders})
+        WHERE workspace_id = ? AND source_document_id IN (
+            SELECT value FROM json_each(?)
+        )
         """,
-        (job.workspace_id, *document_ids),
+        (job.workspace_id, source_ids_json),
     )
     connection.execute(
-        f"""
+        """
         DELETE FROM candidate_decisions
         WHERE workspace_id = ? AND recommendation_id IN (
             SELECT id FROM recommendations
-            WHERE workspace_id = ? AND source_document_id IN ({placeholders})
+            WHERE workspace_id = ? AND source_document_id IN (
+                SELECT value FROM json_each(?)
+            )
         )
         """,
-        (job.workspace_id, job.workspace_id, *document_ids),
+        (job.workspace_id, job.workspace_id, source_ids_json),
     )
     connection.execute(
-        f"""
+        """
         DELETE FROM recommendations
-        WHERE workspace_id = ? AND source_document_id IN ({placeholders})
+        WHERE workspace_id = ? AND source_document_id IN (
+            SELECT value FROM json_each(?)
+        )
         """,
-        (job.workspace_id, *document_ids),
+        (job.workspace_id, source_ids_json),
     )
     connection.execute(
-        f"""
+        """
         DELETE FROM comparison_file_results
-        WHERE workspace_id = ? AND source_document_id IN ({placeholders})
+        WHERE workspace_id = ? AND source_document_id IN (
+            SELECT value FROM json_each(?)
+        )
         """,
-        (job.workspace_id, *document_ids),
+        (job.workspace_id, source_ids_json),
     )
     connection.execute("DELETE FROM job_file_results WHERE job_id = ?", (job.id,))
     connection.execute(

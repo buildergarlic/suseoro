@@ -2129,6 +2129,8 @@ def test_source_mapping_and_parse_replay_idempotently(data_dir: Path) -> None:
             files=[("files", ("books.csv", "제목,저자\nA,B\n", "text/csv"))],
         )
         source_id = uploaded.json()["items"][0]["source_id"]
+        with connect(settings.database_path) as connection:
+            assert build_job_runner(connection).run_once() is not None
         mapping_headers = _headers(csrf, "mapping-save", version=1)
         mapping_first = client.patch(
             f"/api/v2/sources/{source_id}/mapping",
@@ -2697,6 +2699,8 @@ def test_saved_mapping_template_and_parser_cache_are_used_by_durable_retries(
             ],
         )
         source_id = uploaded.json()["items"][0]["source_id"]
+        with connect(settings.database_path) as connection:
+            assert build_job_runner(connection).run_once() is not None
         mapped = client.patch(
             f"/api/v2/sources/{source_id}/mapping",
             headers=_headers(csrf, "custom-map-save", version=1),
@@ -2715,7 +2719,6 @@ def test_saved_mapping_template_and_parser_cache_are_used_by_durable_retries(
     assert reparsed.status_code == 202
     with connect(settings.database_path) as connection:
         runner = build_job_runner(connection)
-        assert runner.run_once().status == "SUCCEEDED"
         assert runner.run_once().status == "SUCCEEDED"
         first_fields = json.loads(
             connection.execute(
@@ -2889,6 +2892,7 @@ def test_empty_ingestion_is_failed_with_a_durable_zero_row_item(
             "status": "FAILED",
             "total_rows": 0,
             "processed_rows": 0,
+            "row_error_count": 0,
             "error": {"code": "NO_LOGICAL_ROWS"},
             "mapping_required": None,
         }
@@ -2898,7 +2902,7 @@ def test_empty_ingestion_is_failed_with_a_durable_zero_row_item(
 def test_source_and_audit_cursor_lists_use_configured_role_and_qualified_keys(
     data_dir: Path,
 ) -> None:
-    client, _, csrf = _client(data_dir)
+    client, settings, csrf = _client(data_dir)
     with client:
         uploaded = client.post(
             f"/api/v2/workspaces/{WORKSPACE_ID}/sources",
@@ -2907,6 +2911,8 @@ def test_source_and_audit_cursor_lists_use_configured_role_and_qualified_keys(
             files=[("files", ("list.csv", "제목\n책\n", "text/csv"))],
         )
         source_id = uploaded.json()["items"][0]["source_id"]
+        with connect(settings.database_path) as connection:
+            assert build_job_runner(connection).run_once() is not None
         client.patch(
             f"/api/v2/sources/{source_id}/mapping",
             headers=_headers(csrf, "list-source-map", version=1),

@@ -39,6 +39,7 @@ export interface FixtureApi {
       requestedThroughLocalDate?: string;
       repairObligationId?: string;
       repairGeneration?: number;
+      confirmRepairConfiguration?: boolean;
       replacementSourceId?: string;
     },
   ): Promise<Upload>;
@@ -166,6 +167,11 @@ export const sourceFixture: Source = {
   status: "PENDING",
   detected_format: "CSV",
   mapping: {},
+  vendor_scope: "*",
+  remember_template: false,
+  requested_start_local_date: null,
+  requested_through_local_date: null,
+  parsed_config_version: null,
   row_version: 1,
   created_at: "2026-08-29T08:05:00.000000Z",
   completed_at: null,

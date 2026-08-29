@@ -16,6 +16,7 @@ from suseoro.catalog.normalization import normalize_book
 from suseoro.catalog.repository import CatalogRepository
 from suseoro.jobs.public_errors import comparison_file_failure
 from suseoro.jobs.repository import JobRepository
+from suseoro.jobs.source_snapshot import authoritative_comparison_sources
 from suseoro.matching.engine import MatchingEngine
 from suseoro.security.sessions import format_utc, utc_now
 
@@ -96,6 +97,93 @@ def _record_from_row(row: sqlite3.Row) -> tuple[CatalogRecord, dict[str, Any]]:
 class ComparisonService:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
+
+    def _validate_claimed_snapshot(
+        self, *, job, school_id: str, workspace_id: str
+    ) -> set[str]:
+        raw_snapshot = job.payload.get("source_snapshot")
+        if job.payload.get("source_snapshot_version") != 1 or not isinstance(
+            raw_snapshot, list
+        ):
+            raise ValueError("COMPARE job requires a versioned source snapshot")
+        snapshot_by_id = {
+            str(item.get("id")): item
+            for item in raw_snapshot
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+        payload_ids = job.payload.get("source_document_ids")
+        if (
+            not isinstance(payload_ids, list)
+            or not payload_ids
+            or len(snapshot_by_id) != len(raw_snapshot)
+            or set(snapshot_by_id) != set(payload_ids)
+        ):
+            raise ValueError("comparison source snapshot is incomplete")
+        current_snapshot = authoritative_comparison_sources(
+            self.connection, school_id=school_id, workspace_id=workspace_id
+        )
+        current_by_id = {item["id"]: item for item in current_snapshot}
+        if set(current_by_id) != set(snapshot_by_id):
+            raise ValueError("comparison source membership changed")
+        compared_fields = (
+            "role",
+            "status",
+            "sha256",
+            "config_version",
+            "parsed_config_version",
+            "mapping_json",
+            "parser_version",
+            "completed_at",
+            "row_count",
+            "row_digest",
+        )
+        for source_id, expected in snapshot_by_id.items():
+            current = current_by_id[source_id]
+            if (
+                current["status"] not in {"SUCCESS", "ROW_ERROR"}
+                or current["parsed_config_version"] != current["config_version"]
+                or any(
+                    current[field] != expected.get(field) for field in compared_fields
+                )
+            ):
+                raise ValueError("comparison source configuration snapshot changed")
+        unresolved_repair = self.connection.execute(
+            """
+            SELECT 1 FROM upload_repair_obligations
+            WHERE school_id = ? AND workspace_id = ? AND status != 'RESOLVED'
+            LIMIT 1
+            """,
+            (school_id, workspace_id),
+        ).fetchone()
+        if unresolved_repair is not None:
+            raise ValueError("comparison source repair is unresolved")
+        source_ids_json = json.dumps(tuple(snapshot_by_id))
+        active_processing = self.connection.execute(
+            """
+            SELECT 1
+            FROM durable_jobs AS processing,
+                 json_each(processing.payload_json, '$.source_document_ids') AS source
+            WHERE processing.school_id = ?
+              AND processing.job_type IN ('INGEST', 'PARSE')
+              AND processing.status IN ('QUEUED', 'RUNNING', 'CANCEL_REQUESTED')
+              AND source.value IN (SELECT value FROM json_each(?))
+            LIMIT 1
+            """,
+            (school_id, source_ids_json),
+        ).fetchone()
+        if active_processing is not None:
+            raise ValueError("comparison source processing is active")
+        catalog_version_id = job.payload.get("catalog_version_id")
+        catalog_snapshot = self.connection.execute(
+            """
+            SELECT 1 FROM catalog_versions
+            WHERE id = ? AND school_id = ? AND status = 'ACTIVE'
+            """,
+            (catalog_version_id, school_id),
+        ).fetchone()
+        if catalog_snapshot is None:
+            raise ValueError("catalog is outside the COMPARE job snapshot")
+        return set(snapshot_by_id)
 
     def _insert_row_error(
         self,
@@ -370,29 +458,11 @@ class ComparisonService:
                 job_id, claim_token, claim_generation
             )
             claim_generation = current_claim.claim_generation
-            raw_snapshot = job.payload.get("source_snapshot")
-            if job.payload.get("source_snapshot_version") != 1 or not isinstance(
-                raw_snapshot, list
-            ):
-                raise ValueError("COMPARE job requires a versioned source snapshot")
-            snapshot_ids = {
-                str(item.get("id"))
-                for item in raw_snapshot
-                if isinstance(item, dict) and item.get("id") is not None
-            }
+            snapshot_ids = self._validate_claimed_snapshot(
+                job=job, school_id=school_id, workspace_id=workspace_id
+            )
             if not set(source_document_ids).issubset(snapshot_ids):
                 raise ValueError("source document is outside the COMPARE job snapshot")
-            catalog_version_id = job.payload.get("catalog_version_id")
-            if catalog_version_id is not None:
-                catalog_snapshot = self.connection.execute(
-                    """
-                    SELECT 1 FROM catalog_versions
-                    WHERE id = ? AND school_id = ? AND status = 'ACTIVE'
-                    """,
-                    (catalog_version_id, school_id),
-                ).fetchone()
-                if catalog_snapshot is None:
-                    raise ValueError("catalog is outside the COMPARE job snapshot")
         requested_row_ids = (
             None if source_row_ids is None else frozenset(source_row_ids)
         )

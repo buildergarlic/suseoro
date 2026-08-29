@@ -294,6 +294,10 @@ def test_unresolved_repair_obligations_are_discoverable_after_reload(data_dir) -
                 "status": "UNRESOLVED",
                 "generation": 0,
                 "role": "PURCHASE_REQUEST",
+                "vendor_scope": "*",
+                "requested_start_local_date": None,
+                "requested_through_local_date": None,
+                "configuration_confirmation_required": False,
                 "resolved_source_id": None,
                 "created_at": repairs.json()["items"][0]["created_at"],
                 "updated_at": repairs.json()["items"][0]["updated_at"],
@@ -1285,6 +1289,8 @@ def test_source_upload_mapping_and_parse_are_fenced_after_candidates_exist(
     )
     assert vendor_upload.status_code == 202
     vendor_source_id = vendor_upload.json()["items"][0]["source_id"]
+    with connect(settings.database_path) as connection:
+        assert build_job_runner(connection).run_once() is not None
     vendor_to_purchase = client.patch(
         f"/api/v2/sources/{vendor_source_id}/mapping",
         headers=_headers(csrf, "candidate-fence-vendor-to-purchase", version=1),
@@ -1317,7 +1323,7 @@ def test_source_upload_mapping_and_parse_are_fenced_after_candidates_exist(
     assert vendor_parse.status_code == 202
 
 
-def test_unknown_repair_binds_delta_scope_on_first_reserved_generation(
+def test_unknown_repair_requires_confirmation_then_binds_delta_scope(
     data_dir,
 ) -> None:
     client, settings, csrf = _client(data_dir, raise_server_exceptions=False)
@@ -1360,7 +1366,11 @@ def test_unknown_repair_binds_delta_scope_on_first_reserved_generation(
             )
         ],
     )
-    assert still_unknown.status_code == 207
+    assert still_unknown.status_code == 422
+    assert (
+        still_unknown.json()["detail"]["code"]
+        == "UPLOAD_REPAIR_CONFIGURATION_CONFIRMATION_REQUIRED"
+    )
 
     bound = client.post(
         f"/api/v2/workspaces/{workspace_id}/sources",
@@ -1371,7 +1381,8 @@ def test_unknown_repair_binds_delta_scope_on_first_reserved_generation(
             "requested_start_local_date": "2026-08-01",
             "requested_through_local_date": "2026-08-29",
             "repair_obligation_id": obligation_id,
-            "repair_generation": "2",
+            "repair_generation": "1",
+            "confirm_repair_configuration": "true",
         },
         files=[("files", ("registration.csv", "등록번호,제목\n1,책\n", "text/csv"))],
     )
@@ -1390,7 +1401,7 @@ def test_unknown_repair_binds_delta_scope_on_first_reserved_generation(
         "vendor_scope": "vendor-a",
         "requested_start_local_date": "2026-08-01",
         "requested_through_local_date": "2026-08-29",
-        "generation": 2,
+        "generation": 1,
     }
 
     changed_scope = client.post(
@@ -1402,7 +1413,7 @@ def test_unknown_repair_binds_delta_scope_on_first_reserved_generation(
             "requested_start_local_date": "2026-08-01",
             "requested_through_local_date": "2026-08-29",
             "repair_obligation_id": obligation_id,
-            "repair_generation": "3",
+            "repair_generation": "2",
         },
         files=[
             ("files", ("registration.csv", "등록번호,제목\n2,다른 책\n", "text/csv"))
@@ -1632,13 +1643,18 @@ def test_failed_new_replacement_preserves_previous_source_until_atomic_swap(
     assert first_source in {item["id"] for item in linked}
     with connect(settings.database_path) as connection:
         obligation = connection.execute(
-            "SELECT status, generation, resolved_source_document_id FROM upload_repair_obligations WHERE id = ?",
+            """
+            SELECT status, generation, resolved_source_document_id,
+                   pending_source_document_id
+            FROM upload_repair_obligations WHERE id = ?
+            """,
             (obligation_id,),
         ).fetchone()
     assert dict(obligation) == {
         "status": "REPAIRING",
         "generation": 2,
-        "resolved_source_document_id": first_source,
+        "resolved_source_document_id": None,
+        "pending_source_document_id": first_source,
     }
 
     swapped = client.post(
@@ -1712,7 +1728,7 @@ def test_ambiguous_replacement_retry_keeps_same_obligation_generation_and_claim(
         obligation = connection.execute(
             """
             SELECT generation, status, active_upload_claim_id,
-                   resolved_source_document_id
+                   resolved_source_document_id, pending_source_document_id
             FROM upload_repair_obligations WHERE id = ?
             """,
             (obligation_id,),
@@ -1724,9 +1740,10 @@ def test_ambiguous_replacement_retry_keeps_same_obligation_generation_and_claim(
             """
         ).fetchone()
     assert obligation["generation"] == 1
-    assert obligation["status"] == "RESOLVED"
+    assert obligation["status"] == "REPAIRING"
+    assert obligation["resolved_source_document_id"] is None
     assert (
-        obligation["resolved_source_document_id"]
+        obligation["pending_source_document_id"]
         == retry.json()["items"][0]["source_id"]
     )
     assert obligation["active_upload_claim_id"] == claim["id"]

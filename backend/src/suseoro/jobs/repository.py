@@ -413,6 +413,7 @@ class JobRepository:
         status: str,
         total_rows: int,
         processed_rows: int,
+        row_error_count: int = 0,
         error: dict[str, Any] | None = None,
         now: datetime | None = None,
     ) -> None:
@@ -433,12 +434,13 @@ class JobRepository:
             """
             INSERT INTO job_file_results (
                 id, job_id, source_document_id, status, total_rows,
-                processed_rows, error_json, claim_token, claim_generation,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                processed_rows, row_error_count, error_json, claim_token,
+                claim_generation, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (job_id, source_document_id) DO UPDATE SET
                 status = excluded.status, total_rows = excluded.total_rows,
                 processed_rows = excluded.processed_rows,
+                row_error_count = excluded.row_error_count,
                 error_json = excluded.error_json,
                 claim_token = excluded.claim_token,
                 claim_generation = excluded.claim_generation,
@@ -451,6 +453,7 @@ class JobRepository:
                 status,
                 total_rows,
                 processed_rows,
+                row_error_count,
                 json.dumps(error, ensure_ascii=False, sort_keys=True)
                 if error
                 else None,
@@ -487,6 +490,7 @@ class JobRepository:
                     "status": row["status"],
                     "total_rows": row["total_rows"],
                     "processed_rows": row["processed_rows"],
+                    "row_error_count": row["row_error_count"],
                     "error": error,
                     "mapping_required": mapping_required,
                 }

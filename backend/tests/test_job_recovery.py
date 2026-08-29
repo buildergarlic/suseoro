@@ -94,8 +94,8 @@ def _source_document(connection, *, sha_digit: str, row_count: int = 2):
         """
         INSERT INTO source_documents (
             id, source_file_id, school_id, role, parser_version, status,
-            detected_format, created_at, completed_at
-        ) VALUES (?, ?, ?, 'PURCHASE_REQUEST', 'tabular-v1', 'SUCCESS', 'XLSX', ?, ?)
+            detected_format, created_at, completed_at, parsed_config_version
+        ) VALUES (?, ?, ?, 'PURCHASE_REQUEST', 'tabular-v1', 'SUCCESS', 'XLSX', ?, ?, 1)
         """,
         (document_id, file_id, SCHOOL_ID, NOW_TEXT, NOW_TEXT),
     )
@@ -135,35 +135,36 @@ def _source_document(connection, *, sha_digit: str, row_count: int = 2):
 
 
 def _comparison_payload(connection, document_ids: tuple[str, ...]) -> dict:
-    from suseoro.jobs.source_snapshot import source_rows_snapshot
+    from suseoro.jobs.source_snapshot import authoritative_comparison_sources
 
-    snapshots = []
-    for document_id in document_ids:
-        row = connection.execute(
+    current = authoritative_comparison_sources(
+        connection, school_id=SCHOOL_ID, workspace_id=WORKSPACE_ID
+    )
+    by_id = {item["id"]: item for item in current}
+    snapshots = [by_id[document_id] for document_id in document_ids]
+    catalog = connection.execute(
+        """
+        SELECT id FROM catalog_versions
+        WHERE school_id = ? AND status = 'ACTIVE'
+        """,
+        (SCHOOL_ID,),
+    ).fetchone()
+    if catalog is None:
+        catalog_id = str(uuid.uuid4())
+        connection.execute(
             """
-            SELECT document.id, document.status, document.parser_version,
-                   document.completed_at, file.sha256,
-                   COALESCE(config.role, document.role) AS role,
-                   COALESCE(config.row_version, 1) AS config_version,
-                   COALESCE(config.mapping_json, '{}') AS mapping_json
-            FROM source_documents document
-            JOIN source_files file ON file.id = document.source_file_id
-            LEFT JOIN source_configurations config
-              ON config.source_document_id = document.id
-            WHERE document.id = ?
+            INSERT INTO catalog_versions (
+                id, school_id, source_type, import_mode, status, item_count,
+                created_at, activated_at
+            ) VALUES (?, ?, 'DLS_EXCEL', 'FULL_SNAPSHOT', 'ACTIVE', 0, ?, ?)
             """,
-            (document_id,),
-        ).fetchone()
-        row_count, row_digest = source_rows_snapshot(connection, document_id)
-        snapshots.append(
-            {
-                **dict(row),
-                "row_count": row_count,
-                "row_digest": row_digest,
-            }
+            (catalog_id, SCHOOL_ID, NOW_TEXT, NOW_TEXT),
         )
+    else:
+        catalog_id = catalog["id"]
     return {
         "source_document_ids": list(document_ids),
+        "catalog_version_id": catalog_id,
         "source_snapshot_version": 1,
         "source_snapshot": snapshots,
     }

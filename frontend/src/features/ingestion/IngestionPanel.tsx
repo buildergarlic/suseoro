@@ -37,6 +37,14 @@ interface RecheckState {
   purpose: "INGEST" | "COMPARE";
 }
 
+interface RepairConfiguration {
+  confirmationRequired: boolean;
+  role: DocumentRole;
+  vendorScope: string;
+  requestedStartLocalDate: string;
+  requestedThroughLocalDate: string;
+}
+
 const ROLE_LABELS: Record<DocumentRole, string> = {
   UNKNOWN: "자료 종류 미정",
   PURCHASE_REQUEST: "추천목록",
@@ -103,15 +111,9 @@ export function IngestionPanel({
   const [workspaceRefreshPending, setWorkspaceRefreshPending] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [comparisonRetryable, setComparisonRetryable] = useState(
-    () => initialComparisonJob !== null,
+    false,
   );
-  const [comparisonError, setComparisonError] = useState(
-    () =>
-      initialComparisonJob?.error?.message ??
-      (initialComparisonJob
-        ? "도서 비교를 마치지 못했습니다. 자료를 확인한 뒤 다시 시도해 주세요."
-        : ""),
-  );
+  const [comparisonError, setComparisonError] = useState("");
   const [parsedReplacementPending, setParsedReplacementPending] = useState<Set<string>>(
     () => new Set(),
   );
@@ -122,6 +124,8 @@ export function IngestionPanel({
   const [displayedRepairRoles, setDisplayedRepairRoles] = useState(
     () => new Map<string, DocumentRole>(),
   );
+  const [displayedRepairConfigurations, setDisplayedRepairConfigurations] =
+    useState(() => new Map<string, RepairConfiguration>());
   const beginButtonRef = useRef<HTMLButtonElement>(null);
   const pickerButtonRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -142,6 +146,9 @@ export function IngestionPanel({
   const repairGenerationsRef = useRef(new Map<string, number>());
   const repairSourcesRef = useRef(new Map<string, string>());
   const repairRolesRef = useRef(new Map<string, DocumentRole>());
+  const repairConfigurationsRef = useRef(
+    new Map<string, RepairConfiguration>(),
+  );
   const comparisonStartedRef = useRef(false);
   const parsedReplacementInFlightRef = useRef(new Set<string>());
   const parsedReplacementRolesRef = useRef(new Map<string, DocumentRole>());
@@ -170,6 +177,7 @@ export function IngestionPanel({
         status: "FAILED",
         total_rows: 0,
         processed_rows: 0,
+        row_error_count: 0,
         error:
           current.error ??
           {
@@ -222,8 +230,10 @@ export function IngestionPanel({
     repairGenerationsRef.current.clear();
     repairSourcesRef.current.clear();
     repairRolesRef.current.clear();
+    repairConfigurationsRef.current.clear();
     setDisplayedSourceRoles(new Map());
     setDisplayedRepairRoles(new Map());
+    setDisplayedRepairConfigurations(new Map());
     comparisonStartedRef.current = false;
     parsedReplacementInFlightRef.current.clear();
     parsedReplacementRolesRef.current.clear();
@@ -337,8 +347,17 @@ export function IngestionPanel({
           .map((source) => source.id);
         const mappingStates: MappingState[] = [];
         for (const repair of repairPage.items) {
+          const repairRole = repair.role as DocumentRole;
           repairGenerationsRef.current.set(repair.id, repair.generation);
-          repairRolesRef.current.set(repair.id, repair.role as DocumentRole);
+          repairRolesRef.current.set(repair.id, repairRole);
+          repairConfigurationsRef.current.set(repair.id, {
+            confirmationRequired:
+              repair.configuration_confirmation_required ?? repairRole === "UNKNOWN",
+            role: repairRole,
+            vendorScope: repair.vendor_scope ?? "*",
+            requestedStartLocalDate: repair.requested_start_local_date ?? "",
+            requestedThroughLocalDate: repair.requested_through_local_date ?? "",
+          });
           if (repair.resolved_source_id) {
             repairSourcesRef.current.set(repair.id, repair.resolved_source_id);
           }
@@ -356,10 +375,7 @@ export function IngestionPanel({
               role: source.role as DocumentRole,
             });
           }
-          if (
-            source.role === "PURCHASE_REQUEST" &&
-            source.latest_job_id !== null
-          ) {
+          if (source.latest_job_id !== null) {
             const linked = sourceJobsRef.current.get(source.latest_job_id) ?? [];
             linked.push({ id: source.id, filename: source.filename });
             sourceJobsRef.current.set(source.latest_job_id, linked);
@@ -367,9 +383,12 @@ export function IngestionPanel({
         }
         setDisplayedSourceRoles(new Map(sourceRolesRef.current));
         setDisplayedRepairRoles(new Map(repairRolesRef.current));
-        const discoveredComparison = jobPage.items.find(
-          (candidate) => candidate.type === "COMPARE",
+        setDisplayedRepairConfigurations(
+          new Map(repairConfigurationsRef.current),
         );
+        const discoveredComparison =
+          jobPage.items.find((candidate) => candidate.type === "COMPARE") ??
+          initialComparisonJob;
         if (
           discoveredComparison &&
           repairPage.items.length === 0 &&
@@ -389,7 +408,6 @@ export function IngestionPanel({
         }
         const latestProcessingJobIds = new Set(
           sourcePage.items
-            .filter((source) => source.role === "PURCHASE_REQUEST")
             .map((source) => source.latest_job_id)
             .filter((jobId): jobId is string => jobId !== null),
         );
@@ -398,15 +416,13 @@ export function IngestionPanel({
             .filter(
               (candidate) =>
                 ["INGEST", "PARSE"].includes(candidate.type) &&
-                (latestProcessingJobIds.size === 0 ||
-                  latestProcessingJobIds.has(candidate.id)),
+                latestProcessingJobIds.has(candidate.id),
             )
             .map((candidate) => [candidate.id, candidate]),
         );
         const missingJobIds = sourcePage.items
           .filter(
             (source) =>
-              source.role === "PURCHASE_REQUEST" &&
               source.latest_result === null &&
               source.latest_job_id !== null &&
               !discoveredJobs.has(source.latest_job_id),
@@ -436,7 +452,6 @@ export function IngestionPanel({
           setMappingQueue(mappingStates);
           setMappingOpen(true);
           setAnnouncement("저장된 열 연결 확인부터 이어갑니다.");
-          return;
         }
         if (relevantJobs.length > 0) {
           const isCurrent = () =>
@@ -471,7 +486,6 @@ export function IngestionPanel({
           };
           setJob(aggregate);
           // Hydration deliberately resumes the orchestration function declared below.
-          // eslint-disable-next-line react-hooks/immutability
           await finishIngest(aggregate, sourceIdsRef.current);
         }
       })
@@ -625,6 +639,7 @@ export function IngestionPanel({
     repairGenerationsRef.current.clear();
     repairSourcesRef.current.clear();
     repairRolesRef.current.clear();
+    repairConfigurationsRef.current.clear();
     for (const source of sourcePage.items) {
       sourceRolesRef.current.set(source.id, source.role as DocumentRole);
       if (source.latest_result) {
@@ -637,14 +652,24 @@ export function IngestionPanel({
       }
     }
     for (const repair of repairPage.items) {
+      const repairRole = repair.role as DocumentRole;
       repairGenerationsRef.current.set(repair.id, repair.generation);
-      repairRolesRef.current.set(repair.id, repair.role as DocumentRole);
+      repairRolesRef.current.set(repair.id, repairRole);
+      repairConfigurationsRef.current.set(repair.id, {
+        confirmationRequired:
+          repair.configuration_confirmation_required ?? repairRole === "UNKNOWN",
+        role: repairRole,
+        vendorScope: repair.vendor_scope ?? "*",
+        requestedStartLocalDate: repair.requested_start_local_date ?? "",
+        requestedThroughLocalDate: repair.requested_through_local_date ?? "",
+      });
       if (repair.resolved_source_id) {
         repairSourcesRef.current.set(repair.id, repair.resolved_source_id);
       }
     }
     setDisplayedSourceRoles(new Map(sourceRolesRef.current));
     setDisplayedRepairRoles(new Map(repairRolesRef.current));
+    setDisplayedRepairConfigurations(new Map(repairConfigurationsRef.current));
     const discoveredItems: UploadItem[] = [
       ...sourcePage.items.map((source) => ({
         filename: source.filename,
@@ -861,15 +886,26 @@ export function IngestionPanel({
     const rememberedRepairRole = repair
       ? repairRolesRef.current.get(repair.obligationId)
       : undefined;
-    const uploadRole = forcedRole ??
+    const repairConfiguration = repair
+      ? repairConfigurationsRef.current.get(repair.obligationId)
+      : undefined;
+    const uploadRole =
+      forcedRole ??
       (repair && rememberedRepairRole && rememberedRepairRole !== "UNKNOWN"
         ? rememberedRepairRole
         : role);
     const response = await api.uploadSources(workspace.id, {
       files: inputs,
       role: uploadRole,
+      vendorScope: repairConfiguration?.vendorScope,
+      requestedStartLocalDate:
+        repairConfiguration?.requestedStartLocalDate || undefined,
+      requestedThroughLocalDate:
+        repairConfiguration?.requestedThroughLocalDate || undefined,
       repairObligationId: repair?.obligationId,
       repairGeneration: repair?.generation,
+      confirmRepairConfiguration:
+        repairConfiguration?.confirmationRequired ?? false,
       replacementSourceId: replacedSourceId,
     });
     if (!isCurrent()) return;
@@ -895,9 +931,21 @@ export function IngestionPanel({
         ) {
           repairRolesRef.current.set(responseItem.repair_obligation_id, uploadRole);
         }
+        if (!repairConfigurationsRef.current.has(responseItem.repair_obligation_id)) {
+          repairConfigurationsRef.current.set(responseItem.repair_obligation_id, {
+            confirmationRequired: false,
+            role: uploadRole,
+            vendorScope: repairConfiguration?.vendorScope ?? "*",
+            requestedStartLocalDate:
+              repairConfiguration?.requestedStartLocalDate ?? "",
+            requestedThroughLocalDate:
+              repairConfiguration?.requestedThroughLocalDate ?? "",
+          });
+        }
       }
     }
     setDisplayedRepairRoles(new Map(repairRolesRef.current));
+    setDisplayedRepairConfigurations(new Map(repairConfigurationsRef.current));
     const nextItems = (() => {
       if (!merge) return response.items;
       const replacement = new Map(response.items.map((item) => [item.filename, item]));
@@ -999,6 +1047,19 @@ export function IngestionPanel({
     }
   }
 
+  function updateRepairConfiguration(
+    obligationId: string,
+    patch: Partial<RepairConfiguration>,
+  ) {
+    const current = repairConfigurationsRef.current.get(obligationId);
+    if (!current) return;
+    const next = { ...current, ...patch };
+    repairConfigurationsRef.current.set(obligationId, next);
+    repairRolesRef.current.set(obligationId, next.role);
+    setDisplayedRepairConfigurations(new Map(repairConfigurationsRef.current));
+    setDisplayedRepairRoles(new Map(repairRolesRef.current));
+  }
+
   function chooseReplacement(
     event: ChangeEvent<HTMLInputElement>,
     item: UploadItem,
@@ -1008,6 +1069,34 @@ export function IngestionPanel({
     if (!replacement) return;
     if (!item.repair_obligation_id) {
       setAnnouncement("교체할 파일 정보를 다시 불러온 뒤 시도해 주세요.");
+      return;
+    }
+    const repairConfiguration = repairConfigurationsRef.current.get(
+      item.repair_obligation_id,
+    );
+    if (
+      repairConfiguration?.confirmationRequired &&
+      repairConfiguration.role === "UNKNOWN"
+    ) {
+      setAnnouncement("자료 종류를 먼저 확인해 주세요.");
+      return;
+    }
+    if (
+      repairConfiguration?.role === "VENDOR_QUOTE" &&
+      !repairConfiguration.vendorScope.trim()
+    ) {
+      setAnnouncement("견적서의 공급처 범위를 확인해 주세요.");
+      return;
+    }
+    if (
+      repairConfiguration &&
+      ["CATALOG_DELTA_REGISTRATION", "CATALOG_DELTA_UPDATE"].includes(
+        repairConfiguration.role,
+      ) &&
+      (!repairConfiguration.requestedStartLocalDate ||
+        !repairConfiguration.requestedThroughLocalDate)
+    ) {
+      setAnnouncement("증분 장서의 시작일과 종료일을 모두 확인해 주세요.");
       return;
     }
     const generation =
@@ -1294,6 +1383,9 @@ export function IngestionPanel({
                   : `file:${itemIndex}:${item.filename}`;
               const detail = item.source_id ? jobItems.get(item.source_id) : undefined;
               const rejected = item.status === "FAILED";
+              const repairConfiguration = item.repair_obligation_id
+                ? displayedRepairConfigurations.get(item.repair_obligation_id)
+                : undefined;
               const parseFailed = detail?.status === "FAILED";
               const readCount = parseFailed ? 0 : (detail?.processed_rows ?? 0);
               const filePercent = detail
@@ -1305,7 +1397,7 @@ export function IngestionPanel({
               const needsReview = detail?.mapping_required
                 ? Math.max(detail.total_rows - detail.processed_rows, 0)
                   : detail?.status === "PARTIAL"
-                  ? Math.max(detail.total_rows - readCount, 0)
+                  ? detail.row_error_count
                   : 0;
               const statusCopy = rejected
                 ? "읽지 못함"
@@ -1338,6 +1430,77 @@ export function IngestionPanel({
                   {rejected ? (
                     <>
                       <p className="error-copy">{item.error?.message}</p>
+                      {item.repair_obligation_id &&
+                      repairConfiguration?.confirmationRequired ? (
+                        <div className="repair-configuration">
+                          <label>
+                            자료 종류 확인
+                            <select
+                              aria-label={`${item.filename} 자료 종류 확인`}
+                              onChange={(event) =>
+                                updateRepairConfiguration(item.repair_obligation_id!, {
+                                  role: event.target.value as DocumentRole,
+                                })
+                              }
+                              value={repairConfiguration.role}
+                            >
+                              {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                                <option key={value} value={value}>
+                                  {label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          {repairConfiguration.role === "VENDOR_QUOTE" ? (
+                            <label>
+                              공급처 범위 확인
+                              <input
+                                aria-label={`${item.filename} 공급처 범위 확인`}
+                                onChange={(event) =>
+                                  updateRepairConfiguration(item.repair_obligation_id!, {
+                                    vendorScope: event.target.value,
+                                  })
+                                }
+                                type="text"
+                                value={repairConfiguration.vendorScope}
+                              />
+                            </label>
+                          ) : null}
+                          {[
+                            "CATALOG_DELTA_REGISTRATION",
+                            "CATALOG_DELTA_UPDATE",
+                          ].includes(repairConfiguration.role) ? (
+                            <>
+                              <label>
+                                조회 시작일
+                                <input
+                                  aria-label={`${item.filename} 조회 시작일`}
+                                  onChange={(event) =>
+                                    updateRepairConfiguration(item.repair_obligation_id!, {
+                                      requestedStartLocalDate: event.target.value,
+                                    })
+                                  }
+                                  type="date"
+                                  value={repairConfiguration.requestedStartLocalDate}
+                                />
+                              </label>
+                              <label>
+                                조회 종료일
+                                <input
+                                  aria-label={`${item.filename} 조회 종료일`}
+                                  onChange={(event) =>
+                                    updateRepairConfiguration(item.repair_obligation_id!, {
+                                      requestedThroughLocalDate: event.target.value,
+                                    })
+                                  }
+                                  type="date"
+                                  value={repairConfiguration.requestedThroughLocalDate}
+                                />
+                              </label>
+                            </>
+                          ) : null}
+                        </div>
+                      ) : null}
                       <button
                         aria-label={`${item.filename} 다시 올리기`}
                         className="button button-secondary"

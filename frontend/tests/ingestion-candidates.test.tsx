@@ -67,6 +67,7 @@ describe("후보 만들기 자료 입력", () => {
         status: "PARTIAL",
         total_rows: 1,
         processed_rows: 0,
+        row_error_count: 0,
         error: { code: "MAPPING_REQUIRED", message: "열 연결 확인", type: null },
         mapping_required: mappingRequired,
       },
@@ -74,6 +75,7 @@ describe("후보 만들기 자료 입력", () => {
     const mappings: Array<{ role: string; version: number }> = [];
     const api = createFixtureApi({
       getWorkspace: async () => ({ data: draft, etag: '"1"' }),
+      getSource: async () => ({ data: source, etag: '"1"' }),
       listSources: async () => ({ items: [source], next_cursor: null }),
       listWorkspaceJobs: async () => ({
         items: [{ ...idleJob, id: "ingest-reload-map", status: "PARTIAL", items: [source.latest_result] }],
@@ -88,7 +90,7 @@ describe("후보 만들기 자료 입력", () => {
         ...idleJob,
         id: "parse-reload-map",
         type: "PARSE",
-        items: [{ ...source.latest_result, status: "SUCCESS", processed_rows: 1, error: null, mapping_required: null }],
+        items: [{ ...source.latest_result, status: "SUCCESS", processed_rows: 1, row_error_count: 0, error: null, mapping_required: null }],
       }),
     });
     renderWorkroom(api, draft.id);
@@ -97,6 +99,91 @@ describe("후보 만들기 자료 입력", () => {
     expect(within(dialog).getByText("다시 연 책")).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "열 연결 적용" }));
     await waitFor(() => expect(mappings).toEqual([{ role: "VENDOR_QUOTE", version: 1 }]));
+  });
+
+  test("열 연결이 필요한 자료가 있어도 함께 진행 중인 다른 자료를 계속 확인한다", async () => {
+    const draft = workspace("workspace-mixed-hydration", "열 연결과 진행 작업", "DRAFT");
+    const mappingRequired = {
+      headers: ["책 열"],
+      preview_rows: [["확인할 책"]],
+      suggested_mapping: { "책 열": "title" },
+      required_fields: ["title"],
+      confidence: 0,
+      questions: ["제목 열을 확인해 주세요."],
+    };
+    const mappingResult = {
+      source_document_id: "source-needs-mapping",
+      filename: "mapping.xlsx",
+      status: "PARTIAL",
+      total_rows: 1,
+      processed_rows: 0,
+      row_error_count: 0,
+      error: { code: "MAPPING_REQUIRED", message: "열 연결 확인", type: null },
+      mapping_required: mappingRequired,
+    };
+    const runningResult = {
+      source_document_id: "source-still-running",
+      filename: "running.csv",
+      status: "SUCCESS",
+      total_rows: 1,
+      processed_rows: 1,
+      row_error_count: 0,
+      error: null,
+      mapping_required: null,
+    };
+    const jobReads: string[] = [];
+    const api = createFixtureApi({
+      listSources: async () => ({
+        items: [
+          {
+            ...sourceFixture,
+            id: "source-needs-mapping",
+            filename: "mapping.xlsx",
+            latest_job_id: "job-needs-mapping",
+            latest_result: mappingResult,
+          },
+          {
+            ...sourceFixture,
+            id: "source-still-running",
+            filename: "running.csv",
+            latest_job_id: "job-still-running",
+            latest_result: null,
+          },
+        ],
+        next_cursor: null,
+      }),
+      listWorkspaceJobs: async () => ({
+        items: [
+          {
+            ...idleJob,
+            id: "job-needs-mapping",
+            status: "PARTIAL",
+            items: [mappingResult],
+          },
+          {
+            ...idleJob,
+            id: "job-still-running",
+            status: "RUNNING",
+            items: [],
+          },
+        ],
+        next_cursor: null,
+      }),
+      getJob: async (jobId) => {
+        jobReads.push(jobId);
+        return {
+          ...idleJob,
+          id: jobId,
+          status: "SUCCEEDED",
+          items: [runningResult],
+        };
+      },
+    });
+
+    render(<IngestionPanel api={api} workspace={draft} />);
+
+    expect(await screen.findByRole("dialog", { name: "열 연결 확인" })).toBeVisible();
+    await waitFor(() => expect(jobReads).toEqual(["job-still-running"]));
   });
 
   test("새로 연 작업실의 종료된 여러 자료 결과를 합쳐 비교를 이어간다", async () => {
@@ -108,6 +195,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS",
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     });
@@ -193,6 +281,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     });
@@ -285,6 +374,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     };
@@ -362,6 +452,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     };
@@ -394,6 +485,10 @@ describe("후보 만들기 자료 입력", () => {
                     status: "UNRESOLVED" as const,
                     generation: 0,
                     role: "PURCHASE_REQUEST" as const,
+                    vendor_scope: "*",
+                    requested_start_local_date: null,
+                    requested_through_local_date: null,
+                    configuration_confirmation_required: false,
                     resolved_source_id: null,
                     created_at: "2026-08-29T00:00:00Z",
                     updated_at: "2026-08-29T00:00:00Z",
@@ -442,6 +537,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS",
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     });
@@ -537,6 +633,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     };
@@ -546,6 +643,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     };
@@ -643,7 +741,12 @@ describe("후보 만들기 자료 입력", () => {
   test("새로 연 작업실도 다시 올릴 파일을 찾아 올바른 복구 세대로 이어간다", async () => {
     const user = userEvent.setup();
     const draft = workspace("workspace-repair-reload", "다시 올릴 파일", "DRAFT");
-    const repairInputs: Array<{ obligation?: string; generation?: number; role: string }> = [];
+    const repairInputs: Array<{
+      obligation?: string;
+      generation?: number;
+      role: string;
+      confirmed?: boolean;
+    }> = [];
     const comparisons: string[][] = [];
     const api = createFixtureApi({
       listUploadRepairs: async () => ({
@@ -658,6 +761,10 @@ describe("후보 만들기 자료 입력", () => {
             status: "UNRESOLVED",
             generation: 0,
             role: "UNKNOWN",
+            vendor_scope: "*",
+            requested_start_local_date: null,
+            requested_through_local_date: null,
+            configuration_confirmation_required: true,
             resolved_source_id: null,
             created_at: "2026-08-29T00:00:00Z",
             updated_at: "2026-08-29T00:00:00Z",
@@ -670,6 +777,7 @@ describe("후보 만들기 자료 입력", () => {
           obligation: input.repairObligationId,
           generation: input.repairGeneration,
           role: input.role,
+          confirmed: input.confirmRepairConfiguration,
         });
         return {
           job_id: "parse-repaired-reload",
@@ -696,6 +804,7 @@ describe("후보 만들기 자료 입력", () => {
             status: "SUCCESS",
             total_rows: 1,
             processed_rows: 1,
+            row_error_count: 0,
             error: null,
             mapping_required: null,
           },
@@ -715,6 +824,10 @@ describe("후보 만들기 자료 입력", () => {
 
     const failed = await screen.findByRole("listitem", { name: "broken.exe 처리 상태" });
     expect(failed).toHaveTextContent("지원하지 않는 파일 형식입니다.");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "broken.exe 자료 종류 확인" }),
+      "PURCHASE_REQUEST",
+    );
     await user.upload(
       screen.getByLabelText("broken.exe 수정한 파일 선택"),
       new File(["title\nfixed\n"], "fixed.csv"),
@@ -722,7 +835,12 @@ describe("후보 만들기 자료 입력", () => {
 
     await waitFor(() =>
       expect(repairInputs).toEqual([
-        { obligation: "repair-reloaded", generation: 1, role: "PURCHASE_REQUEST" },
+        {
+          obligation: "repair-reloaded",
+          generation: 1,
+          role: "PURCHASE_REQUEST",
+          confirmed: true,
+        },
       ]),
     );
     expect(comparisons).toEqual([["source-repaired-reload"]]);
@@ -737,6 +855,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     };
@@ -765,6 +884,10 @@ describe("후보 만들기 자료 입력", () => {
             status: "UNRESOLVED",
             generation: 0,
             role: "VENDOR_QUOTE",
+            vendor_scope: "bookstore-a",
+            requested_start_local_date: null,
+            requested_through_local_date: null,
+            configuration_confirmation_required: false,
             resolved_source_id: null,
             created_at: "2026-08-29T00:00:00Z",
             updated_at: "2026-08-29T00:00:00Z",
@@ -800,6 +923,7 @@ describe("후보 만들기 자료 입력", () => {
             status: "SUCCESS",
             total_rows: 1,
             processed_rows: 1,
+            row_error_count: 0,
             error: null,
             mapping_required: null,
           },
@@ -837,6 +961,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     });
@@ -928,6 +1053,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     });
@@ -1049,6 +1175,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     };
@@ -1186,6 +1313,7 @@ describe("후보 만들기 자료 입력", () => {
           status: "SUCCESS",
           total_rows: 1,
           processed_rows: 1,
+          row_error_count: 0,
           error: null,
           mapping_required: null,
         },
@@ -1202,6 +1330,18 @@ describe("후보 만들기 자료 입력", () => {
     let retries = 0;
     const running = { ...idleJob, id: "ingest-running", status: "RUNNING", stage: "PARSING" };
     const api = createFixtureApi({
+      listSources: async () => ({
+        items: [
+          {
+            ...sourceFixture,
+            id: "source-running-recheck",
+            filename: "running.csv",
+            latest_job_id: running.id,
+            latest_result: null,
+          },
+        ],
+        next_cursor: null,
+      }),
       listWorkspaceJobs: async () => ({ items: [running], next_cursor: null }),
       getJob: async () => {
         jobReads += 1;
@@ -1260,6 +1400,7 @@ describe("후보 만들기 자료 입력", () => {
                 status: "SUCCESS",
                 total_rows: 1,
                 processed_rows: 1,
+                row_error_count: 0,
                 error: null,
                 mapping_required: null,
               },
@@ -1321,6 +1462,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "FAILED",
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: { code: "PARSER_FAILURE", message: "파일 내용을 읽지 못했습니다.", type: null },
       mapping_required: null,
     };
@@ -1330,6 +1472,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "PARTIAL",
       total_rows: 3,
       processed_rows: 2,
+      row_error_count: 1,
       error: { code: "ROW_ERRORS", message: "한 행을 확인해 주세요.", type: null },
       mapping_required: null,
     };
@@ -1394,8 +1537,8 @@ describe("후보 만들기 자료 입력", () => {
         ...idleJob,
         id: jobId,
         items: jobId === "ingest-ready"
-          ? [{ source_document_id: "source-ready", filename: "ready.csv", status: "SUCCESS", total_rows: 1, processed_rows: 1, error: null, mapping_required: null }]
-          : [{ source_document_id: "source-b", filename: "replacement-b.csv", status: "SUCCESS", total_rows: 1, processed_rows: 1, error: null, mapping_required: null }],
+          ? [{ source_document_id: "source-ready", filename: "ready.csv", status: "SUCCESS", total_rows: 1, processed_rows: 1, row_error_count: 0, error: null, mapping_required: null }]
+          : [{ source_document_id: "source-b", filename: "replacement-b.csv", status: "SUCCESS", total_rows: 1, processed_rows: 1, row_error_count: 0, error: null, mapping_required: null }],
       }),
       createComparisonJob: async (_workspaceId, sourceIds, version) => {
         comparisons.push(sourceIds);
@@ -1472,6 +1615,7 @@ describe("후보 만들기 자료 입력", () => {
                   status: "SUCCESS",
                   total_rows: 1,
                   processed_rows: 1,
+                  row_error_count: 0,
                   error: null,
                   mapping_required: null,
                 },
@@ -1556,6 +1700,7 @@ describe("후보 만들기 자료 입력", () => {
             status: "SUCCESS",
             total_rows: 2,
             processed_rows: 2,
+            row_error_count: 0,
             error: null,
             mapping_required: null,
           },
@@ -1680,6 +1825,7 @@ describe("후보 만들기 자료 입력", () => {
                 status: "PARTIAL",
                 total_rows: 25,
                 processed_rows: 0,
+                row_error_count: 0,
                 error: {
                   code: "MAPPING_REQUIRED",
                   message: "열 이름과 자료 내용을 확인해 연결해 주세요.",
@@ -1711,6 +1857,7 @@ describe("후보 만들기 자료 입력", () => {
                     status: "SUCCESS",
                     total_rows: 25,
                     processed_rows: 25,
+                    row_error_count: 0,
                     error: null,
                     mapping_required: null,
                   },
@@ -1809,6 +1956,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "PARTIAL",
       total_rows: 1,
       processed_rows: 0,
+      row_error_count: 0,
       error: { code: "MAPPING_REQUIRED", message: "열 연결 확인", type: null },
       mapping_required: mappingRequired,
     };
@@ -1841,6 +1989,7 @@ describe("후보 만들기 자료 입력", () => {
                   ...mappingItem,
                   status: "SUCCESS",
                   processed_rows: 1,
+                  row_error_count: 0,
                   error: null,
                   mapping_required: null,
                 },
@@ -1963,6 +2112,7 @@ describe("후보 만들기 자료 입력", () => {
             status: "SUCCESS",
             total_rows: 1,
             processed_rows: 1,
+            row_error_count: 0,
             error: null,
             mapping_required: null,
           },
@@ -2035,6 +2185,7 @@ describe("후보 만들기 자료 입력", () => {
       status: "PARTIAL",
       total_rows: 1,
       processed_rows: 0,
+      row_error_count: 0,
       error: { code: "MAPPING_REQUIRED", message: "열 연결 확인", type: null },
       mapping_required: mappingRequired,
     });
@@ -2086,6 +2237,7 @@ describe("후보 만들기 자료 입력", () => {
                 status: first ? "PARTIAL" : "SUCCESS",
                 total_rows: 1,
                 processed_rows: 1,
+                row_error_count: 0,
                 error: null,
                 mapping_required: null,
               },
@@ -2167,6 +2319,7 @@ describe("후보 만들기 자료 입력", () => {
             status: "FAILED",
             total_rows: 1,
             processed_rows: 1,
+            row_error_count: 0,
             error: {
               code: "PARSER_FAILURE",
               message: "파일 내용을 읽지 못했습니다.",
@@ -2239,6 +2392,7 @@ describe("후보 만들기 자료 입력", () => {
                 status: "SUCCESS",
                 total_rows: 1,
                 processed_rows: 1,
+                row_error_count: 0,
                 error: null,
                 mapping_required: null,
               },
@@ -2325,6 +2479,7 @@ describe("후보 만들기 자료 입력", () => {
                   status: "SUCCESS",
                   total_rows: 1,
                   processed_rows: 1,
+                  row_error_count: 0,
                   error: null,
                   mapping_required: null,
                 },
@@ -2622,6 +2777,7 @@ describe("후보 확인과 자동 저장", () => {
       status: "SUCCESS" as const,
       total_rows: 1,
       processed_rows: 1,
+      row_error_count: 0,
       error: null,
       mapping_required: null,
     };
@@ -2666,6 +2822,10 @@ describe("후보 확인과 자동 저장", () => {
                 status: "UNRESOLVED",
                 generation: 0,
                 role: "PURCHASE_REQUEST",
+                vendor_scope: "*",
+                requested_start_local_date: null,
+                requested_through_local_date: null,
+                configuration_confirmation_required: false,
                 resolved_source_id: null,
                 created_at: "2026-08-29T00:00:00Z",
                 updated_at: "2026-08-29T00:00:00Z",
@@ -2703,6 +2863,7 @@ describe("후보 확인과 자동 저장", () => {
                   status: "SUCCESS",
                   total_rows: 1,
                   processed_rows: 1,
+                  row_error_count: 0,
                   error: null,
                   mapping_required: null,
                 },
@@ -2766,6 +2927,7 @@ describe("후보 확인과 자동 저장", () => {
       status: "PARTIAL" as const,
       total_rows: 2,
       processed_rows: 1,
+      row_error_count: 0,
       error: { code: "ROW_ERROR", message: "제목이 없는 행이 있습니다.", type: null },
       mapping_required: null,
     };
@@ -2857,6 +3019,7 @@ describe("후보 확인과 자동 저장", () => {
                   status: "SUCCESS",
                   total_rows: 2,
                   processed_rows: 2,
+                  row_error_count: 0,
                   error: null,
                   mapping_required: null,
                 },
@@ -3164,6 +3327,88 @@ describe("후보 확인과 자동 저장", () => {
     expect(await screen.findByText("첫 페이지 책")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "수서 후보 더 보기" }));
     expect(await screen.findByText("천 번째 책")).toBeVisible();
+  });
+
+  test("다음 cursor가 같은 후보를 되돌려도 중복 표시하지 않는다", async () => {
+    const user = userEvent.setup();
+    const first = candidate("candidate-dedup", "한 번만 보일 책", "CANDIDATE");
+    const second = candidate("candidate-next-unique", "다음 책", "CANDIDATE");
+    const api = candidateApi({
+      listCandidates: async (_workspaceId: string, filters: { outcome: string; cursor?: string }) => ({
+        items:
+          filters.outcome === "CANDIDATE"
+            ? filters.cursor
+              ? [first, second]
+              : [first]
+            : [],
+        next_cursor:
+          filters.outcome === "CANDIDATE" && !filters.cursor ? "dedup-next" : null,
+        total_count: filters.outcome === "CANDIDATE" ? 2 : 0,
+        summary: {
+          total_count: 2,
+          candidate_count: 2,
+          needs_review_count: 0,
+          excluded_count: 0,
+          unresolved_count: 0,
+          expected_total_won: 24_000,
+        },
+      }),
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+
+    await user.click(await screen.findByRole("tab", { name: "수서 후보 2" }));
+    await user.click(screen.getByRole("button", { name: "수서 후보 더 보기" }));
+
+    expect(await screen.findByText("다음 책")).toBeVisible();
+    expect(screen.getAllByText("한 번만 보일 책")).toHaveLength(1);
+  });
+
+  test("판정 뒤 늦은 cursor가 예전 outcome을 보내도 이동한 후보와 권위 count를 되돌리지 않는다", async () => {
+    const user = userEvent.setup();
+    const moved = candidate(
+      "candidate-moved-before-page",
+      "이미 판정한 책",
+      "NEEDS_REVIEW",
+      "판정을 기다립니다.",
+    );
+    const later = candidate(
+      "candidate-later-review",
+      "다음 확인 책",
+      "NEEDS_REVIEW",
+      "확인이 필요합니다.",
+    );
+    const api = candidateApi({
+      listCandidates: async (_workspaceId: string, filters: { outcome: string; cursor?: string }) => ({
+        items:
+          filters.outcome === "NEEDS_REVIEW"
+            ? filters.cursor
+              ? [moved, later]
+              : [moved]
+            : [],
+        next_cursor:
+          filters.outcome === "NEEDS_REVIEW" && !filters.cursor ? "review-next" : null,
+        total_count: filters.outcome === "NEEDS_REVIEW" ? 2 : 0,
+        summary: {
+          total_count: 2,
+          candidate_count: 0,
+          needs_review_count: 2,
+          excluded_count: 0,
+          unresolved_count: 2,
+          expected_total_won: 0,
+        },
+      }),
+    });
+    renderWorkroom(api, candidateWorkspace.id);
+
+    await user.click(
+      await screen.findByRole("button", { name: "이미 판정한 책 수서 후보로 포함" }),
+    );
+    expect(screen.getByRole("tab", { name: "확인 필요 1" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "확인 필요 더 보기" }));
+
+    expect(await screen.findByText("다음 확인 책")).toBeVisible();
+    expect(screen.queryByText("이미 판정한 책")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "확인 필요 1" })).toBeVisible();
   });
 
   test("이전 cursor 응답은 새 검색의 후보와 전체 금액을 되돌리지 않는다", async () => {

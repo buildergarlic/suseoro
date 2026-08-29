@@ -203,7 +203,7 @@ describe("생성 계약을 쓰는 API client", () => {
     expect(current.data.quantity).toBe(5);
   });
 
-  test("수정 파일 업로드는 교체할 source identity와 원래 역할을 multipart 계약에 보존한다", async () => {
+  test("수정 파일 업로드는 source identity만 보내고 원래 설정은 서버가 이어받는다", async () => {
     let outgoing: FormData | undefined;
     vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
       outgoing = init?.body as FormData;
@@ -232,7 +232,10 @@ describe("생성 계약을 쓰는 API client", () => {
       replacementSourceId: "source-original",
     });
 
-    expect(outgoing?.get("role")).toBe("PURCHASE_REQUEST");
+    expect(outgoing?.get("role")).toBeNull();
+    expect(outgoing?.get("vendor_scope")).toBeNull();
+    expect(outgoing?.get("requested_start_local_date")).toBeNull();
+    expect(outgoing?.get("requested_through_local_date")).toBeNull();
     expect(outgoing?.get("replacement_source_document_id")).toBe("source-original");
     expect((outgoing?.get("files") as File).name).toBe("corrected.csv");
   });
@@ -459,6 +462,164 @@ describe("생성 계약을 쓰는 API client", () => {
 
     expect(keys[0]).toBeTruthy();
     expect(keys[1]).toBe(keys[0]);
+  });
+
+  test("필수 필드가 빠진 JSON 2xx도 모호한 응답으로 보고 같은 업로드 key를 보존한다", async () => {
+    const keys: string[] = [];
+    let call = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(
+        typeof input === "string" ? new URL(input, window.location.href) : input,
+        init,
+      );
+      keys.push(request.headers.get("Idempotency-Key") ?? "");
+      call += 1;
+      return new Response(
+        JSON.stringify(
+          call === 1
+            ? {}
+            : {
+                job_id: "job-valid",
+                items: [
+                  {
+                    filename: "books.csv",
+                    status: "ACCEPTED",
+                    source_id: "source-valid",
+                    error: null,
+                    repair_obligation_id: null,
+                    repair_generation: null,
+                  },
+                ],
+              },
+        ),
+        { status: 202, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const client = createApiClient();
+    const file = new File(["제목\n책\n"], "books.csv", { type: "text/csv" });
+    const action = () =>
+      client.uploadSources("workspace-1", {
+        files: [file],
+        role: "PURCHASE_REQUEST",
+      });
+
+    await expect(action()).rejects.toThrow("서버 응답");
+    await action();
+
+    expect(keys[0]).toBeTruthy();
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  test("자료·교체 의무·작업 목록은 next_cursor가 끝날 때까지 모두 모은다", async () => {
+    const requested = { sources: [] as string[], repairs: [] as string[], jobs: [] as string[] };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(
+        typeof input === "string" ? new URL(input, window.location.href) : input,
+        init,
+      );
+      const url = new URL(request.url);
+      const cursor = url.searchParams.get("cursor");
+      const kind = url.pathname.endsWith("/sources")
+        ? "sources"
+        : url.pathname.endsWith("/upload-repairs")
+          ? "repairs"
+          : "jobs";
+      requested[kind].push(cursor ?? "FIRST");
+      const id = `${kind}-${cursor ?? "first"}`;
+      const item =
+        kind === "sources"
+          ? {
+              id,
+              filename: `${id}.csv`,
+              sha256: "a".repeat(64),
+              size_bytes: 1,
+              role: "PURCHASE_REQUEST",
+              status: "SUCCESS",
+              detected_format: "CSV",
+              mapping: {},
+              row_version: 1,
+              created_at: "2026-08-29T00:00:00Z",
+              completed_at: "2026-08-29T00:00:01Z",
+              latest_job_id: null,
+              latest_result: null,
+            }
+          : kind === "repairs"
+            ? {
+                id,
+                filename: `${id}.csv`,
+                error: { code: "FILE_TOO_LARGE", message: "파일을 확인해 주세요." },
+                status: "UNRESOLVED",
+                generation: 0,
+                role: "PURCHASE_REQUEST",
+                resolved_source_id: null,
+                created_at: "2026-08-29T00:00:00Z",
+                updated_at: "2026-08-29T00:00:00Z",
+              }
+            : {
+                id,
+                workspace_id: "workspace-1",
+                type: "INGEST",
+                status: "SUCCEEDED",
+                stage: "COMPLETED",
+                progress_current: 1,
+                progress_total: 1,
+                error: null,
+                retry_count: 0,
+                items: [],
+              };
+      return new Response(
+        JSON.stringify({
+          items: [item],
+          next_cursor: cursor ? null : `${kind}-next`,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const client = createApiClient();
+
+    const [sources, repairs, jobs] = await Promise.all([
+      client.listSources("workspace-1"),
+      client.listUploadRepairs("workspace-1"),
+      client.listWorkspaceJobs("workspace-1"),
+    ]);
+
+    expect(sources.items).toHaveLength(2);
+    expect(repairs.items).toHaveLength(2);
+    expect(jobs.items).toHaveLength(2);
+    expect(requested).toEqual({
+      sources: ["FIRST", "sources-next"],
+      repairs: ["FIRST", "repairs-next"],
+      jobs: ["FIRST", "jobs-next"],
+    });
+    expect(sources.next_cursor).toBeNull();
+    expect(repairs.next_cursor).toBeNull();
+    expect(jobs.next_cursor).toBeNull();
+  });
+
+  test("비교 시작은 브라우저가 센 source 목록 대신 서버 권위 집합을 요청한다", async () => {
+    let body: unknown;
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (typeof init?.body !== "string") throw new TypeError("JSON body required");
+      body = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          job_id: "compare-1",
+          status: "QUEUED",
+          workspace_status: "ANALYZING",
+          row_version: 2,
+        }),
+        { status: 202, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const client = createApiClient();
+
+    await client.createComparisonJob(
+      "workspace-1",
+      Array.from({ length: 101 }, (_, index) => `source-${index}`),
+      1,
+    );
+
+    expect(body).toEqual({});
   });
 
   test("동시 요청의 읽을 수 없는 응답은 뒤늦은 성공이 와도 해당 caller 재시도 key를 보존한다", async () => {

@@ -729,6 +729,11 @@
       },
       "Body_uploadSources": {
         "properties": {
+          "confirm_repair_configuration": {
+            "default": false,
+            "title": "Confirm Repair Configuration",
+            "type": "boolean"
+          },
           "files": {
             "items": {
               "format": "binary",
@@ -1482,18 +1487,22 @@
       "ComparisonCreate": {
         "properties": {
           "source_document_ids": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 100,
-            "minItems": 1,
-            "title": "Source Document Ids",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Document Ids"
           }
         },
-        "required": [
-          "source_document_ids"
-        ],
         "title": "ComparisonCreate",
         "type": "object"
       },
@@ -2050,6 +2059,10 @@
             "title": "Processed Rows",
             "type": "integer"
           },
+          "row_error_count": {
+            "title": "Row Error Count",
+            "type": "integer"
+          },
           "source_document_id": {
             "title": "Source Document Id",
             "type": "string"
@@ -2069,6 +2082,7 @@
           "status",
           "total_rows",
           "processed_rows",
+          "row_error_count",
           "error",
           "mapping_required"
         ],
@@ -3778,6 +3792,43 @@
             "title": "Mapping",
             "type": "object"
           },
+          "parsed_config_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parsed Config Version"
+          },
+          "remember_template": {
+            "title": "Remember Template",
+            "type": "boolean"
+          },
+          "requested_start_local_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Start Local Date"
+          },
+          "requested_through_local_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Through Local Date"
+          },
           "role": {
             "title": "Role",
             "type": "string"
@@ -3797,6 +3848,10 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "vendor_scope": {
+            "title": "Vendor Scope",
+            "type": "string"
           }
         },
         "required": [
@@ -3808,6 +3863,11 @@
           "status",
           "detected_format",
           "mapping",
+          "vendor_scope",
+          "remember_template",
+          "requested_start_local_date",
+          "requested_through_local_date",
+          "parsed_config_version",
           "row_version",
           "created_at",
           "completed_at"
@@ -3912,6 +3972,10 @@
       "UploadRepairObligation": {
         "additionalProperties": false,
         "properties": {
+          "configuration_confirmation_required": {
+            "title": "Configuration Confirmation Required",
+            "type": "boolean"
+          },
           "created_at": {
             "title": "Created At",
             "type": "string"
@@ -3930,6 +3994,28 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "requested_start_local_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Start Local Date"
+          },
+          "requested_through_local_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Through Local Date"
           },
           "resolved_source_id": {
             "anyOf": [
@@ -3953,6 +4039,10 @@
           "updated_at": {
             "title": "Updated At",
             "type": "string"
+          },
+          "vendor_scope": {
+            "title": "Vendor Scope",
+            "type": "string"
           }
         },
         "required": [
@@ -3962,6 +4052,10 @@
           "status",
           "generation",
           "role",
+          "vendor_scope",
+          "requested_start_local_date",
+          "requested_through_local_date",
+          "configuration_confirmation_required",
           "resolved_source_id",
           "created_at",
           "updated_at"

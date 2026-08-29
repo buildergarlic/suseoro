@@ -96,6 +96,10 @@ class UploadRepairObligation(PublicSchema):
     status: str
     generation: int
     role: str
+    vendor_scope: str
+    requested_start_local_date: str | None
+    requested_through_local_date: str | None
+    configuration_confirmation_required: bool
     resolved_source_id: str | None
     created_at: str
     updated_at: str
@@ -115,6 +119,11 @@ class SourceResponse(PublicSchema):
     status: str
     detected_format: str | None
     mapping: dict[str, str]
+    vendor_scope: str
+    remember_template: bool
+    requested_start_local_date: str | None
+    requested_through_local_date: str | None
+    parsed_config_version: int | None
     row_version: int
     created_at: str
     completed_at: str | None
@@ -167,6 +176,7 @@ class JobFileResult(PublicSchema):
     status: str
     total_rows: int
     processed_rows: int
+    row_error_count: int
     error: JobError | None
     mapping_required: MappingRequired | None
 

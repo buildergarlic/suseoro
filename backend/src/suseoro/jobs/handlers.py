@@ -34,6 +34,7 @@ from suseoro.jobs.repository import JobRepository
 from suseoro.jobs.runner import DurableJobRunner, JobContext
 from suseoro.jobs.source_snapshot import source_rows_snapshot
 from suseoro.security.sessions import format_utc, utc_now
+from suseoro.services.audit import record_audit_event
 from suseoro.services.comparison import ComparisonService
 
 logger = logging.getLogger(__name__)
@@ -318,6 +319,7 @@ def _persist_parse_result(
     document_id: str,
     result: ParseResult,
     completed_at: str,
+    config_version: int,
 ) -> None:
     connection.execute(
         "DELETE FROM source_rows WHERE source_document_id = ?", (document_id,)
@@ -375,7 +377,8 @@ def _persist_parse_result(
     connection.execute(
         """
         UPDATE source_documents
-        SET status = ?, template_version = ?, activation_allowed = ?, completed_at = ?
+        SET status = ?, template_version = ?, activation_allowed = ?, completed_at = ?,
+            parsed_config_version = ?
         WHERE id = ?
         """,
         (
@@ -383,8 +386,86 @@ def _persist_parse_result(
             result.template_version,
             activation_allowed,
             completed_at,
+            config_version,
             document_id,
         ),
+    )
+
+
+def _resolve_repair_after_parse(
+    connection: sqlite3.Connection,
+    *,
+    document_id: str,
+    request_id: str,
+) -> None:
+    repair = connection.execute(
+        """
+        SELECT repair.id, repair.school_id, repair.actor_id, repair.generation,
+               repair.role, repair.vendor_scope,
+               repair.requested_start_local_date,
+               repair.requested_through_local_date,
+               document.status, document.parsed_config_version,
+               document.requested_start_local_date AS document_start,
+               document.requested_through_local_date AS document_through,
+               config.role AS config_role, config.vendor_scope AS config_vendor,
+               config.row_version AS config_version,
+               (
+                   SELECT COUNT(*) FROM source_rows AS source_row
+                   WHERE source_row.source_document_id = document.id
+                     AND source_row.status = 'SUCCESS'
+               ) AS successful_rows
+        FROM upload_repair_obligations AS repair
+        JOIN source_documents AS document
+          ON document.id = repair.pending_source_document_id
+        JOIN source_configurations AS config
+          ON config.source_document_id = document.id
+        WHERE repair.pending_source_document_id = ?
+          AND repair.status = 'REPAIRING'
+        """,
+        (document_id,),
+    ).fetchone()
+    if repair is None:
+        return
+    valid = (
+        repair["role"] != DocumentRole.UNKNOWN.value
+        and repair["config_role"] == repair["role"]
+        and repair["config_vendor"] == repair["vendor_scope"]
+        and repair["document_start"] == repair["requested_start_local_date"]
+        and repair["document_through"] == repair["requested_through_local_date"]
+        and repair["status"] in {"SUCCESS", "ROW_ERROR"}
+        and repair["parsed_config_version"] == repair["config_version"]
+        and int(repair["successful_rows"]) > 0
+    )
+    if not valid:
+        return
+    updated = connection.execute(
+        """
+        UPDATE upload_repair_obligations
+        SET status = 'RESOLVED', resolved_source_document_id = ?,
+            pending_source_document_id = NULL, updated_at = ?
+        WHERE id = ? AND status = 'REPAIRING'
+          AND pending_source_document_id = ? AND generation = ?
+        """,
+        (
+            document_id,
+            format_utc(utc_now()),
+            repair["id"],
+            document_id,
+            repair["generation"],
+        ),
+    )
+    if updated.rowcount != 1:
+        return
+    record_audit_event(
+        connection,
+        actor_id=repair["actor_id"],
+        school_id=repair["school_id"],
+        action="UPLOAD_REPAIR_RESOLVED",
+        entity_type="upload_repair_obligation",
+        entity_id=repair["id"],
+        before={"status": "REPAIRING", "generation": repair["generation"]},
+        after={"status": "RESOLVED", "source_id": document_id},
+        request_id=request_id,
     )
 
 
@@ -409,7 +490,13 @@ def build_ingestion_handler(
                        file.storage_path, file.detected_format,
                        COALESCE(config.mapping_json, '{}') AS mapping_json,
                        COALESCE(config.vendor_scope, '*') AS vendor_scope,
-                       COALESCE(config.remember_template, 0) AS remember_template
+                       COALESCE(config.remember_template, 0) AS remember_template,
+                       COALESCE(config.row_version, 1) AS config_version,
+                       (
+                           SELECT COUNT(*) FROM workspace_sources AS owner
+                           WHERE owner.source_document_id = document.id
+                             AND owner.school_id = document.school_id
+                       ) AS workspace_link_count
                 FROM source_documents document
                 JOIN source_files file ON file.id = document.source_file_id
                 LEFT JOIN source_configurations config
@@ -421,6 +508,10 @@ def build_ingestion_handler(
             if document is None:
                 raise ValueError("ingestion source document school scope mismatch")
             try:
+                if int(document["workspace_link_count"]) != 1:
+                    raise ValueError(
+                        "ingestion source document has multiple workspaces"
+                    )
                 role = DocumentRole(document["role"])
                 cached = ParserCache(connection).get_or_parse(
                     sha256=document["sha256"],
@@ -528,11 +619,23 @@ def build_ingestion_handler(
                     role=role,
                     mapping=effective_mapping,
                 )
+                current_config = connection.execute(
+                    """
+                    SELECT row_version FROM source_configurations
+                    WHERE source_document_id = ? AND school_id = ?
+                    """,
+                    (document_id, context.job.school_id),
+                ).fetchone()
+                if current_config is None or int(current_config["row_version"]) != int(
+                    document["config_version"]
+                ):
+                    raise ValueError("source configuration changed during parse")
                 _persist_parse_result(
                     connection,
                     document_id=document_id,
                     result=result,
                     completed_at=format_utc(context.clock()),
+                    config_version=int(document["config_version"]),
                 )
                 if document["remember_template"] and configured_mapping and headers:
                     template_store.save(
@@ -565,8 +668,14 @@ def build_ingestion_handler(
                     source_document_id=document_id,
                     status=item_status,
                     total_rows=len(result.rows),
-                    processed_rows=len(result.rows),
+                    processed_rows=len(result.rows) - row_errors,
+                    row_error_count=row_errors,
                     error=item_error,
+                )
+                _resolve_repair_after_parse(
+                    connection,
+                    document_id=document_id,
+                    request_id=str(payload.get("request_id") or context.job.id),
                 )
             except Exception:  # One file must not drop successfully parsed peers.
                 logger.exception("Source document %s parsing failed", document_id)
@@ -574,6 +683,7 @@ def build_ingestion_handler(
                 connection.execute(
                     """
                     UPDATE source_documents SET status = 'FAILED', completed_at = ?
+                        , parsed_config_version = NULL
                     WHERE id = ? AND school_id = ?
                     """,
                     (
@@ -654,7 +764,8 @@ def build_comparison_handler(
                 current = connection.execute(
                     """
                     SELECT document.status, document.parser_version,
-                           document.completed_at, file.sha256,
+                           document.completed_at, document.parsed_config_version,
+                           file.sha256,
                            COALESCE(config.role, document.role) AS role,
                            COALESCE(config.row_version, 1) AS config_version,
                            COALESCE(config.mapping_json, '{}') AS mapping_json
@@ -686,6 +797,7 @@ def build_comparison_handler(
                             "sha256",
                             "role",
                             "config_version",
+                            "parsed_config_version",
                             "mapping_json",
                             "parser_version",
                             "completed_at",
@@ -708,29 +820,30 @@ def build_comparison_handler(
                     raise RuntimeError("comparison catalog snapshot changed")
 
         validate_snapshot()
-        placeholders = ",".join("?" for _ in document_ids)
+        document_ids_json = json.dumps(document_ids)
         documents = connection.execute(
-            f"""
+            """
             SELECT id FROM source_documents
-            WHERE id IN ({placeholders}) AND school_id = ?
+            WHERE id IN (SELECT value FROM json_each(?)) AND school_id = ?
             """,
-            (*document_ids, context.job.school_id),
+            (document_ids_json, context.job.school_id),
         ).fetchall()
         if {row["id"] for row in documents} != set(document_ids):
             raise ValueError("COMPARE source document school scope mismatch")
         total = connection.execute(
-            f"""
+            """
             SELECT COUNT(*) FROM source_rows
-            WHERE source_document_id IN ({placeholders})
+            WHERE source_document_id IN (SELECT value FROM json_each(?))
             """,
-            document_ids,
+            (document_ids_json,),
         ).fetchone()[0]
         completed = connection.execute(
-            f"""
+            """
             SELECT COUNT(*) FROM comparison_row_results
-            WHERE workspace_id = ? AND source_document_id IN ({placeholders})
+            WHERE workspace_id = ?
+              AND source_document_id IN (SELECT value FROM json_each(?))
             """,
-            (context.job.workspace_id, *document_ids),
+            (context.job.workspace_id, document_ids_json),
         ).fetchone()[0]
         context.checkpoint(stage="VALIDATING", current=completed, total=total)
         service = ComparisonService(connection)
@@ -789,12 +902,14 @@ def build_comparison_handler(
                     connection.commit()
                     processed_batch = True
                     completed = connection.execute(
-                        f"""
+                        """
                         SELECT COUNT(*) FROM comparison_row_results
                         WHERE workspace_id = ?
-                          AND source_document_id IN ({placeholders})
+                          AND source_document_id IN (
+                              SELECT value FROM json_each(?)
+                          )
                         """,
-                        (context.job.workspace_id, *document_ids),
+                        (context.job.workspace_id, document_ids_json),
                     ).fetchone()[0]
                     context.checkpoint(
                         stage="COMPARING", current=completed, total=total

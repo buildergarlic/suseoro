@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from typing import Annotated
@@ -22,7 +23,7 @@ from suseoro.api.dependencies import (
 from suseoro.api.errors import domain_not_found
 from suseoro.api.routes.events import publish_event
 from suseoro.jobs.repository import JobRepository
-from suseoro.jobs.source_snapshot import source_rows_snapshot
+from suseoro.jobs.source_snapshot import authoritative_comparison_sources
 from suseoro.security.sessions import format_utc, utc_now
 from suseoro.services.audit import record_audit_event
 from suseoro.services.idempotency import (
@@ -44,7 +45,9 @@ class WorkspaceTransition(BaseModel):
 
 
 class ComparisonCreate(BaseModel):
-    source_document_ids: Annotated[list[str], Field(min_length=1, max_length=100)]
+    source_document_ids: (
+        Annotated[list[str], Field(min_length=1, max_length=100)] | None
+    ) = None
 
 
 def _serialized(row) -> dict[str, object]:
@@ -289,50 +292,39 @@ def create_comparison_job(
         from fastapi import HTTPException
 
         raise HTTPException(status_code=409, detail={"code": "UPLOAD_REPAIR_REQUIRED"})
-    document_ids = tuple(dict.fromkeys(payload.source_document_ids))
-    authoritative_documents = connection.execute(
-        """
-        SELECT document.id, document.status, document.parser_version,
-               document.completed_at, file.sha256,
-               COALESCE(config.role, document.role) AS role,
-               COALESCE(config.row_version, 1) AS config_version,
-               COALESCE(config.mapping_json, '{{}}') AS mapping_json
-        FROM source_documents document
-        JOIN source_files file ON file.id = document.source_file_id
-        JOIN workspace_sources link ON link.source_document_id = document.id
-        LEFT JOIN source_configurations config
-          ON config.source_document_id = document.id
-        WHERE link.workspace_id = ? AND link.school_id = ?
-          AND COALESCE(config.role, document.role) = 'PURCHASE_REQUEST'
-        """,
-        (workspace_id, user.school_id),
-    ).fetchall()
-    documents_by_id = {row["id"]: row for row in authoritative_documents}
-    if set(document_ids) != set(documents_by_id):
-        from fastapi import HTTPException
-
-        raise HTTPException(
-            status_code=409, detail={"code": "COMPARISON_SOURCE_SET_CHANGED"}
-        )
-    documents = [documents_by_id[document_id] for document_id in document_ids]
-    if any(row["status"] not in {"SUCCESS", "ROW_ERROR"} for row in documents):
+    source_snapshot = authoritative_comparison_sources(
+        connection, school_id=user.school_id, workspace_id=workspace_id
+    )
+    authoritative_ids = tuple(item["id"] for item in source_snapshot)
+    if not authoritative_ids:
         from fastapi import HTTPException
 
         raise HTTPException(
             status_code=422, detail={"code": "COMPARISON_SOURCES_NOT_READY"}
         )
-    placeholders = ",".join("?" for _ in document_ids)
+    requested_ids = (
+        None
+        if payload.source_document_ids is None
+        else tuple(dict.fromkeys(payload.source_document_ids))
+    )
+    if requested_ids is not None and set(requested_ids) != set(authoritative_ids):
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=409, detail={"code": "COMPARISON_SOURCE_SET_CHANGED"}
+        )
+    document_ids = authoritative_ids
     active_processing = connection.execute(
-        f"""
+        """
         SELECT 1
         FROM durable_jobs AS job, json_each(job.payload_json, '$.source_document_ids') AS source
-        WHERE job.school_id = ? AND job.workspace_id = ?
+        WHERE job.school_id = ?
           AND job.job_type IN ('INGEST', 'PARSE')
           AND job.status IN ('QUEUED', 'RUNNING', 'CANCEL_REQUESTED')
-          AND source.value IN ({placeholders})
+          AND source.value IN (SELECT value FROM json_each(?))
         LIMIT 1
         """,
-        (user.school_id, workspace_id, *document_ids),
+        (user.school_id, json.dumps(document_ids)),
     ).fetchone()
     if active_processing is not None:
         from fastapi import HTTPException
@@ -340,22 +332,15 @@ def create_comparison_job(
         raise HTTPException(
             status_code=409, detail={"code": "SOURCE_PROCESSING_IN_PROGRESS"}
         )
-    source_snapshot = []
-    for document in documents:
-        row_count, row_digest = source_rows_snapshot(connection, document["id"])
-        source_snapshot.append(
-            {
-                "id": document["id"],
-                "role": document["role"],
-                "status": document["status"],
-                "sha256": document["sha256"],
-                "config_version": document["config_version"],
-                "mapping_json": document["mapping_json"],
-                "parser_version": document["parser_version"],
-                "completed_at": document["completed_at"],
-                "row_count": row_count,
-                "row_digest": row_digest,
-            }
+    if any(
+        item["status"] not in {"SUCCESS", "ROW_ERROR"}
+        or item["parsed_config_version"] != item["config_version"]
+        for item in source_snapshot
+    ):
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=422, detail={"code": "COMPARISON_SOURCES_NOT_READY"}
         )
     updated_at = format_utc(utc_now())
     updated = connection.execute(

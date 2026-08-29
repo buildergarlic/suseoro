@@ -82,7 +82,12 @@ export function CandidatePanel({
   const queryGenerationRef = useRef(0);
   const mutationEpochRef = useRef(0);
   const mutationInFlightRef = useRef(0);
+  const authoritativeOutcomesRef = useRef(new Map<string, Outcome>());
   const operator = canOperate(user);
+
+  useEffect(() => {
+    authoritativeOutcomesRef.current.clear();
+  }, [workspace.id]);
 
   useEffect(() => {
     let active = true;
@@ -118,6 +123,20 @@ export function CandidatePanel({
               },
             ]),
           ) as Record<Outcome, PageState>;
+          const canonical = new Map<string, Candidate>();
+          for (const outcome of OUTCOMES) {
+            for (const candidate of next[outcome].items) {
+              const existing = canonical.get(candidate.id);
+              if (!existing || candidate.row_version >= existing.row_version) {
+                canonical.set(candidate.id, candidate);
+              }
+            }
+            next[outcome].items = [];
+          }
+          for (const candidate of canonical.values()) {
+            const outcome = OUTCOMES.find((item) => item === candidate.outcome);
+            if (outcome) next[outcome].items.push(candidate);
+          }
           setPages(next);
           setSummary(results[0]?.[1].summary ?? EMPTY_SUMMARY);
         })
@@ -163,6 +182,7 @@ export function CandidatePanel({
     const newAmount = updated.outcome === "CANDIDATE" ? candidateAmount(updated) : 0;
     const previousOutcome = OUTCOMES.find((outcome) => outcome === previous.outcome);
     const updatedOutcome = OUTCOMES.find((outcome) => outcome === updated.outcome);
+    if (updatedOutcome) authoritativeOutcomesRef.current.set(updated.id, updatedOutcome);
     setPages((current) => {
       const next = { ...current };
       for (const outcome of OUTCOMES) {
@@ -208,33 +228,53 @@ export function CandidatePanel({
 
   function moveResolvedCandidate(
     candidate: Candidate,
-    outcome: "CANDIDATE" | "EXCLUDED",
   ) {
-    setPages((current) => ({
-      ...current,
-      NEEDS_REVIEW: {
-        ...current.NEEDS_REVIEW,
-        totalCount: Math.max(0, current.NEEDS_REVIEW.totalCount - 1),
-        items: current.NEEDS_REVIEW.items.filter((item) => item.id !== candidate.id),
-      },
-      [outcome]: {
-        ...current[outcome],
-        totalCount: current[outcome].totalCount + 1,
-        items: [...current[outcome].items, candidate],
-      },
-    }));
+    const authoritativeOutcome: "CANDIDATE" | "EXCLUDED" =
+      candidate.outcome === "EXCLUDED" ? "EXCLUDED" : "CANDIDATE";
+    authoritativeOutcomesRef.current.set(candidate.id, authoritativeOutcome);
+    setPages((current) => {
+      const alreadyInTarget = current[authoritativeOutcome].items.some(
+        (item) => item.id === candidate.id,
+      );
+      return {
+        ...current,
+        NEEDS_REVIEW: {
+          ...current.NEEDS_REVIEW,
+          totalCount: Math.max(0, current.NEEDS_REVIEW.totalCount - 1),
+          items: current.NEEDS_REVIEW.items.filter(
+            (item) => item.id !== candidate.id,
+          ),
+        },
+        [authoritativeOutcome]: {
+          ...current[authoritativeOutcome],
+          totalCount:
+            current[authoritativeOutcome].totalCount +
+            (alreadyInTarget ? 0 : 1),
+          items: [
+            ...current[authoritativeOutcome].items.filter(
+              (item) => item.id !== candidate.id,
+            ),
+            candidate,
+          ],
+        },
+      };
+    });
     setSummary((current) => ({
       ...current,
       needs_review_count: Math.max(0, current.needs_review_count - 1),
       unresolved_count: Math.max(0, current.unresolved_count - 1),
       candidate_count:
-        current.candidate_count + (outcome === "CANDIDATE" ? 1 : 0),
-      excluded_count: current.excluded_count + (outcome === "EXCLUDED" ? 1 : 0),
+        current.candidate_count + (authoritativeOutcome === "CANDIDATE" ? 1 : 0),
+      excluded_count:
+        current.excluded_count + (authoritativeOutcome === "EXCLUDED" ? 1 : 0),
       expected_total_won:
-        current.expected_total_won + (outcome === "CANDIDATE" ? candidateAmount(candidate) : 0),
+        current.expected_total_won +
+        (authoritativeOutcome === "CANDIDATE" ? candidateAmount(candidate) : 0),
     }));
     setAnnouncement(
-      outcome === "CANDIDATE" ? "수서 후보로 옮겼습니다." : "제외된 책으로 옮겼습니다.",
+      authoritativeOutcome === "CANDIDATE"
+        ? "수서 후보로 옮겼습니다."
+        : "제외된 책으로 옮겼습니다.",
     );
   }
 
@@ -280,15 +320,28 @@ export function CandidatePanel({
         activeOutcome !== outcome ||
         search.trim() !== requestedSearch
       ) return;
-      setPages((current) => ({
-        ...current,
-        [outcome]: {
-          items: [...current[outcome].items, ...page.items],
-          nextCursor: page.next_cursor,
-          totalCount: page.total_count,
-        },
-      }));
-      setSummary(page.summary);
+      setPages((current) => {
+        const merged = new Map(
+          current[outcome].items.map((candidate) => [candidate.id, candidate]),
+        );
+        for (const candidate of page.items) {
+          const committed = authoritativeOutcomesRef.current.get(candidate.id);
+          if (committed && committed !== outcome) continue;
+          if (candidate.outcome !== outcome) continue;
+          const existing = merged.get(candidate.id);
+          if (!existing || candidate.row_version >= existing.row_version) {
+            merged.set(candidate.id, candidate);
+          }
+        }
+        return {
+          ...current,
+          [outcome]: {
+            items: Array.from(merged.values()),
+            nextCursor: page.next_cursor,
+            totalCount: current[outcome].totalCount,
+          },
+        };
+      });
     } catch (error) {
       setAnnouncement(
         error instanceof Error
@@ -318,29 +371,17 @@ export function CandidatePanel({
         const restored: Candidate = {
           ...candidate,
           ...updated.data,
-          outcome: "CANDIDATE",
           reason: null,
         };
-        setPages((current) => ({
-          ...current,
-          EXCLUDED: {
-            ...current.EXCLUDED,
-            totalCount: Math.max(0, current.EXCLUDED.totalCount - 1),
-            items: current.EXCLUDED.items.filter((item) => item.id !== candidate.id),
-          },
-          CANDIDATE: {
-            ...current.CANDIDATE,
-            totalCount: current.CANDIDATE.totalCount + 1,
-            items: [...current.CANDIDATE.items, restored],
-          },
-        }));
-        setSummary((current) => ({
-          ...current,
-          candidate_count: current.candidate_count + 1,
-          excluded_count: Math.max(0, current.excluded_count - 1),
-          expected_total_won: current.expected_total_won + candidateAmount(restored),
-        }));
-        setAnnouncement("수서 후보로 되돌렸습니다.");
+        const restoredOutcome: "CANDIDATE" | "EXCLUDED" =
+          restored.outcome === "EXCLUDED" ? "EXCLUDED" : "CANDIDATE";
+        authoritativeOutcomesRef.current.set(restored.id, restoredOutcome);
+        updateCandidate(restored, candidate);
+        setAnnouncement(
+          restoredOutcome === "CANDIDATE"
+            ? "수서 후보로 되돌렸습니다."
+            : "서버의 현재 판정을 유지했습니다.",
+        );
         authoritative = true;
       } finally {
         finishMutation(authoritative);

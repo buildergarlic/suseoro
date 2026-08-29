@@ -1114,6 +1114,11 @@ export interface components {
         };
         /** Body_uploadSources */
         Body_uploadSources: {
+            /**
+             * Confirm Repair Configuration
+             * @default false
+             */
+            confirm_repair_configuration: boolean;
             /** Files */
             files: string[];
             /** Repair Generation */
@@ -1331,7 +1336,7 @@ export interface components {
         /** ComparisonCreate */
         ComparisonCreate: {
             /** Source Document Ids */
-            source_document_ids: string[];
+            source_document_ids?: string[] | null;
         };
         /** ComparisonJobResponse */
         ComparisonJobResponse: {
@@ -1519,6 +1524,8 @@ export interface components {
             mapping_required: components["schemas"]["MappingRequired"] | null;
             /** Processed Rows */
             processed_rows: number;
+            /** Row Error Count */
+            row_error_count: number;
             /** Source Document Id */
             source_document_id: string;
             /** Status */
@@ -2097,6 +2104,14 @@ export interface components {
             mapping: {
                 [key: string]: string;
             };
+            /** Parsed Config Version */
+            parsed_config_version: number | null;
+            /** Remember Template */
+            remember_template: boolean;
+            /** Requested Start Local Date */
+            requested_start_local_date: string | null;
+            /** Requested Through Local Date */
+            requested_through_local_date: string | null;
             /** Role */
             role: string;
             /** Row Version */
@@ -2107,6 +2122,8 @@ export interface components {
             size_bytes: number;
             /** Status */
             status: string;
+            /** Vendor Scope */
+            vendor_scope: string;
         };
         /**
          * SourceType
@@ -2142,6 +2159,8 @@ export interface components {
         };
         /** UploadRepairObligation */
         UploadRepairObligation: {
+            /** Configuration Confirmation Required */
+            configuration_confirmation_required: boolean;
             /** Created At */
             created_at: string;
             error: components["schemas"]["UploadItemError"];
@@ -2151,6 +2170,10 @@ export interface components {
             generation: number;
             /** Id */
             id: string;
+            /** Requested Start Local Date */
+            requested_start_local_date: string | null;
+            /** Requested Through Local Date */
+            requested_through_local_date: string | null;
             /** Resolved Source Id */
             resolved_source_id: string | null;
             /** Role */
@@ -2159,6 +2182,8 @@ export interface components {
             status: string;
             /** Updated At */
             updated_at: string;
+            /** Vendor Scope */
+            vendor_scope: string;
         };
         /** UploadRepairPage */
         UploadRepairPage: {

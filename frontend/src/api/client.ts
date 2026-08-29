@@ -26,6 +26,7 @@ export interface UploadInput {
   requestedThroughLocalDate?: string;
   repairObligationId?: string;
   repairGeneration?: number;
+  confirmRepairConfiguration?: boolean;
   replacementSourceId?: string;
 }
 
@@ -128,6 +129,115 @@ interface RequestOptions<TBody = unknown> {
   command?: MutationOptions;
   logicalAction?: string;
   logicalPayload?: unknown;
+  validateResponse?: (value: unknown) => boolean;
+}
+
+function objectValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringField(value: Record<string, unknown>, field: string): boolean {
+  return typeof value[field] === "string";
+}
+
+function numberField(value: Record<string, unknown>, field: string): boolean {
+  return typeof value[field] === "number" && Number.isFinite(value[field]);
+}
+
+function validUser(value: unknown): boolean {
+  return (
+    objectValue(value) &&
+    stringField(value, "id") &&
+    stringField(value, "school_id") &&
+    stringField(value, "username") &&
+    stringField(value, "display_name") &&
+    Array.isArray(value.roles)
+  );
+}
+
+function validUpload(value: unknown): boolean {
+  return (
+    objectValue(value) &&
+    (value.job_id === null || typeof value.job_id === "string") &&
+    Array.isArray(value.items) &&
+    value.items.every(
+      (item) =>
+        objectValue(item) &&
+        stringField(item, "filename") &&
+        stringField(item, "status") &&
+        (item.source_id === null || typeof item.source_id === "string"),
+    )
+  );
+}
+
+function validJobCommand(value: unknown): boolean {
+  return (
+    objectValue(value) &&
+    stringField(value, "id") &&
+    stringField(value, "type") &&
+    stringField(value, "status") &&
+    stringField(value, "stage") &&
+    numberField(value, "progress_current") &&
+    numberField(value, "progress_total") &&
+    numberField(value, "retry_count")
+  );
+}
+
+function validQueuedJob(value: unknown): boolean {
+  return objectValue(value) && stringField(value, "job_id") && stringField(value, "status");
+}
+
+function validVersionedSource(value: unknown): boolean {
+  return (
+    objectValue(value) &&
+    stringField(value, "id") &&
+    stringField(value, "role") &&
+    objectValue(value.mapping) &&
+    numberField(value, "row_version")
+  );
+}
+
+function validComparison(value: unknown): boolean {
+  return (
+    objectValue(value) &&
+    stringField(value, "job_id") &&
+    stringField(value, "status") &&
+    stringField(value, "workspace_status") &&
+    numberField(value, "row_version")
+  );
+}
+
+function validCandidateLock(value: unknown): boolean {
+  return (
+    objectValue(value) &&
+    stringField(value, "candidate_id") &&
+    stringField(value, "actor_id") &&
+    stringField(value, "expires_at")
+  );
+}
+
+function validCandidateMutation(value: unknown): boolean {
+  return (
+    objectValue(value) &&
+    stringField(value, "id") &&
+    stringField(value, "outcome") &&
+    numberField(value, "quantity") &&
+    numberField(value, "row_version") &&
+    (value.unit_price === null || numberField(value, "unit_price"))
+  );
+}
+
+function validApproval(value: unknown): boolean {
+  return (
+    objectValue(value) &&
+    stringField(value, "revision_id") &&
+    numberField(value, "revision_number") &&
+    stringField(value, "sha256") &&
+    numberField(value, "expected_total_won") &&
+    numberField(value, "budget_won") &&
+    stringField(value, "state") &&
+    numberField(value, "row_version")
+  );
 }
 
 function commandId(): string {
@@ -336,7 +446,7 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
       settleLogicalCommand(!retryable);
       throw failure;
     }
-    if (!parsed.valid) {
+    if (!parsed.valid || (options.validateResponse && !options.validateResponse(body))) {
       settleLogicalCommand(false);
       throw new Error(
         "서버 응답을 확인할 수 없습니다. 같은 요청으로 다시 시도해 주세요.",
@@ -355,6 +465,30 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
     };
   }
 
+  async function collectCursorPages<T extends { id: string }, TPage extends {
+    items: T[];
+    next_cursor: string | null;
+  }>(load: (cursor?: string) => Promise<TPage>, initialCursor?: string): Promise<TPage> {
+    const items = new Map<string, T>();
+    const seenCursors = new Set<string>();
+    let cursor = initialCursor;
+    while (true) {
+      const marker = cursor ?? "__FIRST__";
+      if (seenCursors.has(marker)) {
+        throw new Error("목록의 다음 위치가 반복되어 불러오기를 멈췄습니다.");
+      }
+      seenCursors.add(marker);
+      const current = await load(cursor);
+      for (const item of current.items) {
+        if (!items.has(item.id)) items.set(item.id, item);
+      }
+      if (!current.next_cursor) {
+        return { ...current, items: Array.from(items.values()), next_cursor: null };
+      }
+      cursor = current.next_cursor;
+    }
+  }
+
   return {
     getCurrentUser: async () =>
       (await request<User>("/api/v2/auth/me")).data,
@@ -366,6 +500,7 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
           mutation: true,
           logicalAction: "auth:login",
           logicalPayload: input,
+          validateResponse: validUser,
         })
       ).data,
     logout: async () => {
@@ -375,6 +510,7 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
         csrf: true,
         logicalAction: "auth:logout",
         logicalPayload: {},
+        validateResponse: (value) => value === undefined,
       });
     },
     listWorkspaces: async () =>
@@ -385,35 +521,49 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
         await request<Workspace>(`/api/v2/workspaces/${workspaceId}`),
       ),
     listSources: async (workspaceId) =>
-      (
-        await request<Schemas["SourcePage"]>(
-          `/api/v2/workspaces/${workspaceId}/sources?limit=100`,
-        )
-      ).data,
+      await collectCursorPages(async (cursor) => {
+        const params = new URLSearchParams({ limit: "100" });
+        if (cursor) params.set("cursor", cursor);
+        return (
+          await request<Schemas["SourcePage"]>(
+            `/api/v2/workspaces/${workspaceId}/sources?${params.toString()}`,
+          )
+        ).data;
+      }),
     listUploadRepairs: async (workspaceId) =>
-      (
-        await request<Schemas["UploadRepairPage"]>(
-          `/api/v2/workspaces/${workspaceId}/upload-repairs?limit=100`,
-        )
-      ).data,
+      await collectCursorPages(async (cursor) => {
+        const params = new URLSearchParams({ limit: "100" });
+        if (cursor) params.set("cursor", cursor);
+        return (
+          await request<Schemas["UploadRepairPage"]>(
+            `/api/v2/workspaces/${workspaceId}/upload-repairs?${params.toString()}`,
+          )
+        ).data;
+      }),
     listWorkspaceJobs: async (workspaceId, filters = {}) => {
       const params = new URLSearchParams({
         limit: String(filters.limit ?? 100),
       });
       if (filters.type) params.set("type", filters.type);
       if (filters.status) params.set("status", filters.status);
-      if (filters.cursor) params.set("cursor", filters.cursor);
-      return (
-        await request<Schemas["JobPage"]>(
-          `/api/v2/workspaces/${workspaceId}/jobs?${params.toString()}`,
-        )
-      ).data;
+      return await collectCursorPages(async (cursor) => {
+        const pageParams = new URLSearchParams(params);
+        if (cursor) pageParams.set("cursor", cursor);
+        return (
+          await request<Schemas["JobPage"]>(
+            `/api/v2/workspaces/${workspaceId}/jobs?${pageParams.toString()}`,
+          )
+        ).data;
+      }, filters.cursor);
     },
     uploadSources: async (workspaceId, input) => {
       const form = new FormData();
       for (const file of input.files) form.append("files", file);
-      form.set("role", input.role);
-      if (input.vendorScope !== undefined || !input.repairObligationId) {
+      if (!input.replacementSourceId) form.set("role", input.role);
+      if (
+        !input.replacementSourceId &&
+        (input.vendorScope !== undefined || !input.repairObligationId)
+      ) {
         form.set("vendor_scope", input.vendorScope ?? "*");
       }
       if (input.requestedStartLocalDate) {
@@ -425,6 +575,9 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
       if (input.repairObligationId) {
         form.set("repair_obligation_id", input.repairObligationId);
         form.set("repair_generation", String(input.repairGeneration ?? 1));
+        if (input.confirmRepairConfiguration) {
+          form.set("confirm_repair_configuration", "true");
+        }
       }
       if (input.replacementSourceId) {
         form.set("replacement_source_document_id", input.replacementSourceId);
@@ -448,15 +601,23 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             logicalAction: `sources:upload:${workspaceId}`,
             logicalPayload: {
               files,
-              role: input.role,
-              vendor_scope: input.vendorScope ?? "*",
-              requested_start_local_date: input.requestedStartLocalDate ?? null,
-              requested_through_local_date:
-                input.requestedThroughLocalDate ?? null,
+              ...(input.replacementSourceId
+                ? {}
+                : {
+                    role: input.role,
+                    vendor_scope: input.vendorScope ?? "*",
+                    requested_start_local_date:
+                      input.requestedStartLocalDate ?? null,
+                    requested_through_local_date:
+                      input.requestedThroughLocalDate ?? null,
+                  }),
               repair_obligation_id: input.repairObligationId ?? null,
               repair_generation: input.repairGeneration ?? null,
+              confirm_repair_configuration:
+                input.confirmRepairConfiguration ?? false,
               replacement_source_document_id: input.replacementSourceId ?? null,
             },
+            validateResponse: validUpload,
           },
         )
       ).data;
@@ -473,6 +634,7 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             csrf: true,
             logicalAction: `jobs:retry:${jobId}`,
             logicalPayload: { job_id: jobId },
+            validateResponse: validJobCommand,
           },
         )
       ).data,
@@ -486,6 +648,7 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             csrf: true,
             logicalAction: `jobs:cancel:${jobId}`,
             logicalPayload: { job_id: jobId },
+            validateResponse: validJobCommand,
           },
         )
       ).data,
@@ -499,6 +662,7 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             csrf: true,
             logicalAction: `sources:parse:${sourceId}`,
             logicalPayload: { source_id: sourceId },
+            validateResponse: validQueuedJob,
           },
         )
       ).data,
@@ -514,23 +678,24 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
           csrf: true,
           logicalAction: `sources:mapping:${sourceId}`,
           logicalPayload: { ...input, row_version: version },
+          validateResponse: validVersionedSource,
         }),
       ),
-    createComparisonJob: async (workspaceId, sourceDocumentIds, version) =>
+    createComparisonJob: async (workspaceId, _sourceDocumentIds, version) =>
       (
         await request<Schemas["ComparisonJobResponse"]>(
           `/api/v2/workspaces/${workspaceId}/comparison-jobs`,
           {
             method: "POST",
-            body: { source_document_ids: sourceDocumentIds },
+            body: {},
             version,
             mutation: true,
             csrf: true,
             logicalAction: `workspaces:compare:${workspaceId}`,
             logicalPayload: {
-              source_document_ids: sourceDocumentIds,
               row_version: version,
             },
+            validateResponse: validComparison,
           },
         )
       ).data,
@@ -566,6 +731,7 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             csrf: true,
             logicalAction: `candidates:lock:${candidateId}`,
             logicalPayload: { candidate_id: candidateId, workspace_id: workspaceId },
+            validateResponse: validCandidateLock,
           },
         )
       ).data,
@@ -582,6 +748,7 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             command,
             logicalAction: `candidates:update:${candidateId}`,
             logicalPayload: { ...input, row_version: version },
+            validateResponse: validCandidateMutation,
           },
         ),
       ),
@@ -597,6 +764,7 @@ export function createApiClient(baseUrl = ""): SuseoroApi {
             csrf: true,
             logicalAction: `workspaces:approval:${workspaceId}`,
             logicalPayload: { ...input, row_version: version },
+            validateResponse: validApproval,
           },
         )
       ).data,
