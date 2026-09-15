@@ -27,4 +27,6 @@ export interface ImportPreview { import_id: string; filename: string; rows: Prev
 export interface Template { id: string; name: string; columns: string[]; warnings?: string[] }
 export const emptyBook = (): BookFields => ({ title: "", author: "", publisher: "", isbn: "", price: null, quantity: 1, selected: true, category: "", requester: "", audience: "", priority: "normal", source: "직접 입력", note: "", published_date: "", link: "", needs_review: false, warnings: [] });
 export const money = (value: number) => `${new Intl.NumberFormat("ko-KR").format(value)}원`;
+// Work in integer basis points so half-won boundaries match the server exactly.
+export const orderAmount = (price: number, discount: number, quantity: number) => Math.floor((price * (10_000 - Math.round(discount * 100)) + 5_000) / 10_000) * quantity;
 export const errorMessage = (error: unknown) => error instanceof Error ? error.message : "처리하지 못했습니다. 잠시 후 다시 시도해 주세요.";

@@ -20,13 +20,15 @@ Prefix `/api/library`. JSON except upload/download. Errors `{detail: "Korean rea
 - `POST /lists/{id}/books/{bookId}/restore` → Book.
 - `POST /lookup` body `{isbn}` → `{found,book?,warnings:string[]}`. No auto-save.
 - `POST /imports/preview` multipart `file` → `{import_id,filename,rows:PreviewRow[],warnings:string[],headers?:string[],mapping?:object}`.
-- `POST /lists/{id}/imports` JSON `{import_id,rows:PreviewRow[],kind:"recommendations"|"holdings"}` → `{added:number,warnings:string[]}`. Preview user edits included; imports permit unpriced/unresolved with needs_review.
+- `POST /imports/{id}/preview` JSON `{mapping:{field:header}}` → remapped preview using the saved original.
+- `POST /lists/{id}/imports` JSON `{import_id,rows:PreviewRow[],kind:"recommendations"|"holdings"}` → `{added:number,warnings:string[]}`. Preview user edits included; imports permit unpriced/unresolved with needs_review. Holdings replace the previous entire snapshot transactionally.
 - `POST /templates` multipart `file` → `{id,name,columns:string[],warnings:string[]}` for XLSX school template.
 - `GET /templates` → array of template summaries.
 - `POST /lists/{id}/export` JSON `{format:"xlsx"|"csv"|"html",template_id?:string}` → binary download with Content-Disposition filename. All selected books in order.
-- `GET /backup` → JSON backup download (no secrets).
-- `POST /restore` multipart `file` → `{ok:true}`; schema validate, pre-restore backup, restores lists/books/holdings/settings excluding secrets.
+- `GET /backup` → version-1 JSON backup with validated source/template attachments, no secrets or filesystem paths.
+- `POST /restore` multipart `file` → `{ok:true}`; schema validate, pre-restore backup, restores lists/books/holdings/settings and attachments excluding secrets. JSON limit 300 MiB; attachments 50 MiB each, 200 MiB total, 2,000 files. Older backups without attachments remain supported.
 - `GET /updates` → `{current_version,latest_version?,available:boolean,url?,message?}`. Official GitHub stable releases only.
 - `POST /updates/install` → `{started:true}` when desktop installer handoff available; browser fallback link.
+- `POST /shutdown` → `{ok:true}` before clean desktop/local-server shutdown.
 
 Frontend reloads list after mutations and displays backend errors without losing unsaved edits. API client downloads files using blobs so token header is included. Frontend agent may propose contract corrections before changing it.

@@ -3,11 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createLibraryApi } from "../src/simple/api";
 import { SimpleLibraryApp } from "../src/simple/SimpleLibraryApp";
-import { emptyBook, type AcquisitionList, type Book, type BookFields, type PreviewRow } from "../src/simple/types";
+import { emptyBook, orderAmount, type AcquisitionList, type Book, type BookFields, type PreviewRow } from "../src/simple/types";
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 const requestUrl = (input: RequestInfo | URL) => typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 const anchorClick = vi.fn();
+it("rounds fractional discounts at the same half-won boundary as the order file", () => {
+  expect(orderAmount(500, 33.9, 2)).toBe(662);
+  expect(orderAmount(15001, 9.7, 3)).toBe(40638);
+});
 const book = (id: string, fields: Partial<BookFields> = {}): Book => ({ ...emptyBook(), id, title: "어린 왕자", author: "생텍쥐페리", publisher: "문학출판", isbn: "9788936434267", price: 10_000, held: false, duplicate: false, ...fields });
 function fixture(initial: Book[] = []) {
   const state = { books: initial, deleted: null as Book | null, failSave: false, failExport: false, imports: null as null | { kind: string; rows: PreviewRow[] }, exports: null as null | Record<string, unknown>, lookupCount: 0, restoreCount: 0 };
@@ -18,6 +22,7 @@ function fixture(initial: Book[] = []) {
     const payload = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
     if (path !== "/bootstrap" && method !== "GET") expect(new Headers(init?.headers).get("X-Suseoro-Token")).toBe("test-token");
     if (path === "/bootstrap") return json({ version: "2.0.0", csrf_token: "test-token", settings: { school_name: "햇살초등학교", nl_api_key_configured: false }, lists: [list], update: null });
+    if (path === "/shutdown") return json({ ok: true });
     if (path === "/lists/list-1" && method === "GET") {
       const selected = state.books.filter(item => item.selected), amount = selected.reduce((total, item) => total + Math.round((item.price ?? 0) * .9) * item.quantity, 0);
       return json({ list, books: state.books, summary: { selected_count: selected.length, total_quantity: selected.reduce((total, item) => total + item.quantity, 0), list_total: selected.reduce((total, item) => total + (item.price ?? 0) * item.quantity, 0), order_total: amount, remaining: list.budget - amount, missing_price_count: selected.filter(item => item.price === null).length, review_count: state.books.filter(item => item.needs_review).length, held_count: 0, duplicate_count: 0 } });
@@ -159,6 +164,14 @@ describe("개인 수서 목록", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("가격 미확인 1종의 정가를 입력해 주세요.")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "발주서 저장" })).toBeDisabled();
+  });
+
+  it("can end the local server from the browser fallback", async () => {
+    const user = userEvent.setup(), { api } = fixture(); render(<SimpleLibraryApp api={api} />);
+    await screen.findByRole("region", { name: "예산 현황" });
+    await user.click(screen.getByRole("button", { name: "학교 설정 · 백업" }));
+    await user.click(screen.getByRole("button", { name: "수서로 종료" }));
+    expect(await screen.findByRole("heading", { name: "수서로를 종료했습니다." })).toBeInTheDocument();
   });
 
   it("requires a concrete backup replacement confirmation before restoration", async () => {

@@ -57,6 +57,7 @@ export function createLibraryApi(fetcher: Fetcher = (input, init) => fetch(input
     restore: (file: File) => upload<{ ok: boolean }>("/restore", file),
     updates: () => json<UpdateInfo>("/updates"),
     installUpdate: () => json<{ started: boolean }>("/updates/install", { method: "POST" }),
+    shutdown: () => json<{ ok: boolean }>("/shutdown", { method: "POST" }),
   };
 }
 export type LibraryApi = ReturnType<typeof createLibraryApi>;
