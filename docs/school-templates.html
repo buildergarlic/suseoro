@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="학교도서관 사서를 위한 수서로 2.0 사용설명서. 설치, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
+<title>학교 Excel 발주서 양식 | 수서로 도움말</title><style>
+:root{color-scheme:light;--ink:#17392f;--muted:#52675f;--paper:#fffcf5;--line:#d9e1d8;--green:#226348}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:1rem}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:16px;line-height:1.85;word-break:keep-all;overflow-wrap:anywhere}
+a{color:#176442;text-underline-offset:4px}a:hover{color:#924d14}a:focus-visible,summary:focus-visible{outline:3px solid #a9510c;outline-offset:5px}
+.skip{position:absolute;top:-100px;left:16px;background:white;padding:12px;z-index:5}.skip:focus{top:12px}
+.topbar{background:var(--ink);color:white;padding:17px 5vw;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}.topbar a{color:white}.brand{text-decoration:none;font-weight:800;letter-spacing:.02em}.topbar nav{display:flex;gap:20px;font-size:14px;flex-wrap:wrap}
+.layout{display:grid;grid-template-columns:250px minmax(0,850px);gap:48px;max-width:1230px;margin:38px auto 72px;padding:0 24px}
+aside{min-width:0}aside details{position:sticky;top:24px;max-height:calc(100vh - 48px);overflow:auto;border:1px solid var(--line);border-radius:16px;padding:18px;background:#f1f5ed}
+summary{cursor:pointer;font-weight:bold}.toc ul{padding-left:20px;list-style:none}.toc>ul{padding:0}.toc li{margin:9px 0;line-height:1.6;font-size:13px}.toc a{text-decoration:none}
+main{min-width:0}h1{font-size:clamp(30px,4vw,44px);line-height:1.3;letter-spacing:-.04em;margin:8px 0 24px}h2{font-size:27px;line-height:1.45;letter-spacing:-.03em;margin:60px 0 20px;padding-top:20px;border-top:2px solid var(--line)}h3{font-size:21px;margin:30px 0 12px;line-height:1.5}h4{font-size:18px}
+p,ul,ol{margin:14px 0}li{margin:7px 0}strong{color:#163e2e}blockquote{margin:24px 0;background:#eef4e7;border-left:5px solid #43835b;padding:8px 22px;border-radius:0 12px 12px 0}blockquote p{margin:10px 0}
+.table-wrap{overflow-x:auto;margin:22px 0;border:1px solid var(--line);border-radius:10px}table{border-collapse:collapse;width:100%;font-size:14px;text-align:left}th,td{padding:12px 15px;vertical-align:top;border-bottom:1px solid var(--line)}th{background:#e8efe2}tr:last-child td{border-bottom:0}
+code{font-family:Consolas,monospace;font-size:.9em;background:#edf0e8;border-radius:4px;padding:2px 5px;word-break:break-word}pre{overflow:auto;padding:18px;background:#edf0e8;border-radius:12px}pre code{padding:0}hr{border:0;border-top:1px solid var(--line);margin:32px 0}.meta{font-size:13px;color:var(--muted)}
+footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font-size:13px;color:var(--muted)}.print-button{font:inherit;border:1px solid #bdd1ba;background:white;color:var(--ink);border-radius:9px;padding:7px 13px;cursor:pointer}.print-button:focus-visible{outline:3px solid #a9510c;outline-offset:3px}
+@media(max-width:850px){.layout{display:block;margin-top:24px;padding:0 20px}aside details{position:static;max-height:260px;margin-bottom:30px}h2{font-size:24px;margin-top:44px}.topbar nav{gap:14px}.table-wrap{word-break:normal}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{@page{size:A4;margin:16mm 15mm}body{background:white;font-size:10pt;line-height:1.6;color:black}.topbar,aside,.skip,.print-button,footer{display:none}.layout{display:block;max-width:none;margin:0;padding:0}h1{font-size:24pt}h2{font-size:17pt;margin:26px 0 12px;break-after:avoid}h3{font-size:13pt;break-after:avoid}a{color:inherit;text-decoration:none}blockquote{border:1px solid #aaa;background:none}table{font-size:9pt}.table-wrap{overflow:visible}tr{break-inside:avoid}code{font-size:9pt}p,li{orphans:3;widows:3}}
+</style></head>
+<body><a class="skip" href="#main">본문으로 바로 가기</a>
+<header class="topbar"><a class="brand" href="index.html">수서로 2.0 · 도움말</a><nav aria-label="설명서 메뉴"><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
+<div class="layout"><aside aria-label="이 페이지 목차"><details open><summary>목차</summary><div class="toc">
+<ul>
+<li><a href="#자동으로-채우는-값">자동으로 채우는 값</a></li>
+</ul>
+</div>
+</details></aside>
+<main id="main"><p class="meta">수서로 2.0.0 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button><h1 id="학교-excel-발주서-양식">학교 Excel 발주서 양식</h1>
+<p>발주서 저장 창에서 <strong>학교 양식 추가 (.xlsx)</strong>를 선택하세요. 한 번 저장한 양식은 다음 발주에도 사용할 수 있습니다.</p>
+<ul>
+<li>한 행에 열 제목을 적습니다. 예: 번호, 도서명, 저자, 출판사, ISBN, 정가, 수량, 할인율, 구입단가, 금액, 비고. 할인 후 한 권 금액을 넣으려면 <strong>구입단가</strong>를 쓰세요. <strong>단가</strong>만 적으면 정가로 인식합니다.</li>
+<li>도서명 또는 ISBN 열이 있어야 합니다. 책을 알아보기 쉽게 두 열을 함께 넣는 것을 권합니다. 제목·서명, 저자·지은이, 출판사·발행처 등의 일반적인 표현을 인식합니다.</li>
+<li>열 제목 아래에 도서 한 권의 기본 행을 두면 그 행의 셀 서식을 이어 사용합니다.</li>
+<li>위쪽 학교명·제목과 아래쪽 합계·서명란은 유지하도록 처리합니다. 고정된 학교 이름은 자동으로 바뀌지 않습니다. 수서로 설정의 학교 이름을 넣으려면 해당 셀에 <code>{{school_name}}</code>을 적으세요. 병합 셀과 수식이 많은 양식은 저장 결과를 확인하세요.</li>
+<li>다른 형식의 양식은 먼저 Excel의 .xlsx로 저장해 사용합니다.</li>
+</ul>
+<p>수서로 기본 양식을 먼저 저장하면 열 구성의 예시로 사용할 수 있습니다. 출력물은 선택한 도서만 포함합니다. 아직 확인하지 않은 가격이나 예산 초과가 있으면 저장 전에 안내합니다.</p>
+<p>매크로 파일, 암호화 문서, 여러 개의 발주표가 한 시트에 뒤섞인 양식, 도서 데이터 영역의 복잡한 병합은 지원 범위 밖입니다. 원본 양식을 수정하지 않고 별도 발주서 파일로 저장합니다.</p>
+<h2 id="자동으로-채우는-값">자동으로 채우는 값</h2>
+<p>양식 위·아래의 셀에 아래 표시를 넣으면 저장할 때 현재 목록의 값으로 바뀝니다.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>표시</th>
+<th>들어가는 값</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{{school_name}}</code></td>
+<td>학교 이름</td>
+</tr>
+<tr>
+<td><code>{{list_name}}</code></td>
+<td>구입 목록 이름</td>
+</tr>
+<tr>
+<td><code>{{year}}</code></td>
+<td>목록 연도</td>
+</tr>
+<tr>
+<td><code>{{budget}}</code></td>
+<td>목록 예산</td>
+</tr>
+<tr>
+<td><code>{{order_total}}</code></td>
+<td>구입 선택 금액</td>
+</tr>
+<tr>
+<td><code>{{remaining}}</code></td>
+<td>남은 예산</td>
+</tr>
+<tr>
+<td><code>{{total_quantity}}</code></td>
+<td>선택한 책의 총 수량</td>
+</tr>
+<tr>
+<td><code>{{book_count}}</code></td>
+<td>선택한 도서 행 수</td>
+</tr>
+<tr>
+<td><code>{{discount_percent}}</code></td>
+<td>목록 할인율</td>
+</tr>
+</tbody>
+</table></div>
+<p>예를 들어 제목 셀에 <code>{{school_name}} {{year}}년 도서 구입 목록</code>이라고 적을 수 있습니다. 저장된 파일을 Excel에서 열고 학교 이름, 수량, 합계, 수식 결과, 인쇄 범위를 확인하세요. 여러 시트에 있는 모든 표가 자동으로 채워지는 것은 아닙니다.</p>
+<p>단계별 사용법과 문제 해결은 <a href="user-guide.html">상세 사용설명서</a>를 참고하세요.</p></main></div>
+<footer>수서로 · 학교도서관 사서의 도서 구입을 돕습니다. <a href="index.html">도움말 처음으로</a></footer></body></html>

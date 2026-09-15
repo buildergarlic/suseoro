@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="학교도서관 사서를 위한 수서로 2.0 사용설명서. 설치, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
+<title>수서로 2.0, 이것만 알면 됩니다 | 수서로 도움말</title><style>
+:root{color-scheme:light;--ink:#17392f;--muted:#52675f;--paper:#fffcf5;--line:#d9e1d8;--green:#226348}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:1rem}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:16px;line-height:1.85;word-break:keep-all;overflow-wrap:anywhere}
+a{color:#176442;text-underline-offset:4px}a:hover{color:#924d14}a:focus-visible,summary:focus-visible{outline:3px solid #a9510c;outline-offset:5px}
+.skip{position:absolute;top:-100px;left:16px;background:white;padding:12px;z-index:5}.skip:focus{top:12px}
+.topbar{background:var(--ink);color:white;padding:17px 5vw;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}.topbar a{color:white}.brand{text-decoration:none;font-weight:800;letter-spacing:.02em}.topbar nav{display:flex;gap:20px;font-size:14px;flex-wrap:wrap}
+.layout{display:grid;grid-template-columns:250px minmax(0,850px);gap:48px;max-width:1230px;margin:38px auto 72px;padding:0 24px}
+aside{min-width:0}aside details{position:sticky;top:24px;max-height:calc(100vh - 48px);overflow:auto;border:1px solid var(--line);border-radius:16px;padding:18px;background:#f1f5ed}
+summary{cursor:pointer;font-weight:bold}.toc ul{padding-left:20px;list-style:none}.toc>ul{padding:0}.toc li{margin:9px 0;line-height:1.6;font-size:13px}.toc a{text-decoration:none}
+main{min-width:0}h1{font-size:clamp(30px,4vw,44px);line-height:1.3;letter-spacing:-.04em;margin:8px 0 24px}h2{font-size:27px;line-height:1.45;letter-spacing:-.03em;margin:60px 0 20px;padding-top:20px;border-top:2px solid var(--line)}h3{font-size:21px;margin:30px 0 12px;line-height:1.5}h4{font-size:18px}
+p,ul,ol{margin:14px 0}li{margin:7px 0}strong{color:#163e2e}blockquote{margin:24px 0;background:#eef4e7;border-left:5px solid #43835b;padding:8px 22px;border-radius:0 12px 12px 0}blockquote p{margin:10px 0}
+.table-wrap{overflow-x:auto;margin:22px 0;border:1px solid var(--line);border-radius:10px}table{border-collapse:collapse;width:100%;font-size:14px;text-align:left}th,td{padding:12px 15px;vertical-align:top;border-bottom:1px solid var(--line)}th{background:#e8efe2}tr:last-child td{border-bottom:0}
+code{font-family:Consolas,monospace;font-size:.9em;background:#edf0e8;border-radius:4px;padding:2px 5px;word-break:break-word}pre{overflow:auto;padding:18px;background:#edf0e8;border-radius:12px}pre code{padding:0}hr{border:0;border-top:1px solid var(--line);margin:32px 0}.meta{font-size:13px;color:var(--muted)}
+footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font-size:13px;color:var(--muted)}.print-button{font:inherit;border:1px solid #bdd1ba;background:white;color:var(--ink);border-radius:9px;padding:7px 13px;cursor:pointer}.print-button:focus-visible{outline:3px solid #a9510c;outline-offset:3px}
+@media(max-width:850px){.layout{display:block;margin-top:24px;padding:0 20px}aside details{position:static;max-height:260px;margin-bottom:30px}h2{font-size:24px;margin-top:44px}.topbar nav{gap:14px}.table-wrap{word-break:normal}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{@page{size:A4;margin:16mm 15mm}body{background:white;font-size:10pt;line-height:1.6;color:black}.topbar,aside,.skip,.print-button,footer{display:none}.layout{display:block;max-width:none;margin:0;padding:0}h1{font-size:24pt}h2{font-size:17pt;margin:26px 0 12px;break-after:avoid}h3{font-size:13pt;break-after:avoid}a{color:inherit;text-decoration:none}blockquote{border:1px solid #aaa;background:none}table{font-size:9pt}.table-wrap{overflow:visible}tr{break-inside:avoid}code{font-size:9pt}p,li{orphans:3;widows:3}}
+</style></head>
+<body><a class="skip" href="#main">본문으로 바로 가기</a>
+<header class="topbar"><a class="brand" href="index.html">수서로 2.0 · 도움말</a><nav aria-label="설명서 메뉴"><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
+<div class="layout"><aside aria-label="이 페이지 목차"><details open><summary>목차</summary><div class="toc">
+<ul>
+<li><a href="#1-책을-담으세요">1. 책을 담으세요</a></li>
+<li><a href="#2-예산-안에서-고르세요">2. 예산 안에서 고르세요</a></li>
+<li><a href="#3-발주서를-저장하세요">3. 발주서를 저장하세요</a></li>
+<li><a href="#가끔-필요한-일">가끔 필요한 일</a></li>
+</ul>
+</div>
+</details></aside>
+<main id="main"><p class="meta">수서로 2.0.0 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button><h1 id="수서로-20-이것만-알면-됩니다">수서로 2.0, 이것만 알면 됩니다</h1>
+<p>수서로는 <strong>책을 모으고 → 구입할 책을 고르고 → 발주서를 저장하는</strong> 프로그램입니다. 책을 고르는 기준과 최종 결정은 사서 선생님이 정합니다.</p>
+<p><a href="visual-guide.html">그림으로 보는 쉬운 안내</a> · <a href="user-guide.html">자세한 사용설명서</a></p>
+<h2 id="1-책을-담으세요">1. 책을 담으세요</h2>
+<p><strong>ISBN 추가</strong>에서 ISBN을 한 줄에 하나씩 입력하고 <strong>조회하고 추가</strong>를 누르세요. 한 번에 최대 100개를 조회하며, <strong>일치하는 책을 찾으면 바로 목록에 추가합니다.</strong> 창을 닫은 뒤 책 제목이나 <strong>수정</strong>을 눌러 정가·수량을 확인하고 <strong>저장</strong>하세요. ISBN을 모르면 <strong>＋ 직접 추가</strong>를 사용합니다.</p>
+<p>기관에서 받은 목록이 있다면 <strong>파일 가져오기 → 추천도서 목록</strong>을 선택하세요. 먼저 제목·저자·ISBN·정가 열이 맞는지 봅니다. 연결이 어긋났다면 <strong>열 연결 확인 · 제목이나 가격이 다른 열에 있나요?</strong>를 펼쳐 연결한 뒤 <strong>열 연결 적용</strong>을 누르세요. 이 작업은 원본을 다시 읽으므로, <strong>열 연결을 먼저 하고 개별 책을 수정</strong>하세요.</p>
+<p>그다음 불필요한 행은 <strong>×</strong>로 빼고, <strong>상세 → 원문 보기</strong>가 제공되는 행은 원문과 비교하세요. <strong>ISBN으로 빈 정보 채우기</strong>는 한 번에 최대 50권을 조회합니다. 기존 정보는 유지하지만, 정가를 항상 찾는 것은 아닙니다. 확인 후 <strong>○건 가져오기</strong>를 누르면 목록에 반영됩니다.</p>
+<p>파일당 50 MB까지 지원합니다. 스캔 PDF와 복잡한 한글 문서는 인식 결과를 꼭 확인하세요. 자세한 형식별 요령은 <a href="user-guide.html#8-추천도서-파일-가져오기">파일 가져오기 안내</a>에 있습니다.</p>
+<h2 id="2-예산-안에서-고르세요">2. 예산 안에서 고르세요</h2>
+<p>화면 위의 <strong>전체 예산·구입 선택 금액·남은 예산</strong>을 보세요. 기본 예산은 1,500만 원이며 <strong>목록 · 예산 설정</strong>에서 바꿀 수 있습니다. <strong>체크한 책만 발주서에 들어갑니다.</strong> 체크를 풀면 책은 보류 상태로 남고 선택 금액에서 빠집니다.</p>
+<p>책 제목이나 <strong>수정</strong>을 눌러 정가·수량·분류·요청자·대상·우선순위·메모를 고칩니다. 우선순위는 판단을 돕는 기록이며 책을 자동으로 선택하지 않습니다. 삭제를 잘못했다면 화면의 최근 삭제 알림이 남아 있을 때 <strong>삭제 취소</strong>를 누르세요.</p>
+<p>가격 미확인 도서는 선택 수량에는 포함되지만 선택 금액에서 빠집니다. <strong>남은 예산이 보여도, 가격을 모두 확인하기 전에는 예상 잔액입니다.</strong> 목록을 여러 개 만들면 예산도 각각 따로 계산합니다.</p>
+<p>학교의 최신 <strong>전체 소장목록</strong>은 <strong>파일 가져오기 → 학교 소장목록</strong>으로 가져오세요. <strong>○건 가져오기</strong>를 누르면 이전 소장목록 전체가 교체됩니다. 비교 결과는 <strong>학교 소장</strong>으로 표시되며 자동으로 구입에서 제외되지는 않습니다.</p>
+<h2 id="3-발주서를-저장하세요">3. 발주서를 저장하세요</h2>
+<p>구입 선택한 책의 제목·정가·ISBN과 <strong>확인 필요 표시</strong>를 점검하고, 예산 초과를 해소하세요. <strong>발주서 저장</strong>에서 다음 중 하나를 선택합니다.</p>
+<ul>
+<li><strong>Excel:</strong> 기본 양식 또는 학교의 <code>.xlsx</code> 양식으로 저장합니다.</li>
+<li><strong>CSV:</strong> 다른 프로그램에서 편집하거나 업로드할 표를 저장합니다. 받는 시스템의 열 규칙은 별도로 확인하세요.</li>
+<li><strong>인쇄용:</strong> <code>.html</code> 파일을 저장합니다. 브라우저로 열어 인쇄하거나 인쇄 메뉴에서 PDF로 저장합니다.</li>
+</ul>
+<p>학교 양식은 <a href="user-guide.html#12-학교-excel-양식-사용하기">상세 사용설명서의 학교 양식 안내</a>를 참고하세요. 제출 전에 학교명·구입 책·수량·정가·할인율·합계를 다시 확인합니다. <strong>발주서 저장은 파일 작성이며, 서점에 주문을 전송하는 기능은 아닙니다.</strong></p>
+<h2 id="가끔-필요한-일">가끔 필요한 일</h2>
+<p>왼쪽 아래 <strong>학교 설정 · 백업</strong>을 누르면 다음 기능을 사용할 수 있습니다.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>할 일</th>
+<th>누를 버튼과 확인할 점</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>학교명 등록</td>
+<td>학교 이름 입력 → <strong>설정 저장</strong></td>
+</tr>
+<tr>
+<td>국내 ISBN 조회 보완</td>
+<td>선택 사항인 국립중앙도서관 인증키 입력 → <strong>설정 저장</strong></td>
+</tr>
+<tr>
+<td>자료 보관</td>
+<td><strong>백업 파일 저장</strong>. 목록·소장목록·추천 원본·학교 양식을 포함하며 인증키는 제외합니다.</td>
+</tr>
+<tr>
+<td>다른 PC로 이동</td>
+<td>기존 PC에서 백업 → 새 PC에서 <strong>백업 불러오기</strong> → 교체 안내 확인 → <strong>이 백업으로 복원</strong></td>
+</tr>
+<tr>
+<td>백업 복원</td>
+<td>현재 자료 전체가 교체됩니다. 복원 직전 자료는 자료 폴더의 <code>backups</code>에 자동 보관됩니다.</td>
+</tr>
+<tr>
+<td>새 버전 설치</td>
+<td><strong>업데이트 확인</strong> → 새 버전이 있으면 <strong>업데이트 설치</strong></td>
+</tr>
+<tr>
+<td>프로그램 종료</td>
+<td><strong>수서로 종료</strong>. 브라우저 방식에서는 종료 안내를 확인한 뒤 탭을 닫습니다.</td>
+</tr>
+</tbody>
+</table></div>
+<p>자료 저장 위치는 Windows 탐색기 주소창에 <code>%LOCALAPPDATA%\Suseoro</code>를 입력하면 열 수 있습니다. 자료 폴더를 직접 이동·복사할 때는 먼저 수서로를 종료하세요.</p>
+<p>다음 단계: <a href="user-guide.html#16-1500만-원-예산으로-업무-연습하기">1,500만 원 예산으로 연습하기</a> · <a href="user-guide.html#17-자주-묻는-질문과-문제-해결">자주 묻는 질문</a></p></main></div>
+<footer>수서로 · 학교도서관 사서의 도서 구입을 돕습니다. <a href="index.html">도움말 처음으로</a></footer></body></html>

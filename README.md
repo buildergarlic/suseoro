@@ -50,7 +50,10 @@ Windows 10/11 64비트용입니다. 설치 파일에는 Python, 화면, 한국�
 
 ## 도움말과 오픈소스
 
-- [간단한 사용법](docs/quick-start.md) · [학교 양식](docs/school-templates.md) · [개발·빌드](docs/development.md)
+- **[사용설명서 열기](https://buildergarlic.github.io/suseoro/)** — 설치부터 발주·백업까지 따라 하는 설명서와 그림 안내
+- [그림으로 먼저 익히기](https://buildergarlic.github.io/suseoro/visual-guide.html) · [상세 사용설명서](docs/user-guide.md) · [간단한 사용법](docs/quick-start.md)
+- [설명서 내려받기](https://github.com/buildergarlic/suseoro/releases/download/v2.0.0/Suseoro-Guide-2.0.0.zip) — 압축을 풀고 `index.html`을 열면 인터넷 없이 읽을 수 있습니다.
+- [학교 양식](docs/school-templates.md) · [개발·빌드](docs/development.md)
 - [변경 내역](CHANGELOG.md) · [문제 신고](https://github.com/buildergarlic/suseoro/issues)
 
 수서로는 [AGPL-3.0](LICENSE) 오픈소스입니다. 누구나 내려받아 사용할 수 있고, 라이선스 조건에 따라 수정·재배포할 수 있습니다. 포함된 구성요소는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 참고하세요.

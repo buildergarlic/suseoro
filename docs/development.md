@@ -61,3 +61,17 @@ Python 프로젝트, `simple.VERSION`, frontend package/lock의 버전을 함께
 ## 데이터 보호
 
 API는 동일 출처와 실행마다 다른 요청 토큰을 확인합니다. 일반 업로드는 50 MiB, 백업 JSON은 300 MiB로 제한합니다. 백업 첨부는 파일당 50 MiB, 합계 200 MiB, 2,000개까지입니다. 백업에 경로나 API 비밀키를 포함하지 않으며, 복원 경로는 앱이 새로 생성합니다. 문서 전체를 외부 AI에 전송하지 않습니다.
+
+## 사용설명서 수정
+
+상세 설명서의 원본은 `docs/user-guide.md`입니다. `docs/quick-start.md`, `docs/school-templates.md`와 함께 수정한 뒤 저장소 루트에서 다음 명령으로 HTML을 갱신합니다.
+
+```powershell
+uv run scripts/build-user-guide.py
+```
+
+릴리스용 오프라인 ZIP과 체크섬도 만들려면 `uv run scripts/build-user-guide.py --zip`을 실행합니다. 결과는 `dist/Suseoro-Guide-2.0.0.zip`에 생성됩니다.
+
+생성기는 별도 도구 환경에서 지정된 Markdown 버전을 사용합니다. 앱의 의존성을 변경하지 않습니다. `docs/visual-guide.html`은 그림과 예산 연습을 포함하는 독립 HTML이며 직접 수정합니다. 예산 연습은 실제 도서 자료를 저장하거나 발주하지 않습니다.
+
+GitHub Pages는 `main`의 `/docs`에서 `index.html`을 공개합니다. HTML 5개(`index`, `visual-guide`, `user-guide`, `quick-start`, `school-templates`)는 같은 폴더에 두면 오프라인에서도 서로 연결됩니다. 문서 변경 시 실제 버튼 이름과 처리 순서를 확인하고, 그림 안내의 구입 체크·수량·가격 미확인·예산 초과 동작도 확인하세요.
