@@ -1,5 +1,6 @@
 import hashlib
 from io import BytesIO
+import threading
 
 import pytest
 
@@ -114,3 +115,50 @@ def test_url_and_verify_paths_are_restricted(tmp_path):
         updater()._open_url("https://evil.example/file", 1)
     with pytest.raises(updater().UpdateError):
         updater().verify_download(tmp_path / "outside.exe", tmp_path)
+
+
+def test_cancelling_a_download_removes_the_partial_and_never_verifies_an_installer(monkeypatch, tmp_path):
+    cancel = threading.Event()
+    data = b'MZinstaller'
+    monkeypatch.setattr(updater(), '_get_json', lambda url: release(data=data))
+    class CancelledStream(BytesIO):
+        def read1(self, size):
+            chunk = super().read1(size)
+            cancel.set()
+            return chunk
+    monkeypatch.setattr(updater(), '_open_url', lambda url, timeout: CancelledStream(data))
+    with pytest.raises(updater().UpdateCancelled):
+        updater().download_update(updater().check_update(), tmp_path, cancel=cancel)
+    assert not list(tmp_path.rglob('*.part'))
+    assert not list(tmp_path.rglob('*.exe'))
+    assert not list(tmp_path.rglob('*.verified.json'))
+
+
+def test_already_cancelled_download_never_requests_metadata(monkeypatch, tmp_path):
+    cancel = threading.Event()
+    cancel.set()
+    calls = []
+    monkeypatch.setattr(updater(), '_get_json', lambda url: calls.append(url))
+    with pytest.raises(updater().UpdateCancelled):
+        updater().download_update({'latest_version': '2.1.0'}, tmp_path, cancel=cancel)
+    assert calls == []
+
+
+def test_cached_file_still_requires_a_windows_header(monkeypatch, tmp_path):
+    data = b'not-a-Windows-installer'
+    metadata = release(data=data)
+    monkeypatch.setattr(updater(), '_get_json', lambda url: metadata)
+    directory = tmp_path / 'updates'
+    directory.mkdir()
+    path = directory / metadata['assets'][0]['name']
+    path.write_bytes(data)
+    with pytest.raises(updater().UpdateError, match='Windows'):
+        updater().download_update(updater().check_update(), tmp_path)
+    updater()._write_verified(path, hashlib.sha256(data).hexdigest())
+    with pytest.raises(updater().UpdateError):
+        updater().verify_download(path, tmp_path)
+
+
+@pytest.mark.parametrize('version, supported', [('2.0.1', False), ('2.0.2', True), ('2.1.0', True), ('2.0.2-rc1', False), (None, False)])
+def test_auto_install_requires_an_installer_with_the_exit_wait_protocol(version, supported):
+    assert updater().supports_automatic_install(version) is supported

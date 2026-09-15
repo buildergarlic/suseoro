@@ -56,6 +56,8 @@ export function createLibraryApi(fetcher: Fetcher = (input, init) => fetch(input
     backup: () => download("/backup", "수서로-백업.json"),
     restore: (file: File) => upload<{ ok: boolean }>("/restore", file),
     updates: () => json<UpdateInfo>("/updates"),
+    updateStatus: () => json<UpdateInfo>("/updates/status"),
+    updatePreferences: (auto_enabled: boolean) => json<UpdateInfo>("/updates/preferences", send({ auto_enabled }, "PATCH")),
     installUpdate: () => json<{ started: boolean }>("/updates/install", { method: "POST" }),
     shutdown: () => json<{ ok: boolean }>("/shutdown", { method: "POST" }),
   };

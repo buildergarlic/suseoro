@@ -1,6 +1,7 @@
-; Optional Inno Setup 6+ installer. NSIS is available as the portable build fallback.
+; Archived manual-only Inno Setup installer. Official automatic-update releases
+; use suseoro.nsi, which implements the parent-PID wait and installation lock.
 #ifndef AppVersion
-  #define AppVersion "2.0.1"
+  #define AppVersion "2.0.2"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\dist\Suseoro"
@@ -24,7 +25,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 OutputDir={#OutputDirPath}
-OutputBaseFilename=Suseoro-Setup-{#AppVersion}
+OutputBaseFilename=Suseoro-ManualSetup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

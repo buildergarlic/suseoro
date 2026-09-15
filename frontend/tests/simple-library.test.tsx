@@ -22,6 +22,7 @@ function fixture(initial: Book[] = []) {
     const payload = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
     if (path !== "/bootstrap" && method !== "GET") expect(new Headers(init?.headers).get("X-Suseoro-Token")).toBe("test-token");
     if (path === "/bootstrap") return json({ version: "2.0.0", csrf_token: "test-token", settings: { school_name: "햇살초등학교", nl_api_key_configured: false }, lists: [list], update: null });
+    if (path === "/updates/status") return json({ available: false, phase: "idle", auto_enabled: false, auto_supported: false });
     if (path === "/shutdown") return json({ ok: true });
     if (path === "/lists/list-1" && method === "GET") {
       const selected = state.books.filter(item => item.selected), amount = selected.reduce((total, item) => total + Math.round((item.price ?? 0) * .9) * item.quantity, 0);

@@ -6,7 +6,7 @@ import { ImportDialog } from "./ImportDialog";
 import { HelpDialog } from "./HelpDialog";
 import { InlineError } from "./Modal";
 import { ListDialog, SettingsDialog } from "./SettingsDialog";
-import { errorMessage, money, orderAmount, type AcquisitionList, type Book, type Bootstrap, type ListDetail } from "./types";
+import { errorMessage, money, orderAmount, type AcquisitionList, type Book, type Bootstrap, type ListDetail, type UpdateInfo } from "./types";
 
 type Dialog = { kind: "isbn" | "import" | "export" | "settings" | "help" | "new-list" | "edit-list" } | { kind: "book"; book?: Book };
 type Tab = "all" | "selected" | "hold" | "review";
@@ -20,10 +20,15 @@ export function SimpleLibraryApp({ api = defaultApi }: { api?: LibraryApi }) {
   const [detail, setDetail] = useState<ListDetail | null>(null), [dialog, setDialog] = useState<Dialog | null>(null);
   const [error, setError] = useState(""), [notice, setNotice] = useState(""), [loading, setLoading] = useState(true), [pendingBook, setPendingBook] = useState("");
   const [search, setSearch] = useState(""), [tab, setTab] = useState<Tab>("all");
-  const [exited, setExited] = useState(false);
+  const [exited, setExited] = useState<"closed" | "updating" | null>(null);
   const [deleted, setDeleted] = useState<{ listId: string; book: Book } | null>(null);
   const requestNumber = useRef(0);
+  const updateRevision = useRef(0);
   const closeDialog = useCallback(() => setDialog(null), []);
+  const receiveUpdate = useCallback((update: UpdateInfo) => {
+    updateRevision.current += 1;
+    setBootstrap(previous => previous ? { ...previous, update } : previous);
+  }, []);
   const initialize = useCallback(async () => {
     try { const result = await api.bootstrap(); setBootstrap(result); setListId(result.lists[0]?.id ?? ""); if (!result.lists.length) { setDetail(null); setLoading(false); } }
     catch (caught) { setError(errorMessage(caught)); setLoading(false); }
@@ -33,6 +38,23 @@ export function SimpleLibraryApp({ api = defaultApi }: { api?: LibraryApi }) {
     void api.bootstrap().then(result => { if (active) { setBootstrap(result); setListId(result.lists[0]?.id ?? ""); if (!result.lists.length) setLoading(false); } }).catch((caught: unknown) => { if (active) { setError(errorMessage(caught)); setLoading(false); } });
     return () => { active = false; };
   }, [api]);
+  const initialized = bootstrap !== null;
+  useEffect(() => {
+    if (!initialized || exited) return;
+    let active = true;
+    let timer: number;
+    async function poll() {
+      const revision = updateRevision.current;
+      try {
+        const update = await api.updateStatus();
+        // A late background response must not undo a preference just saved by the user.
+        if (active && revision === updateRevision.current) setBootstrap(previous => previous ? { ...previous, update } : previous);
+      } catch { /* Keep the last known state; a temporary polling failure does not interrupt work. */ }
+      if (active) timer = window.setTimeout(() => { void poll(); }, 10_000);
+    }
+    timer = window.setTimeout(() => { void poll(); }, 10_000);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [api, initialized, exited]);
   const refresh = useCallback(async (id = listId) => {
     if (!id) return;
     const sequence = ++requestNumber.current;
@@ -56,12 +78,15 @@ export function SimpleLibraryApp({ api = defaultApi }: { api?: LibraryApi }) {
   const years = [...new Set(bootstrap?.lists.map(list => list.year) ?? [])].sort((a, b) => b - a);
   const percent = detail && summary && detail.list.budget > 0 ? (summary.order_total / detail.list.budget) * 100 : 0;
   const school = bootstrap?.settings.school_name || "우리 학교";
-  if (exited) return <main className="simple-app"><div className="empty-state"><h1>수서로를 종료했습니다.</h1><p>자료를 안전하게 보관했습니다. 이 브라우저 탭을 닫아 주세요.</p></div></main>;
+  const update = bootstrap?.update;
+  const automaticOnExit = update?.auto_supported === true && update.auto_enabled === true;
+  if (exited) return <main className="simple-app"><div className="empty-state"><h1>{exited === "updating" ? "업데이트 설치를 시작했습니다." : "수서로를 종료했습니다."}</h1><p>{exited === "updating" ? "설치 창의 안내를 따라 주세요. 이 브라우저 탭은 닫아도 됩니다." : "자료를 안전하게 보관했습니다. 이 브라우저 탭을 닫아 주세요."}</p></div></main>;
   return <div className="simple-app">
     <a href="#book-list" className="skip-link">도서 목록으로 바로가기</a>
-    <aside className="sidebar"><div className="brand"><BrandMark /><div><strong>수서로<span>2.0</span></strong><small>책을 고르는 좋은 시간</small></div></div><div className="sidebar-section-heading"><span>내 구입 목록</span><button className="icon-button" aria-label="새 구입 목록" onClick={() => setDialog({ kind: "new-list" })} disabled={!bootstrap}>＋</button></div><nav aria-label="구입 목록">{years.map(year => <div className="year-group" key={year}><span className="year-label">{year}</span>{bootstrap?.lists.filter(list => list.year === year).map(list => <button key={list.id} className={`list-nav ${list.id === listId ? "active" : ""}`} aria-current={list.id === listId ? "page" : undefined} onClick={() => selectList(list.id)}><span className="list-icon" aria-hidden="true">▤</span><span>{list.name}</span>{list.id === listId && <span className="active-dot" />}</button>)}</div>)}</nav><button className="new-list-link" onClick={() => setDialog({ kind: "new-list" })} disabled={!bootstrap}><span aria-hidden="true">＋</span> 새 목록 만들기</button><div className="sidebar-bottom"><div className="local-note"><span className="status-dot" /><span>내 컴퓨터에 자동 저장<small>로그인 없이, 나의 속도로</small></span></div><button className="settings-button" onClick={() => setDialog({ kind: "settings" })} disabled={!bootstrap}><span aria-hidden="true">⚙</span> 학교 설정 · 백업</button><button className="help-button" onClick={() => setDialog({ kind: "help" })}><span aria-hidden="true">?</span> 사용설명서</button><span className="sidebar-version">수서로 v{bootstrap?.version || "2.0.1"}</span></div></aside>
+    <aside className="sidebar"><div className="brand"><BrandMark /><div><strong>수서로<span>2.0</span></strong><small>책을 고르는 좋은 시간</small></div></div><div className="sidebar-section-heading"><span>내 구입 목록</span><button className="icon-button" aria-label="새 구입 목록" onClick={() => setDialog({ kind: "new-list" })} disabled={!bootstrap}>＋</button></div><nav aria-label="구입 목록">{years.map(year => <div className="year-group" key={year}><span className="year-label">{year}</span>{bootstrap?.lists.filter(list => list.year === year).map(list => <button key={list.id} className={`list-nav ${list.id === listId ? "active" : ""}`} aria-current={list.id === listId ? "page" : undefined} onClick={() => selectList(list.id)}><span className="list-icon" aria-hidden="true">▤</span><span>{list.name}</span>{list.id === listId && <span className="active-dot" />}</button>)}</div>)}</nav><button className="new-list-link" onClick={() => setDialog({ kind: "new-list" })} disabled={!bootstrap}><span aria-hidden="true">＋</span> 새 목록 만들기</button><div className="sidebar-bottom"><div className="local-note"><span className="status-dot" /><span>내 컴퓨터에 자동 저장<small>로그인 없이, 나의 속도로</small></span></div><button className="settings-button" onClick={() => setDialog({ kind: "settings" })} disabled={!bootstrap}><span aria-hidden="true">⚙</span> 학교 설정 · 백업</button><button className="help-button" onClick={() => setDialog({ kind: "help" })}><span aria-hidden="true">?</span> 사용설명서</button><span className="sidebar-version">수서로 v{bootstrap?.version || "2.0.2"}</span></div></aside>
     <main className="main-content" id="book-list"><header className="page-header"><div><p className="eyebrow school-label"><span aria-hidden="true">⌂</span> {school} <span className="separator">/</span> 학교도서관</p><h1>{detail?.list.name || (loading ? "구입 목록을 여는 중…" : "나의 도서 구입 목록")}</h1><p className="page-subtitle">한 권 한 권, 우리 아이들에게 닿을 책을 골라요.</p></div><button className="button secondary header-setting" onClick={() => setDialog({ kind: "edit-list" })} disabled={!detail}>목록 · 예산 설정</button></header>
       <InlineError message={error} />{error && !detail && <button className="button secondary" onClick={() => { setLoading(true); setError(""); setListId(""); void initialize(); }}>다시 연결</button>}
+      {(update?.phase === "downloading" || update?.phase === "ready") && <div className="update-banner" role="status"><div><strong>{update.phase === "downloading" ? "새 버전을 내려받고 있습니다." : `새 버전 ${update.latest_version ?? ""}이 준비되었습니다.`}</strong><p>{update.phase === "downloading" ? "수서 작업을 계속하셔도 됩니다." : automaticOnExit ? "수서로를 닫으면 새 버전이 자동으로 설치됩니다." : "원할 때 업데이트 설정에서 설치할 수 있습니다."}</p></div><button className="text-button" onClick={() => setDialog({ kind: "settings" })}>업데이트 설정</button></div>}
       {notice && <div className="notice" role="status"><span>✓ {notice}</span><button className="icon-button" aria-label="알림 닫기" onClick={() => setNotice("")}>×</button></div>}
       {deleted && <div className="notice undo-notice" role="status"><span>‘{deleted.book.title || "서명 미확인 자료"}’을 삭제했습니다.</span><button className="text-button" onClick={() => { void undoDelete(); }}>삭제 취소</button><button className="icon-button" aria-label="삭제 알림 닫기" onClick={() => setDeleted(null)}>×</button></div>}
       {detail && summary && <>
@@ -75,7 +100,7 @@ export function SimpleLibraryApp({ api = defaultApi }: { api?: LibraryApi }) {
       {loading && <div className="loading-state" role="status"><span className="loading-dot" />도서 목록을 불러오고 있습니다.</div>}
     </main>
     {dialog?.kind === "help" && <HelpDialog onClose={closeDialog} />}
-    {dialog?.kind === "settings" && bootstrap && <SettingsDialog onExited={() => setExited(true)} settings={bootstrap.settings} version={bootstrap.version} api={api} onClose={closeDialog} onSettings={settings => setBootstrap(previous => previous ? { ...previous, settings } : previous)} onRestored={async () => { setDetail(null); setListId(""); await initialize(); setNotice("백업 자료를 복원했습니다."); }} />}
+    {dialog?.kind === "settings" && bootstrap && <SettingsDialog onExited={() => setExited("closed")} onUpdateStarted={() => setExited("updating")} update={bootstrap.update} onUpdate={receiveUpdate} settings={bootstrap.settings} version={bootstrap.version} api={api} onClose={closeDialog} onSettings={settings => setBootstrap(previous => previous ? { ...previous, settings } : previous)} onRestored={async () => { setDetail(null); setListId(""); await initialize(); setNotice("백업 자료를 복원했습니다."); }} />}
     {dialog?.kind === "new-list" && <ListDialog api={api} onClose={closeDialog} onSaved={listSaved} />}
     {dialog?.kind === "edit-list" && detail && <ListDialog list={detail.list} api={api} onClose={closeDialog} onSaved={listSaved} />}
     {dialog?.kind === "book" && detail && <BookDialog book={dialog.book} api={api} listId={listId} onClose={closeDialog} onSaved={async () => { await refresh(); setNotice(dialog.book ? "책 정보를 저장했습니다." : "새 책을 목록에 추가했습니다."); }} onDeleted={async book => { setDeleted({ listId, book }); await refresh(); }} />}

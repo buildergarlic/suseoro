@@ -16,6 +16,7 @@ describe("프로그램 안 사용설명서", () => {
     ];
     const transport = vi.fn((input: RequestInfo | URL) => {
       const path = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (path.endsWith("/updates/status")) return Promise.resolve(new Response(JSON.stringify({ available: false, phase: "idle", auto_enabled: false, auto_supported: false }), { headers: { "Content-Type": "application/json" } }));
       const payload = path.endsWith("/bootstrap") ? { version: "2.0.1", csrf_token: "test-token", lists: [list], settings: { school_name: "햇살학교", nl_api_key_configured: false }, update: null } : { list, books, summary: { selected_count: 1, total_quantity: 1, list_total: 12000, order_total: 12000, remaining: 14988000, missing_price_count: 0, review_count: 0, held_count: 0, duplicate_count: 0 } };
       return Promise.resolve(new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json" } }));
     });

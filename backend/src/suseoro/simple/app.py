@@ -18,6 +18,7 @@ from suseoro.simple import VERSION
 from suseoro.simple.bibliography import lookup_isbn
 from suseoro.simple.help_pages import default_help_dir, help_policy, manual_response
 from suseoro.simple.store import BACKUP_MAX_JSON_BYTES, LibraryStore, identifier
+from suseoro.simple.update_coordinator import UpdateCoordinator
 
 PREFIX = '/api/library'
 UPLOAD_LIMIT = 50 * 1024 * 1024
@@ -42,7 +43,7 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
     app = FastAPI(title='수서로 2.0', version=VERSION, docs_url=None, redoc_url=None)
     app.state.store = store
     app.state.csrf_token = secrets.token_urlsafe(32)
-    app.state.update_info = None
+    app.state.update_coordinator = UpdateCoordinator(store.data_dir)
     app.state.shutdown_callback = None
     app.state.install_update_callback = None
     app.state.lookup_cache = {}
@@ -109,7 +110,7 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
     @app.get(PREFIX + '/bootstrap')
     def bootstrap():
         return {'version': VERSION, 'csrf_token': app.state.csrf_token, 'settings': store.settings(),
-                'lists': store.lists(), 'update': app.state.update_info}
+                'lists': store.lists(), 'update': app.state.update_coordinator.status()}
 
     @app.patch(PREFIX + '/settings')
     def settings(values: dict):
@@ -284,21 +285,23 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
 
     @app.get(PREFIX + '/updates')
     def updates():
-        from suseoro.simple.updating import check_update
-        result = check_update(VERSION)
-        app.state.update_info = {k: v for k, v in result.items() if k != 'asset'}
-        return app.state.update_info
+        return app.state.update_coordinator.request_check()
+
+    @app.get(PREFIX + '/updates/status')
+    def update_status():
+        return app.state.update_coordinator.status()
+
+    @app.patch(PREFIX + '/updates/preferences')
+    def update_preferences(values: dict):
+        if set(values) != {'auto_enabled'}:
+            raise ValueError('자동 업데이트 사용 여부를 확인해 주세요.')
+        return app.state.update_coordinator.set_preferences(values['auto_enabled'])
 
     @app.post(PREFIX + '/updates/install')
     def install_update():
-        from suseoro.simple.updating import check_update, download_update
         if not app.state.install_update_callback:
             raise ValueError('설치형 수서로에서 업데이트하거나 GitHub에서 새 설치 파일을 받아 주세요.')
-        info = check_update(VERSION)
-        if not info.get('available'):
-            raise ValueError('현재 적용할 새 버전이 없습니다.')
-        installer = download_update(info, store.data_dir)
-        app.state.install_update_callback(installer)
+        app.state.update_coordinator.install_manual(app.state.install_update_callback)
         return {'started': True}
 
     @app.post(PREFIX + '/shutdown')

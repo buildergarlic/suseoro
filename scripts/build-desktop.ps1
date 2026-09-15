@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$PythonPath = '',
-    [string]$Version = '2.0.1',
+    [string]$Version = '2.0.2',
     [string]$TesseractDir = '',
     [string]$IsccPath = '',
     [string]$MakensisPath = '',
@@ -173,9 +173,8 @@ for package in ('react', 'react-dom'):
 if (-not (Test-Path -LiteralPath (Join-Path $appRoot 'Suseoro.exe'))) { throw 'No packaged Suseoro.exe is available.' }
 
 if (-not $SkipInstaller) {
-    if (-not $IsccPath) {
-        $isccCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
-        if ($isccCommand) { $IsccPath = $isccCommand.Source }
+    if ($IsccPath) {
+        throw 'Official auto-update releases require NSIS. Supply -MakensisPath instead. The archived Inno script is for manual installers only.'
     }
     if (-not $MakensisPath) {
         $nsisCommand = Get-Command makensis.exe -ErrorAction SilentlyContinue
@@ -184,14 +183,11 @@ if (-not $SkipInstaller) {
             $MakensisPath = Join-Path $workspace '.tools\nsis\nsis-3.12\makensis.exe'
         }
     }
-    if ($IsccPath) {
-        & $IsccPath ("/DAppVersion=$Version") ("/DSourceDir=$appRoot") ("/DOutputDirPath=$distRoot") (Join-Path $workspace 'installer\suseoro.iss')
-    }
-    elseif ($MakensisPath) {
+    if ($MakensisPath) {
         & $MakensisPath '/V3' '/WX' '/INPUTCHARSET' 'UTF8' ("/DAPP_VERSION=$Version") ("/DSOURCE_DIR=$appRoot") ("/DOUTPUT_DIR=$distRoot") (Join-Path $workspace 'installer\suseoro.nsi')
     }
     else {
-        throw 'An installer compiler is required. Supply -MakensisPath for official NSIS portable, or -IsccPath for an existing Inno Setup installation. This script never installs a compiler.'
+        throw 'NSIS is required for official auto-update installers. Supply -MakensisPath for official NSIS portable. This script never installs a compiler.'
     }
     if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
 }

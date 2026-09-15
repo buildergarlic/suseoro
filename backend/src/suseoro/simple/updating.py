@@ -2,7 +2,7 @@
 
 GitHub release metadata documents the asset digest and stable latest endpoint:
 https://docs.github.com/en/rest/releases/releases#get-the-latest-release
-The installer runs only after user activation of the app's update action.
+Prepared automatic updates run only after the installed application exits.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any
+from threading import Event
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -31,6 +32,20 @@ _INSTALLER = re.compile(r"Suseoro-Setup-(\d+\.\d+\.\d+)\.exe")
 
 class UpdateError(ValueError):
     """Safe, Korean explanation suitable for showing in the application."""
+
+
+class UpdateCancelled(UpdateError):
+    """A download was cancelled before it became an installable update."""
+
+
+def _check_cancelled(cancel: Event | None) -> None:
+    if cancel is not None and cancel.is_set():
+        raise UpdateCancelled("업데이트 다운로드를 중지했습니다.")
+
+
+def supports_automatic_install(version: str) -> bool:
+    parsed = _version(version)
+    return parsed is not None and parsed >= (2, 0, 2)
 
 
 def _version(text: Any) -> tuple[int, int, int] | None:
@@ -113,6 +128,7 @@ def check_update(current_version: str = VERSION) -> dict[str, Any]:
             result["message"] = "새 버전의 Windows 설치 파일이 아직 준비되지 않았습니다."
         return result
     except Exception:
+        result["error"] = True
         result["message"] = "업데이트 정보를 확인하지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요."
         return result
 
@@ -145,9 +161,11 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
-def download_update(info: dict[str, Any], data_dir: Path) -> Path:
+def download_update(info: dict[str, Any], data_dir: Path, *, cancel: Event | None = None) -> Path:
     """Re-fetch official metadata, then atomically save only a verified installer."""
+    _check_cancelled(cancel)
     latest = check_update()
+    _check_cancelled(cancel)
     if not latest["available"] or latest["latest_version"] != info.get("latest_version"):
         raise UpdateError("배포 버전이 변경되었거나 설치 가능한 업데이트가 없습니다. 다시 확인해 주세요.")
     asset = latest["asset"]
@@ -160,7 +178,12 @@ def download_update(info: dict[str, Any], data_dir: Path) -> Path:
     temporary = destination.with_suffix(".exe.part")
     try:
         expected = _expected_hash(asset)
-        if destination.is_file() and _file_hash(destination) == expected:
+        _check_cancelled(cancel)
+        if destination.is_file() and destination.stat().st_size == size and _file_hash(destination) == expected:
+            with destination.open("rb") as source:
+                if source.read(2) != b"MZ":
+                    raise UpdateError("Windows 설치 파일 형식이 아닙니다.")
+            _check_cancelled(cancel)
             _write_verified(destination, expected)
             return destination
         deadline = time.monotonic() + DOWNLOAD_SECONDS
@@ -168,9 +191,11 @@ def download_update(info: dict[str, Any], data_dir: Path) -> Path:
         digest = hashlib.sha256()
         with _open_url(asset["browser_download_url"], 15) as response, temporary.open("wb") as output:
             while True:
+                _check_cancelled(cancel)
                 if time.monotonic() >= deadline:
                     raise UpdateError("다운로드 대기 시간이 초과되었습니다. 다시 시도해 주세요.")
                 chunk = response.read1(1024 * 1024)
+                _check_cancelled(cancel)
                 if not chunk:
                     break
                 written += len(chunk)
@@ -185,8 +210,10 @@ def download_update(info: dict[str, Any], data_dir: Path) -> Path:
         with temporary.open("rb") as source:
             if source.read(2) != b"MZ":
                 raise UpdateError("Windows 설치 파일 형식이 아닙니다.")
+        _check_cancelled(cancel)
         temporary.replace(destination)
         _write_verified(destination, expected)
+        _check_cancelled(cancel)
         return destination
     except UpdateError:
         raise
@@ -208,6 +235,9 @@ def verify_download(path: Path, data_dir: Path) -> bool:
         proof = json.loads(path.with_suffix(".exe.verified.json").read_text(encoding="utf-8"))
         if proof.get("repository") != REPOSITORY or not _HASH.fullmatch(proof.get("sha256", "")) or _file_hash(path) != proof["sha256"]:
             raise ValueError()
+        with path.open("rb") as source:
+            if source.read(2) != b"MZ":
+                raise ValueError()
     except Exception:
         raise UpdateError("설치 파일이 변경되었거나 검증되지 않았습니다. 다시 내려받아 주세요.") from None
     return True

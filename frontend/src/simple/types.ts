@@ -21,6 +21,8 @@ export interface ListDetail { list: AcquisitionList; books: Book[]; summary: Sum
 export interface Settings { school_name: string; nl_api_key_configured: boolean }
 export interface UpdateInfo {
   current_version?: string; latest_version?: string; available: boolean; url?: string; message?: string;
+  phase?: "idle" | "checking" | "downloading" | "ready" | "error" | "manual";
+  auto_enabled?: boolean; auto_supported?: boolean;
 }
 export interface Bootstrap { version: string; csrf_token: string; settings: Settings; lists: AcquisitionList[]; update: UpdateInfo | null }
 export interface ImportPreview { import_id: string; filename: string; rows: PreviewRow[]; warnings: string[]; headers?: string[]; mapping?: Record<string, unknown> }

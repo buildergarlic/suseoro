@@ -1,7 +1,7 @@
 """Native desktop launcher; one local server per user data folder.
 
 pywebview window lifecycle/download API: https://pywebview.flowrl.com/api/
-Inno app mutex: https://jrsoftware.org/ishelp/topic_setup_appmutex.htm
+NSIS installer protocol: installer/suseoro.nsi
 """
 from __future__ import annotations
 
@@ -123,29 +123,50 @@ def _message(text: str) -> None:
         print(text, file=sys.stderr)
 
 
-def launch_installer(path: Path, data_dir: Path) -> None:
-    from suseoro.simple.updating import verify_download
+def automatic_update_supported() -> bool:
+    if sys.platform != 'win32' or not getattr(sys, 'frozen', False):
+        return False
+    local = os.environ.get('LOCALAPPDATA')
+    if not local:
+        return False
+    expected = Path(local) / 'Programs' / 'Suseoro' / 'Suseoro.exe'
+    return Path(sys.executable).resolve() == expected.resolve()
+
+
+def launch_installer(path: Path, data_dir: Path, *, automatic: bool = False) -> None:
+    from suseoro.simple.updating import verify_download, supports_automatic_install, UpdateError
     verify_download(path, data_dir)
-    # Show the installation wizard; no silent install and no forced process close.
+    arguments = [str(Path(path).resolve())]
+    if automatic:
+        version = Path(path).stem.removeprefix('Suseoro-Setup-')
+        if not automatic_update_supported() or not supports_automatic_install(version):
+            raise UpdateError('이 환경에서는 자동 업데이트 설치를 지원하지 않습니다.')
+        # The official installer waits for this process to fully exit before
+        # replacing files. They never close a running school-library session.
+        arguments.extend(['/S', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
+                          '/AUTOUPDATE', f'/UPDATEPID={os.getpid()}'])
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-    subprocess.Popen([str(Path(path).resolve())], cwd=str(Path(path).parent), close_fds=True, creationflags=flags)
+    subprocess.Popen(arguments, cwd=str(Path(path).parent), close_fds=True, creationflags=flags)
 
 
 def _daily_update_check(app, data_dir: Path) -> None:
-    from suseoro.simple.updating import check_update
-    cache = data_dir / "update-check.json"
-    try:
-        saved = json.loads(cache.read_text(encoding="utf-8")) if cache.is_file() else {}
-        if saved.get("version") == VERSION and 0 <= time.time() - saved.get("checked_at", 0) < 86400:
-            app.state.update_info = saved["info"]
-            return
-        info = {key: value for key, value in check_update(VERSION).items() if key != "asset"}
-        app.state.update_info = info
-        temporary = cache.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"version": VERSION, "checked_at": time.time(), "info": info}, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(cache)
-    except Exception:
-        logging.getLogger(__name__).info("Automatic update check unavailable")
+    # Keep the launch hook small. Status polling is local and never calls GitHub;
+    # startup and the user's check button each request a fresh check.
+    app.state.update_coordinator.start()
+
+
+def _update_in_progress() -> bool:
+    if os.name != 'nt':
+        return False
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenMutexW.argtypes = [ctypes.c_uint, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel.OpenMutexW.restype = ctypes.c_void_p
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    handle = kernel.OpenMutexW(0x00100000, False, 'Local\\Suseoro.Update')
+    if not handle:
+        return False
+    kernel.CloseHandle(handle)
+    return True
 
 
 def _installer_mutex():
@@ -172,6 +193,9 @@ def main(argv: list[str] | None = None) -> int:
         if sys.stdout:
             print(VERSION)
         return 0
+    if getattr(sys, 'frozen', False) and not (args.headless or args.smoke_test) and _update_in_progress():
+        _message('수서로 업데이트를 설치하고 있습니다. 잠시 후 다시 열어 주세요.')
+        return 0
     data_dir = (args.data_dir or default_data_dir()).resolve()
     lock = InstanceLock(data_dir)
     if not lock.acquire():
@@ -183,6 +207,10 @@ def main(argv: list[str] | None = None) -> int:
     server = None
     mutex = None
     pending_installer: list[Path] = []
+    pending_lock = threading.Lock()
+    coordinator = None
+    automatic_installer = None
+    normal_exit = False
     exit_requested = threading.Event()
     windows: list = []
 
@@ -200,9 +228,10 @@ def main(argv: list[str] | None = None) -> int:
     def install_update(path: Path) -> None:
         from suseoro.simple.updating import verify_download
         verify_download(path, data_dir)
-        if not pending_installer:
-            pending_installer.append(Path(path))
-            request_shutdown()
+        with pending_lock:
+            if not pending_installer:
+                pending_installer.append(Path(path))
+                request_shutdown()
 
     try:
         from suseoro.simple.app import create_app
@@ -210,6 +239,10 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(sys, "_MEIPASS") and not (frontend_dir() / "index.html").is_file():
             raise RuntimeError("설치 파일에 화면 파일이 없습니다.")
         app = create_app(data_dir=data_dir, frontend_dir=frontend_dir())
+        from suseoro.simple.update_coordinator import UpdateCoordinator
+        coordinator = UpdateCoordinator(data_dir, auto_supported=(
+            not (args.headless or args.smoke_test) and automatic_update_supported()))
+        app.state.update_coordinator = coordinator
         app.state.shutdown_callback = request_shutdown
         app.state.install_update_callback = install_update
         server = LocalServer(app, args.port)
@@ -230,12 +263,16 @@ def main(argv: list[str] | None = None) -> int:
                 pass
         else:
             mutex = _installer_mutex()
-            threading.Thread(target=_daily_update_check, args=(app, data_dir), daemon=True,
-                             name="suseoro-update-check").start()
+            if getattr(sys, 'frozen', False) and _update_in_progress():
+                _message('수서로 업데이트를 설치하고 있습니다. 잠시 후 다시 열어 주세요.')
+                return 0
+            if coordinator.auto_supported:
+                _daily_update_check(app, data_dir)
             if args.browser:
                 webbrowser.open(server.url)
                 while server.thread.is_alive() and not exit_requested.wait(0.1):
                     pass
+                normal_exit = exit_requested.is_set()
             else:
                 import webview
                 webview.settings["ALLOW_DOWNLOADS"] = True
@@ -245,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
                 windows.append(window)
                 window.events.closed += exit_requested.set
                 webview.start(private_mode=False, storage_path=str(data_dir / "webview"), debug=False)
+                normal_exit = exit_requested.is_set()
     except KeyboardInterrupt:
         pass
     except Exception:
@@ -253,18 +291,22 @@ def main(argv: list[str] | None = None) -> int:
             _message("수서로를 열지 못했습니다. Microsoft Edge WebView2가 설치되어 있는지 확인해 주세요. 브라우저용 실행으로도 열 수 있습니다.")
         return 1
     finally:
+        if coordinator is not None:
+            automatic_installer = coordinator.close(normal_exit=normal_exit)
         if server:
             server.stop()
         (data_dir / "desktop-instance.json").unlink(missing_ok=True)
         lock.release()
         if mutex:
             ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(mutex))
-    if pending_installer:
+    installer = pending_installer[0] if pending_installer else automatic_installer
+    if installer:
         try:
-            launch_installer(pending_installer[0], data_dir)
+            launch_installer(installer, data_dir, automatic=not pending_installer)
         except Exception:
             logging.getLogger(__name__).exception("Installer handoff failed")
-            _message("설치 프로그램을 열지 못했습니다. 수서로를 다시 열고 업데이트를 시도해 주세요.")
+            if pending_installer:
+                _message("설치 프로그램을 열지 못했습니다. 수서로를 다시 열고 업데이트를 시도해 주세요.")
             return 1
     return 0
 

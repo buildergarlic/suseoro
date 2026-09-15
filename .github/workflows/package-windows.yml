@@ -5,7 +5,7 @@ on:
       version:
         description: Package version (must match source)
         required: true
-        default: '2.0.1'
+        default: '2.0.2'
 permissions:
   contents: read
 jobs:
@@ -42,6 +42,8 @@ jobs:
         env:
           PACKAGE_VERSION: ${{ inputs.version }}
         run: ./scripts/build-desktop.ps1 -Version $env:PACKAGE_VERSION -TesseractDir ./portable_tesseract -PortableZip
+      - name: Verify automatic installer lifecycle
+        run: uv run scripts/test-installer-auto-update.py --makensis .tools/nsis/nsis-3.12/makensis.exe
       - uses: actions/upload-artifact@v4
         with:
           name: Suseoro-Windows
