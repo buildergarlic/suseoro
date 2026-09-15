@@ -1,0 +1,41 @@
+name: Verify source
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Backend dependencies
+        working-directory: backend
+        run: uv sync --locked --extra desktop
+      - name: Backend tests
+        working-directory: backend
+        run: uv run pytest -q
+      - name: Frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm run test -- --run
+      - name: Frontend lint
+        working-directory: frontend
+        run: npm run lint
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build

@@ -34,3 +34,14 @@ backups/
 
 # SDD scratch material
 .superpowers/sdd/
+
+# Local packaging and verification
+.build/
+.test-output/
+.tools/
+.playwright-cli/
+*.spec
+config/settings.json
+output/playwright/
+/start.cmd
+/stop.cmd

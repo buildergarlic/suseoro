@@ -20,6 +20,7 @@ from suseoro.db.connection import connect
 from suseoro.ingestion.contracts import DocumentRole
 from suseoro.ingestion.templates import ParserCache
 from suseoro.jobs.handlers import (
+    _parse_result_from_payload,
     _parse_result_payload,
     _parse_source_preserving_unknown_headers,
     _procurement_document_table,
@@ -1010,6 +1011,10 @@ def test_immutable_v1_document_cache_is_transformed_after_retrieval(
             assert all("title" not in row.raw_values for row in legacy_result.rows)
             canonical_result = _procurement_document_table(legacy_result)
             assert _procurement_document_table(canonical_result) == canonical_result
+            restored_matrix = _parse_result_from_payload(
+                json.loads(json.dumps(_parse_result_payload(canonical_result), sort_keys=True))
+            )
+            assert _procurement_document_table(restored_matrix) == restored_matrix
             cached = ParserCache(connection).get_or_parse(
                 sha256=source["sha256"],
                 parser_version=legacy_parser_version,

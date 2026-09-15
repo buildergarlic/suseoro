@@ -1,0 +1,51 @@
+name: Package Windows
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version (must match source)
+        required: true
+        default: '2.0.0'
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+      - name: Backend dependencies
+        working-directory: backend
+        run: uv sync --locked --extra desktop
+      - name: Frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+      - name: Fetch official portable NSIS
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory .tools/nsis -Force | Out-Null
+          Invoke-WebRequest 'https://sourceforge.net/projects/nsis/files/NSIS%203/3.12/nsis-3.12.zip/download' -OutFile .tools/nsis.zip
+          $expected = '56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f'
+          if ((Get-FileHash .tools/nsis.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'NSIS checksum mismatch' }
+          Expand-Archive .tools/nsis.zip .tools/nsis
+      - name: Build and smoke-test application
+        env:
+          PACKAGE_VERSION: ${{ inputs.version }}
+        run: ./scripts/build-desktop.ps1 -Version $env:PACKAGE_VERSION -TesseractDir ./portable_tesseract -PortableZip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Suseoro-Windows
+          path: |
+            dist/Suseoro-Setup-*.exe
+            dist/Suseoro-Portable-*.zip
+            dist/*.sha256
+            dist/SHA256SUMS
+          if-no-files-found: error

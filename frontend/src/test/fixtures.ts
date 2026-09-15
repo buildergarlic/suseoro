@@ -234,7 +234,7 @@ export function createFixtureApi(
     lockCandidate: async (candidateId, _workspaceId) => ({
       candidate_id: candidateId,
       actor_id: operator.id,
-      expires_at: "2026-08-29T08:07:00.000000Z",
+      expires_at: new Date(Date.now() + 120_000).toISOString(),
     }),
     updateCandidate: async (candidateId, input, version) => ({
       data: {

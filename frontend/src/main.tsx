@@ -1,8 +1,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { SuseoroRouter } from "./app/router";
-import "./styles/global.css";
+import { SimpleLibraryApp } from "./simple/SimpleLibraryApp";
+import "./simple/simple.css";
 
 const rootElement = document.getElementById("root");
 
@@ -12,6 +12,6 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <SuseoroRouter />
+    <SimpleLibraryApp />
   </StrictMode>,
 );

@@ -4521,7 +4521,7 @@ describe("후보 확인과 자동 저장", () => {
           resolve({
             candidate_id: "candidate-ok",
             actor_id: operator.id,
-            expires_at: "2026-08-29T08:07:00.000000Z",
+            expires_at: new Date(Date.now() + 120_000).toISOString(),
           });
       },
     );

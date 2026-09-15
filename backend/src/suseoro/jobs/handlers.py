@@ -311,6 +311,21 @@ def _procurement_document_table(result: ParseResult) -> ParseResult:
         or result.detected_format not in _DOCUMENT_FORMATS
     ):
         return result
+    successful_rows = [row for row in result.rows if row.status == RowStatus.SUCCESS]
+    if successful_rows and all(
+        len(row.raw_values) >= 2
+        and set(row.provenance.source_columns) == set(row.raw_values)
+        and sorted(row.provenance.source_columns.values())
+        == list(range(1, len(row.raw_values) + 1))
+        and not row.fields
+        for row in successful_rows
+    ):
+        # _table_row already produced this header-keyed matrix. Original
+        # paragraph/cell/page records retain parser metadata in raw_values and
+        # a text field, so they cannot satisfy this structural check. Cache
+        # reads sort JSON keys, so use the preserved column indices instead of
+        # dictionary insertion order when recognizing the recovered matrix.
+        return result
     if result.detected_format in {"DOCX", "HWPX"}:
         rows = _xml_document_table_rows(result)
     elif result.detected_format == "HWP":
