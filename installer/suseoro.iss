@@ -1,7 +1,7 @@
 ; Archived manual-only Inno Setup installer. Official automatic-update releases
 ; use suseoro.nsi, which implements the parent-PID wait and installation lock.
 #ifndef AppVersion
-  #define AppVersion "2.0.2"
+  #define AppVersion "2.0.3"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\dist\Suseoro"
