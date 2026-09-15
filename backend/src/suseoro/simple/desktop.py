@@ -218,6 +218,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.smoke_test:
             with urlopen(server.url + "/api/library/health", timeout=5) as response:
                 healthy = json.load(response).get("status") == "ready"
+            if hasattr(sys, "_MEIPASS"):
+                for page in ("index.html", "visual-guide.html", "user-guide.html", "quick-start.html", "school-templates.html"):
+                    with urlopen(server.url + "/help/" + page, timeout=5) as response:
+                        healthy = healthy and response.status == 200 and "수서로" in response.read().decode("utf-8")
             return 0 if healthy else 1
         if args.headless:
             if sys.stdout:

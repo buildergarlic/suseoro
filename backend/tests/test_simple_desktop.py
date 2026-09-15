@@ -65,7 +65,7 @@ def test_server_uses_ephemeral_loopback_and_stops():
 
 def test_version_does_not_open_app(monkeypatch, capsys):
     assert desktop().main(["--version"]) == 0
-    assert "2.0.0" in capsys.readouterr().out
+    assert desktop().VERSION in capsys.readouterr().out
 
 
 def test_port_validation():

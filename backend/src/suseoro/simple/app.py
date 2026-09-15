@@ -11,11 +11,12 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, File, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from suseoro.simple import VERSION
 from suseoro.simple.bibliography import lookup_isbn
+from suseoro.simple.help_pages import default_help_dir, help_policy, manual_response
 from suseoro.simple.store import BACKUP_MAX_JSON_BYTES, LibraryStore, identifier
 
 PREFIX = '/api/library'
@@ -34,8 +35,10 @@ def download(data: bytes, filename: str, mime: str):
     })
 
 
-def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None) -> FastAPI:
+def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
+               help_dir: Path | None = None) -> FastAPI:
     store = LibraryStore(data_dir or default_data_dir())
+    manuals = Path(help_dir) if help_dir is not None else default_help_dir()
     app = FastAPI(title='수서로 2.0', version=VERSION, docs_url=None, redoc_url=None)
     app.state.store = store
     app.state.csrf_token = secrets.token_urlsafe(32)
@@ -80,11 +83,24 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None) -
         response = await call_next(request)
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
-        response.headers['X-Frame-Options'] = 'DENY'
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'"
+        help_nonce = getattr(request.state, 'help_nonce', None)
+        response.headers['X-Frame-Options'] = 'SAMEORIGIN' if help_nonce else 'DENY'
+        response.headers['Content-Security-Policy'] = help_policy(help_nonce) if help_nonce else "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; frame-src 'self'; frame-ancestors 'none'"
         if request.url.path.startswith(PREFIX):
             response.headers['Cache-Control'] = 'no-store'
         return response
+
+    @app.get('/help')
+    def help_redirect():
+        return RedirectResponse('/help/')
+
+    @app.get('/help/')
+    def help_index(request: Request):
+        return manual_response(request, manuals, 'index.html')
+
+    @app.get('/help/{filename:path}')
+    def help_page(filename: str, request: Request):
+        return manual_response(request, manuals, filename)
 
     @app.get(PREFIX + '/health')
     def health():

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
 
 from suseoro.simple.app import create_app
+from suseoro.simple import VERSION
 
 
 @pytest.fixture
@@ -22,7 +23,7 @@ def list_id(client):
 
 def test_first_launch_needs_no_account(client):
     data = client.get('/api/library/bootstrap').json()
-    assert data['version'] == '2.0.0'
+    assert data['version'] == VERSION
     assert data['lists'][0]['budget'] == 15_000_000
     assert not data['settings']['nl_api_key_configured']
 

@@ -70,8 +70,10 @@ API는 동일 출처와 실행마다 다른 요청 토큰을 확인합니다. �
 uv run scripts/build-user-guide.py
 ```
 
-릴리스용 오프라인 ZIP과 체크섬도 만들려면 `uv run scripts/build-user-guide.py --zip`을 실행합니다. 결과는 `dist/Suseoro-Guide-2.0.0.zip`에 생성됩니다.
+릴리스용 오프라인 ZIP과 체크섬도 만들려면 `uv run scripts/build-user-guide.py --zip`을 실행합니다. 결과는 `dist/Suseoro-Guide-2.0.1.zip`에 생성됩니다. 파일명과 HTML의 버전은 Python 프로젝트 버전을 따릅니다.
 
 생성기는 별도 도구 환경에서 지정된 Markdown 버전을 사용합니다. 앱의 의존성을 변경하지 않습니다. `docs/visual-guide.html`은 그림과 예산 연습을 포함하는 독립 HTML이며 직접 수정합니다. 예산 연습은 실제 도서 자료를 저장하거나 발주하지 않습니다.
 
 GitHub Pages는 `main`의 `/docs`에서 `index.html`을 공개합니다. HTML 5개(`index`, `visual-guide`, `user-guide`, `quick-start`, `school-templates`)는 같은 폴더에 두면 오프라인에서도 서로 연결됩니다. 문서 변경 시 실제 버튼 이름과 처리 순서를 확인하고, 그림 안내의 구입 체크·수량·가격 미확인·예산 초과 동작도 확인하세요.
+
+데스크톱 패키징은 위 HTML 5개를 `_internal/help`에 포함하며, 시작 검증에서 실제 `/help/` 응답을 확인합니다. 앱의 **사용설명서**는 현재 업무 화면을 유지한 채 별도의 설명서 영역에서 열립니다. 설명서의 스크립트는 업무 자료에 접근하지 못하게 분리하고, 앱 화면의 기존 보안 정책도 유지합니다.

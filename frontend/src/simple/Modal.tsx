@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-export function Modal({ title, description, children, onClose, wide = false, busy = false }: { title: string; description?: string; children: ReactNode; onClose: () => void; wide?: boolean; busy?: boolean }) {
+export function Modal({ title, description, children, onClose, wide = false, busy = false, className = "" }: { title: string; description?: string; children: ReactNode; onClose: () => void; wide?: boolean; busy?: boolean; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const busyRef = useRef(busy);
   useEffect(() => { busyRef.current = busy; }, [busy]);
@@ -20,7 +20,7 @@ export function Modal({ title, description, children, onClose, wide = false, bus
     const overflow = document.body.style.overflow; document.body.style.overflow = "hidden";
     return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = overflow; previous?.focus(); };
   }, [onClose]);
-  return <div className="simple-modal-shade"><div ref={ref} className={`simple-modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby="simple-dialog-title">
+  return <div className="simple-modal-shade"><div ref={ref} className={`simple-modal${wide ? " wide" : ""}${className ? ` ${className}` : ""}`} role="dialog" aria-modal="true" aria-labelledby="simple-dialog-title">
     <header className="modal-heading"><div><p className="eyebrow">수서로 · 내 서재 관리</p><h2 id="simple-dialog-title">{title}</h2>{description && <p className="muted">{description}</p>}</div><button className="icon-button" aria-label="닫기" onClick={onClose} disabled={busy}>×</button></header>
     {children}
   </div></div>;

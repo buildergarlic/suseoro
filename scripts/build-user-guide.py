@@ -9,6 +9,7 @@ from hashlib import sha256
 from html import escape
 from pathlib import Path
 import re
+import tomllib
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import markdown
@@ -16,6 +17,7 @@ from markdown.extensions.toc import slugify_unicode
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
+VERSION = tomllib.loads((ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 CSS = """
 :root{color-scheme:light;--ink:#17392f;--muted:#52675f;--paper:#fffcf5;--line:#d9e1d8;--green:#226348}
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:1rem}
@@ -64,7 +66,7 @@ def build(source: Path) -> None:
 <body><a class="skip" href="#main">본문으로 바로 가기</a>
 <header class="topbar"><a class="brand" href="index.html">수서로 2.0 · 도움말</a><nav aria-label="설명서 메뉴"><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
 <div class="layout"><aside aria-label="이 페이지 목차"><details open><summary>목차</summary>{converter.toc}</details></aside>
-<main id="main"><p class="meta">수서로 2.0.0 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button>{content}</main></div>
+<main id="main"><p class="meta">수서로 {VERSION} 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button>{content}</main></div>
 <footer>수서로 · 학교도서관 사서의 도서 구입을 돕습니다. <a href="index.html">도움말 처음으로</a></footer></body></html>
 '''
     target = source.with_suffix(".html")
@@ -86,7 +88,7 @@ if __name__ == "__main__":
         for source in files:
             if not source.is_file():
                 raise FileNotFoundError(source)
-        target = ROOT / "dist" / "Suseoro-Guide-2.0.0.zip"
+        target = ROOT / "dist" / f"Suseoro-Guide-{VERSION}.zip"
         target.parent.mkdir(exist_ok=True)
         with ZipFile(target, "w", compression=ZIP_DEFLATED) as archive:
             for source in files:

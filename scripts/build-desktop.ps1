@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$PythonPath = '',
-    [string]$Version = '2.0.0',
+    [string]$Version = '2.0.1',
     [string]$TesseractDir = '',
     [string]$IsccPath = '',
     [string]$MakensisPath = '',
@@ -17,6 +17,8 @@ $buildRoot = Join-Path $workspace '.build\desktop'
 $distRoot = Join-Path $workspace 'dist'
 $appRoot = Join-Path $distRoot 'Suseoro'
 $uiRoot = Join-Path $workspace 'frontend\dist'
+$guideRoot = Join-Path $workspace 'docs'
+$guideFiles = @('index.html', 'visual-guide.html', 'user-guide.html', 'quick-start.html', 'school-templates.html')
 
 function Assert-WorkspacePath([string]$Target) {
     $resolved = [IO.Path]::GetFullPath($Target)
@@ -58,6 +60,11 @@ New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
 if (-not $SkipPyInstaller) {
     if (-not (Test-Path -LiteralPath (Join-Path $uiRoot 'index.html'))) {
         throw 'Build frontend/dist first. The installer must contain a complete user interface.'
+    }
+    foreach ($guide in $guideFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $guideRoot $guide))) {
+            throw "Missing bundled guide: $guide. Run uv run scripts/build-user-guide.py before packaging."
+        }
     }
     Clear-BuildDirectory $buildRoot
     $actualVersion = & $PythonPath -c 'from suseoro.simple import VERSION; print(VERSION)'
@@ -113,6 +120,9 @@ for package in ('react', 'react-dom'):
         '--exclude-module', 'PyQt5', '--exclude-module', 'PyQt6', '--exclude-module', 'PySide2',
         '--exclude-module', 'PySide6', '--exclude-module', 'cefpython3', '--exclude-module', 'pytest'
     )
+    foreach ($guide in $guideFiles) {
+        $arguments += @('--add-data', ((Join-Path $guideRoot $guide) + ';help'))
+    }
     if ($TesseractDir) {
         $ocrSource = (Resolve-Path -LiteralPath $TesseractDir).Path
         foreach ($required in @('tesseract.exe', 'tessdata\kor.traineddata', 'tessdata\eng.traineddata')) {
@@ -143,6 +153,11 @@ for package in ('react', 'react-dom'):
         Copy-Item -LiteralPath $ocrStage -Destination (Join-Path $appRoot '_internal') -Recurse -Force
     }
     if (-not (Test-Path -LiteralPath (Join-Path $appRoot '_internal\ui\index.html'))) { throw 'Frozen application is missing its UI.' }
+    foreach ($guide in $guideFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $appRoot "_internal\help\$guide"))) {
+            throw "Frozen application is missing its guide: $guide"
+        }
+    }
     foreach ($document in @('LICENSE', 'README.md', 'THIRD_PARTY_NOTICES.md', 'docs\quick-start.md')) {
         $source = Join-Path $workspace $document
         if (-not (Test-Path -LiteralPath $source)) { throw "Missing distribution document: $document" }

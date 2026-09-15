@@ -6,7 +6,7 @@
 
 ## 설치하고 시작하기
 
-1. [최신 버전 다운로드](https://github.com/buildergarlic/suseoro/releases/latest)에서 **Suseoro-Setup-2.0.0.exe**를 받습니다.
+1. [최신 버전 다운로드](https://github.com/buildergarlic/suseoro/releases/latest)에서 **Suseoro-Setup-2.0.1.exe**를 받습니다.
 2. 설치한 뒤 바탕화면의 **수서로**를 엽니다.
 3. **ISBN 추가** 또는 **파일 가져오기**로 책을 담고 **발주서 저장**을 누릅니다.
 
@@ -50,9 +50,10 @@ Windows 10/11 64비트용입니다. 설치 파일에는 Python, 화면, 한국�
 
 ## 도움말과 오픈소스
 
+- **프로그램 왼쪽 아래 → 사용설명서**: 그림 안내·상세 설명서·간단한 사용법을 앱 안에서 엽니다. 2.0.1부터 설치 파일에 포함되며 인터넷 없이 읽을 수 있습니다. 닫으면 작업하던 목록으로 돌아옵니다.
 - **[사용설명서 열기](https://buildergarlic.github.io/suseoro/)** — 설치부터 발주·백업까지 따라 하는 설명서와 그림 안내
 - [그림으로 먼저 익히기](https://buildergarlic.github.io/suseoro/visual-guide.html) · [상세 사용설명서](docs/user-guide.md) · [간단한 사용법](docs/quick-start.md)
-- [설명서 내려받기](https://github.com/buildergarlic/suseoro/releases/download/v2.0.0/Suseoro-Guide-2.0.0.zip) — 압축을 풀고 `index.html`을 열면 인터넷 없이 읽을 수 있습니다.
+- [설명서 내려받기](https://github.com/buildergarlic/suseoro/releases/download/v2.0.1/Suseoro-Guide-2.0.1.zip) — 압축을 풀고 `index.html`을 열면 인터넷 없이 읽을 수 있습니다.
 - [학교 양식](docs/school-templates.md) · [개발·빌드](docs/development.md)
 - [변경 내역](CHANGELOG.md) · [문제 신고](https://github.com/buildergarlic/suseoro/issues)
 

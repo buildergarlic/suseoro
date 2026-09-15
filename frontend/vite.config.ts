@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": "http://127.0.0.1:8000",
+      "/help": "http://127.0.0.1:8000",
     },
   },
   test: {
