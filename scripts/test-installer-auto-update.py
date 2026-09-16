@@ -6,6 +6,8 @@ shortcuts and registry writes. No real Suseoro installation or data is used.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import ctypes
 import msvcrt
 import os
 from pathlib import Path
@@ -13,6 +15,24 @@ import subprocess
 import sys
 import tempfile
 import time
+
+
+@contextmanager
+def held_test_mutex(name: str):
+    """Exercise lock handling without touching the real app's named mutexes."""
+    assert name.startswith('Local\\Suseoro.Test.')
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel.CreateMutexW.restype = ctypes.c_void_p
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel.CloseHandle.restype = ctypes.c_bool
+    handle = kernel.CreateMutexW(None, False, name)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        yield
+    finally:
+        kernel.CloseHandle(handle)
 
 
 def main() -> None:
@@ -43,6 +63,7 @@ def main() -> None:
     compiler = [str(args.makensis.resolve()), '/V2', '/WX', '/INPUTCHARSET', 'UTF8',
                 '/DAPP_VERSION=9.9.9', f'/DSOURCE_DIR={payload}',
                 f'/DOUTPUT_DIR={run}', f'/DINSTALLER_TEST_ROOT={installed}',
+                f'/DINSTALLER_TEST_ID={run.name}',
                 str(root / 'installer' / 'suseoro.nsi')]
     subprocess.run(compiler, check=True)
     installer = run / 'Suseoro-Setup-9.9.9.exe'
@@ -59,10 +80,16 @@ def main() -> None:
     # A definitely exited process is a valid parent; a live data lock still blocks.
     exited = subprocess.Popen([sys.executable, '-c', 'pass'], creationflags=flags)
     exited.wait(timeout=10)
+    for suffix, expected_code in (('App', 20), ('Update', 21)):
+        with held_test_mutex(f'Local\\Suseoro.Test.{run.name}.{suffix}'):
+            result = install(str(exited.pid))
+            assert result == expected_code, f'Test {suffix} mutex must abort with {expected_code}, got {result}'
+        assert executable.read_bytes() == b'old fixture executable'
     with lockfile.open('r+b') as held:
         msvcrt.locking(held.fileno(), msvcrt.LK_NBLCK, 1)
         try:
-            assert install(str(exited.pid)) == 25, 'An existing app data lock must abort'
+            result = install(str(exited.pid))
+            assert result == 25, f'An existing app data lock must abort with 25, got {result}'
         finally:
             held.seek(0)
             msvcrt.locking(held.fileno(), msvcrt.LK_UNLCK, 1)
@@ -89,7 +116,7 @@ def main() -> None:
     assert install(str(exited.pid)) != 0
     assert executable.read_bytes() == b'new fixture executable'
     assert (data / 'books.json').read_text() == 'school records stay here'
-    print('PASS: invalid PID, active data lock, parent wait, replacement, data preservation, staging failure')
+    print('PASS: invalid PID, isolated app/update mutexes, active data lock, parent wait, replacement, data preservation, staging failure')
     print(f'Test artifacts: {run}')
 
 

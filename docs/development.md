@@ -40,6 +40,8 @@ npm run build
 
 구입 선택·금액·가격 누락·ISBN 판본 일치·파일 해석·학교 양식·백업 원자성·안전한 업데이트를 검사합니다. 실제 학교 자료 대신 합성 테스트 자료를 사용합니다. 기존 `frontend/e2e`는 이전 다중 사용자 화면의 참고용 테스트입니다.
 
+화면 설정은 기본 18px이며 16·18·20·22·24px와 행 간격을 앱의 SQLite 설정에 저장합니다. 기존 저장값과 다른 서버 포트로 재실행한 뒤의 복원을 확인합니다. 표지는 유효한 ISBN만으로 Open Library·Google Books에 요청하며, 미제공·실패 상태에서는 대체 표시를 사용합니다. 큰 글자에서 표의 최소 높이와 내부 가로 스크롤, 창 크기 조절·최대화도 실제 데스크톱 화면에서 확인합니다. 국립중앙도서관 실제 승인키를 이용한 성공 조회는 아직 검증하지 않았습니다.
+
 ## Windows 배포물 만들기
 
 공식 [NSIS portable](https://nsis.sourceforge.io/Download) 컴파일러를 준비합니다. 자동 업데이트 배포물은 NSIS로 만듭니다. 이전 Inno 스크립트는 수동 설치 참고용이며 자동 업데이트 파일명으로 배포하지 않습니다. 빌드 스크립트가 컴파일러를 시스템에 설치하지는 않습니다.
@@ -47,12 +49,12 @@ npm run build
 저장소 루트에서:
 
 ```powershell
-./scripts/build-desktop.ps1 -Version 2.1.0 -TesseractDir ./portable_tesseract -MakensisPath C:\도구\NSIS\makensis.exe -PortableZip
+./scripts/build-desktop.ps1 -Version 2.1.1 -TesseractDir ./portable_tesseract -MakensisPath C:\도구\NSIS\makensis.exe -PortableZip
 ```
 
 `dist`에 설치 파일, Portable ZIP, SHA-256 체크섬이 생깁니다. 설치 파일은 프로그램을 `%LOCALAPPDATA%\Programs\Suseoro`에 설치하고, 자료는 `%LOCALAPPDATA%\Suseoro`에 유지합니다. 제거 프로그램은 자료 폴더를 삭제하지 않습니다.
 
-현재 2.1.0은 로컬 검토본입니다. 빌드와 공개 릴리스는 별개입니다. 설치 파일을 만들기만 해도 기존 설치가 바뀌지는 않습니다. 기존 자료를 건드리지 않고 검토하려면 설치 파일을 실행하지 말고, 별도 데이터 경로로 실행합니다.
+2.1.1은 공개 버전 2.0.3 이후의 개선을 모은 배포 대상이며, 2.1.0은 공개하지 않은 로컬 검토본입니다. 빌드와 공개 릴리스는 별개입니다. 설치 파일을 만들기만 해도 기존 설치가 바뀌지는 않습니다. 기존 자료를 건드리지 않고 검토하려면 설치 파일을 실행하지 말고, 별도 데이터 경로로 실행합니다.
 
 ```powershell
 ./dist/Suseoro/Suseoro.exe --data-dir C:\SuseoroReview\data
@@ -78,7 +80,7 @@ API는 동일 출처와 실행마다 다른 요청 토큰을 확인합니다. �
 uv run scripts/build-user-guide.py
 ```
 
-릴리스용 오프라인 ZIP과 체크섬도 만들려면 `uv run scripts/build-user-guide.py --zip`을 실행합니다. 결과는 `dist/Suseoro-Guide-2.1.0.zip`에 생성됩니다. 파일명과 HTML의 버전은 Python 프로젝트 버전을 따릅니다.
+릴리스용 오프라인 ZIP과 체크섬도 만들려면 `uv run scripts/build-user-guide.py --zip`을 실행합니다. 결과는 `dist/Suseoro-Guide-2.1.1.zip`에 생성됩니다. 파일명과 HTML의 버전은 Python 프로젝트 버전을 따릅니다.
 
 생성기는 별도 도구 환경에서 지정된 Markdown 버전을 사용합니다. 앱의 의존성을 변경하지 않습니다. `docs/visual-guide.html`은 그림과 예산 연습을 포함하는 독립 HTML이며 직접 수정합니다. 예산 연습은 실제 도서 자료를 저장하거나 발주하지 않습니다.
 
@@ -88,7 +90,7 @@ GitHub Pages는 `main`의 `/docs`에서 `index.html`을 공개합니다. HTML 5�
 
 ## 자동 업데이트 검증
 
-설치형은 백그라운드에서 정식 릴리스를 확인하고 검증된 설치기를 내려받아 정상 종료 시 전달합니다. 설치기는 부모 PID 종료를 기다리고 앱 뮤텍스와 기존 데이터 잠금을 확인한 뒤 새 프로그램을 별도 폴더에 모두 풀어 교체합니다. 자료 폴더는 보존됩니다. 자동 설정을 끄면 종료 시 설치하지 않습니다. 개발 실행·headless·무설치판은 자동 설치하지 않습니다.
+설치형은 시작 시 또는 사용자의 **업데이트 확인** 요청으로 정식 릴리스를 확인합니다. 저장된 `auto_enabled` 선택을 존중하며, 자동 업데이트가 켜져 있으면 설치기를 내려받아 검증하고 정상 종료 시 전달합니다. 작업 중인 앱을 강제 종료하지 않습니다. 설치기는 부모 PID 종료를 기다리고 앱 뮤텍스와 기존 데이터 잠금을 확인한 뒤 새 프로그램을 별도 폴더에 모두 풀어 교체합니다. 자료 폴더는 보존됩니다. 자동 설정을 끄면 종료 시 자동 설치하지 않습니다. 개발 실행·headless·무설치판은 자동 설치하지 않습니다.
 
 실제 NSIS 설치기의 종료 대기·기존 앱 잠금·실패 시 프로그램 보존은 다음 통합 검사로 확인합니다. 학교 자료나 실제 설치 경로를 사용하지 않습니다.
 

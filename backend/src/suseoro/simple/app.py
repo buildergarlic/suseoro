@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from suseoro.simple import VERSION
 from suseoro.simple.bibliography import lookup_isbn
+from suseoro.simple.covers import CoverService
 from suseoro.simple.help_pages import default_help_dir, help_policy, manual_response
 from suseoro.simple.store import BACKUP_MAX_JSON_BYTES, LibraryStore, identifier
 from suseoro.simple.update_coordinator import UpdateCoordinator
@@ -47,6 +48,7 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
     app.state.shutdown_callback = None
     app.state.install_update_callback = None
     app.state.lookup_cache = {}
+    app.state.covers = CoverService()
 
     @app.exception_handler(ValueError)
     async def value_error(_request, exc):
@@ -87,7 +89,7 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
         help_nonce = getattr(request.state, 'help_nonce', None)
         response.headers['X-Frame-Options'] = 'SAMEORIGIN' if help_nonce else 'DENY'
         response.headers['Content-Security-Policy'] = help_policy(help_nonce) if help_nonce else "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; frame-src 'self'; frame-ancestors 'none'"
-        if request.url.path.startswith(PREFIX):
+        if request.url.path.startswith(PREFIX) and not request.url.path.startswith(PREFIX + '/covers/'):
             response.headers['Cache-Control'] = 'no-store'
         return response
 
@@ -106,6 +108,15 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
     @app.get(PREFIX + '/health')
     def health():
         return {'version': VERSION, 'status': 'ready'}
+
+    @app.get(PREFIX + '/covers/{isbn}')
+    def cover_image(isbn: str):
+        image = app.state.covers.get(isbn)
+        if image is None:
+            return Response(status_code=404, headers={'Cache-Control': 'private, max-age=120'})
+        return Response(image.data, media_type='image/jpeg', headers={
+            'Cache-Control': 'private, max-age=86400', 'X-Cover-Source': image.source,
+        })
 
     @app.get(PREFIX + '/bootstrap')
     def bootstrap():

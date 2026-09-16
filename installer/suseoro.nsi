@@ -6,7 +6,7 @@ Unicode True
 !include "WinVer.nsh"
 !include "FileFunc.nsh"
 !ifndef APP_VERSION
-  !define APP_VERSION "2.1.0"
+  !define APP_VERSION "2.1.1"
 !endif
 !ifndef SOURCE_DIR
   !define SOURCE_DIR "..\dist\Suseoro"
@@ -18,10 +18,17 @@ Unicode True
 !ifndef INSTALLER_TEST_ROOT
   !define APP_ROOT "$LOCALAPPDATA\Programs\Suseoro"
   !define DATA_ROOT "$LOCALAPPDATA\Suseoro"
+  !define APP_MUTEX_NAME "Local\Suseoro.App"
+  !define UPDATE_MUTEX_NAME "Local\Suseoro.Update"
 !else
-  ; Only the installer integration test supplies this compile-time path.
+  ; Test paths and named locks must both stay separate from a real installation.
+  !ifndef INSTALLER_TEST_ID
+    !error "INSTALLER_TEST_ROOT requires a unique INSTALLER_TEST_ID"
+  !endif
   !define APP_ROOT "${INSTALLER_TEST_ROOT}"
   !define DATA_ROOT "${INSTALLER_TEST_ROOT}.data"
+  !define APP_MUTEX_NAME "Local\Suseoro.Test.${INSTALLER_TEST_ID}.App"
+  !define UPDATE_MUTEX_NAME "Local\Suseoro.Test.${INSTALLER_TEST_ID}.Update"
 !endif
 Var AutoUpdate
 Var UpdateMutex
@@ -55,7 +62,7 @@ VIAddVersionKey /LANG=1042 "LegalCopyright" "Suseoro contributors"
 
 !macro CheckRunning
   check_running:
-  System::Call 'kernel32::OpenMutexW(i 0x100000, i 0, w "Local\Suseoro.App") p.r0'
+  System::Call 'kernel32::OpenMutexW(i 0x100000, i 0, w "${APP_MUTEX_NAME}") p.r0'
   ${If} $0 != 0
     System::Call 'kernel32::CloseHandle(p r0)'
     MessageBox MB_RETRYCANCEL|MB_ICONINFORMATION "수서로가 실행 중입니다. 수서로 창을 닫은 후 다시 시도해 주세요." /SD IDCANCEL IDRETRY check_running
@@ -87,7 +94,7 @@ Function .onInit
     SetSilent silent
   ${EndIf}
   ; Serialize installers and let the new app refuse to start during replacement.
-  System::Call 'kernel32::CreateMutexW(p 0, i 0, w "Local\Suseoro.Update") p.r0 ?e'
+  System::Call 'kernel32::CreateMutexW(p 0, i 0, w "${UPDATE_MUTEX_NAME}") p.r0 ?e'
   Pop $1
   StrCpy $UpdateMutex $0
   ${If} $0 == 0

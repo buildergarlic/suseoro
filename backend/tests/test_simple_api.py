@@ -54,21 +54,22 @@ def test_key_never_echoed_in_settings_or_backup(client):
     assert 'private-key' not in client.get('/api/library/backup').text
 
 
-def test_display_preferences_save_through_api_and_survive_a_new_app_port(tmp_path):
+@pytest.mark.parametrize('size', [16, 18, 20, 22, 24])
+def test_display_preferences_save_through_api_and_survive_a_new_app_port(tmp_path, size):
     with TestClient(create_app(tmp_path), base_url='http://127.0.0.1:3847') as first:
         initial = first.get('/api/library/bootstrap').json()
-        assert initial['settings']['text_size'] == 16
+        assert initial['settings']['text_size'] == 18
         assert initial['settings']['row_density'] == 'comfortable'
-        response = first.patch('/api/library/settings', headers={'X-Suseoro-Token': initial['csrf_token']}, json={'text_size': 18, 'row_density': 'compact'})
+        response = first.patch('/api/library/settings', headers={'X-Suseoro-Token': initial['csrf_token']}, json={'text_size': size, 'row_density': 'compact'})
         assert response.status_code == 200
-        assert response.json()['text_size'] == 18
+        assert response.json()['text_size'] == size
     with TestClient(create_app(tmp_path), base_url='http://127.0.0.1:51234') as reopened:
         settings = reopened.get('/api/library/bootstrap').json()['settings']
-        assert settings['text_size'] == 18
+        assert settings['text_size'] == size
         assert settings['row_density'] == 'compact'
 
 
-@pytest.mark.parametrize('patch', [{'text_size': 17}, {'text_size': '20'}, {'text_size': True}, {'row_density': 'dense'}, {'row_density': []}])
+@pytest.mark.parametrize('patch', [{'text_size': 17}, {'text_size': 26}, {'text_size': '20'}, {'text_size': True}, {'row_density': 'dense'}, {'row_density': []}])
 def test_invalid_display_preferences_are_rejected_by_api(client, patch):
     before = client.get('/api/library/bootstrap').json()['settings']
     response = client.patch('/api/library/settings', json=patch)

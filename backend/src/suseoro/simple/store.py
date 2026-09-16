@@ -223,11 +223,11 @@ class LibraryStore:
     def settings(self):
         with self.connection() as db:
             rows = dict(db.execute('SELECT key,value FROM settings'))
-        size = rows.get('text_size', '16')
+        size = rows.get('text_size', '18')
         density = rows.get('row_density', 'comfortable')
         return {'school_name': rows.get('school_name', '우리 학교'),
                 'nl_api_key_configured': bool(rows.get('nl_api_key')),
-                'text_size': int(size) if size in ('16', '18', '20') else 16,
+                'text_size': int(size) if size in ('16', '18', '20', '22', '24') else 18,
                 'row_density': density if density in ('comfortable', 'compact') else 'comfortable'}
 
     def secret(self, name):
@@ -241,8 +241,8 @@ class LibraryStore:
             if key not in allowed:
                 raise ValueError('설정값을 확인해 주세요.')
             if key == 'text_size':
-                if type(value) is not int or value not in (16, 18, 20):
-                    raise ValueError('글자 크기는 16, 18, 20 중에서 선택해 주세요.')
+                if type(value) is not int or value not in (16, 18, 20, 22, 24):
+                    raise ValueError('글자 크기는 16, 18, 20, 22, 24 중에서 선택해 주세요.')
             elif key == 'row_density':
                 if not isinstance(value, str) or value not in ('comfortable', 'compact'):
                     raise ValueError('행 간격을 다시 선택해 주세요.')

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createLibraryApi } from "../src/simple/api";
@@ -65,22 +65,48 @@ it("opens canonical ISBN search links from an existing book and rejects executab
   expect(screen.queryByRole("link", { name: "어린 왕자 참고 링크" })).not.toBeInTheDocument();
 });
 
+it("loads canonical ISBN thumbnails and keeps an accessible placeholder when no cover exists", async () => {
+  render(<SimpleLibraryApp api={fixture([book("ten", { isbn: "0-306-40615-2" }), book("none", { title: "ISBN 없는 책", isbn: "" })]).api} />);
+  const cover = await screen.findByRole("img", { name: "어린 왕자 표지" });
+  expect(cover).toHaveAttribute("src", "/api/library/covers/9780306406157");
+  expect(cover).toHaveAttribute("loading", "lazy");
+  expect(screen.getByRole("img", { name: "ISBN 없는 책 표지 없음" })).toBeInTheDocument();
+  fireEvent.error(cover);
+  expect(screen.getByRole("img", { name: "어린 왕자 표지 없음" })).toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: "어린 왕자 표지" })).not.toBeInTheDocument();
+});
+
+it("lets users enlarge text to 24px with visible controls and persists the exact choice", async () => {
+  const user = userEvent.setup(), { api, state } = fixture();
+  render(<SimpleLibraryApp api={api} />);
+  await screen.findByRole("region", { name: "예산 현황" });
+  await user.selectOptions(screen.getByRole("combobox", { name: "글자 크기" }), "20");
+  await user.click(screen.getByRole("button", { name: "글자 크게" }));
+  expect(document.documentElement.style.fontSize).toBe("22px");
+  await user.click(screen.getByRole("button", { name: "글자 크게" }));
+  expect(document.documentElement.style.fontSize).toBe("24px");
+  expect(screen.getByRole("button", { name: "글자 크게" })).toBeDisabled();
+  await waitFor(() => expect(state.display.text_size).toBe(24));
+  await user.click(screen.getByRole("button", { name: "글자 작게" }));
+  expect(document.documentElement.style.fontSize).toBe("22px");
+});
+
 it("restores text and density from app data even when a new launch has no localStorage", async () => {
   const user = userEvent.setup(), { api, state } = fixture();
   const first = render(<SimpleLibraryApp api={api} />);
   await screen.findByRole("region", { name: "예산 현황" });
   const size = await screen.findByRole("combobox", { name: "글자 크기" });
-  await user.selectOptions(size, "18");
-  expect(document.documentElement.style.fontSize).toBe("18px");
+  await user.selectOptions(size, "22");
+  expect(document.documentElement.style.fontSize).toBe("22px");
   await user.click(screen.getByRole("button", { name: "간결한 행 간격" }));
   expect(document.querySelector(".simple-app")).toHaveClass("density-compact");
-  expect(document.documentElement.style.fontSize).toBe("18px");
-  await waitFor(() => expect(state.display).toEqual({ text_size: 18, row_density: "compact" }));
+  expect(document.documentElement.style.fontSize).toBe("22px");
+  await waitFor(() => expect(state.display).toEqual({ text_size: 22, row_density: "compact" }));
   first.unmount();
   localStorage.clear();
   render(<SimpleLibraryApp api={api} />);
   await screen.findByRole("region", { name: "예산 현황" });
-  expect(screen.getByRole("combobox", { name: "글자 크기" })).toHaveValue("18");
+  expect(screen.getByRole("combobox", { name: "글자 크기" })).toHaveValue("22");
   expect(document.querySelector(".simple-app")).toHaveClass("density-compact");
 });
 

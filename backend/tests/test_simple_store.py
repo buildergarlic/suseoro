@@ -24,7 +24,7 @@ def test_default_budget_and_persistent_changes(tmp_path):
 
 def test_display_preferences_default_and_survive_a_new_store_instance(tmp_path):
     store = LibraryStore(tmp_path)
-    assert store.settings()['text_size'] == 16
+    assert store.settings()['text_size'] == 18
     assert store.settings()['row_density'] == 'comfortable'
     store.update_settings({'text_size': 20, 'row_density': 'compact', 'nl_api_key': 'local-secret'})
     reopened = LibraryStore(tmp_path)
@@ -39,15 +39,31 @@ def test_display_preferences_default_and_survive_a_new_store_instance(tmp_path):
     assert reopened.settings()['row_density'] == 'compact'
 
 
-@pytest.mark.parametrize('size', [16, 18, 20])
+@pytest.mark.parametrize('size', [16, 18, 20, 22, 24])
 def test_supported_text_sizes_are_returned_as_integers(tmp_path, size):
     store = LibraryStore(tmp_path)
     result = store.update_settings({'text_size': size})
     assert result['text_size'] == size and type(result['text_size']) is int
+    assert LibraryStore(tmp_path).settings()['text_size'] == size
+
+
+@pytest.mark.parametrize('stored_size', ['16', '18', '20'])
+def test_existing_text_size_is_not_replaced_by_the_new_default(tmp_path, stored_size):
+    store = LibraryStore(tmp_path)
+    with store.connection() as db:
+        db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('text_size', stored_size))
+    assert LibraryStore(tmp_path).settings()['text_size'] == int(stored_size)
+
+
+def test_unreadable_saved_text_size_falls_back_to_readable_default(tmp_path):
+    store = LibraryStore(tmp_path)
+    with store.connection() as db:
+        db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('text_size', 'invalid'))
+    assert LibraryStore(tmp_path).settings()['text_size'] == 18
 
 
 @pytest.mark.parametrize('patch', [
-    {'text_size': 17}, {'text_size': '18'}, {'text_size': 18.0}, {'text_size': True},
+    {'text_size': 17}, {'text_size': 26}, {'text_size': '18'}, {'text_size': 18.0}, {'text_size': True},
     {'text_size': None}, {'row_density': 'dense'}, {'row_density': ''},
     {'row_density': None}, {'row_density': []},
 ])
