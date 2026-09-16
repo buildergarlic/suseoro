@@ -47,10 +47,18 @@ npm run build
 저장소 루트에서:
 
 ```powershell
-./scripts/build-desktop.ps1 -TesseractDir ./portable_tesseract -MakensisPath C:\도구\NSIS\makensis.exe -PortableZip
+./scripts/build-desktop.ps1 -Version 2.1.0 -TesseractDir ./portable_tesseract -MakensisPath C:\도구\NSIS\makensis.exe -PortableZip
 ```
 
 `dist`에 설치 파일, Portable ZIP, SHA-256 체크섬이 생깁니다. 설치 파일은 프로그램을 `%LOCALAPPDATA%\Programs\Suseoro`에 설치하고, 자료는 `%LOCALAPPDATA%\Suseoro`에 유지합니다. 제거 프로그램은 자료 폴더를 삭제하지 않습니다.
+
+현재 2.1.0은 로컬 검토본입니다. 빌드와 공개 릴리스는 별개입니다. 설치 파일을 만들기만 해도 기존 설치가 바뀌지는 않습니다. 기존 자료를 건드리지 않고 검토하려면 설치 파일을 실행하지 말고, 별도 데이터 경로로 실행합니다.
+
+```powershell
+./dist/Suseoro/Suseoro.exe --data-dir C:\SuseoroReview\data
+```
+
+검토 데이터 경로는 기존 자료 폴더와 다른 새 폴더여야 합니다. 표준 설치 파일은 설치 위치가 고정되어 있으며 `/D`로 검토용 위치를 바꾸는 방식은 지원하지 않습니다. 빌드 스크립트의 자체 시작 검사는 `.build/desktop/smoke-data`를 사용합니다.
 
 OCR 없이 빌드하려면 `-TesseractDir`를 생략합니다. 이 경우 스캔 PDF에서 문자 인식 기능을 사용할 수 없습니다. 공식 릴리스에는 한국어·영어 OCR을 포함합니다. 소스 저장소의 OCR 바이너리·학습 데이터는 원래 배포본의 필수 구성만 보존합니다.
 
@@ -70,7 +78,7 @@ API는 동일 출처와 실행마다 다른 요청 토큰을 확인합니다. �
 uv run scripts/build-user-guide.py
 ```
 
-릴리스용 오프라인 ZIP과 체크섬도 만들려면 `uv run scripts/build-user-guide.py --zip`을 실행합니다. 결과는 `dist/Suseoro-Guide-2.0.3.zip`에 생성됩니다. 파일명과 HTML의 버전은 Python 프로젝트 버전을 따릅니다.
+릴리스용 오프라인 ZIP과 체크섬도 만들려면 `uv run scripts/build-user-guide.py --zip`을 실행합니다. 결과는 `dist/Suseoro-Guide-2.1.0.zip`에 생성됩니다. 파일명과 HTML의 버전은 Python 프로젝트 버전을 따릅니다.
 
 생성기는 별도 도구 환경에서 지정된 Markdown 버전을 사용합니다. 앱의 의존성을 변경하지 않습니다. `docs/visual-guide.html`은 그림과 예산 연습을 포함하는 독립 HTML이며 직접 수정합니다. 예산 연습은 실제 도서 자료를 저장하거나 발주하지 않습니다.
 

@@ -18,14 +18,15 @@ export interface Summary {
   remaining: number; missing_price_count: number; review_count: number; held_count: number; duplicate_count: number;
 }
 export interface ListDetail { list: AcquisitionList; books: Book[]; summary: Summary }
-export interface Settings { school_name: string; nl_api_key_configured: boolean }
+export interface Settings { school_name: string; nl_api_key_configured: boolean; text_size?: number; row_density?: "comfortable" | "compact" }
 export interface UpdateInfo {
   current_version?: string; latest_version?: string; available: boolean; url?: string; message?: string;
   phase?: "idle" | "checking" | "downloading" | "ready" | "error" | "manual";
   auto_enabled?: boolean; auto_supported?: boolean;
 }
 export interface Bootstrap { version: string; csrf_token: string; settings: Settings; lists: AcquisitionList[]; update: UpdateInfo | null }
-export interface ImportPreview { import_id: string; filename: string; rows: PreviewRow[]; warnings: string[]; headers?: string[]; mapping?: Record<string, unknown> }
+export interface ImportDiagnostic { kind: string; sheet?: string; row?: number; page?: number | null; raw_text: string; message: string }
+export interface ImportPreview { import_id: string; filename: string; rows: PreviewRow[]; warnings: string[]; headers?: string[]; mapping?: Record<string, unknown>; diagnostics?: ImportDiagnostic[] }
 export interface Template { id: string; name: string; columns: string[]; warnings?: string[] }
 export const emptyBook = (): BookFields => ({ title: "", author: "", publisher: "", isbn: "", price: null, quantity: 1, selected: true, category: "", requester: "", audience: "", priority: "normal", source: "직접 입력", note: "", published_date: "", link: "", needs_review: false, warnings: [] });
 export const money = (value: number) => `${new Intl.NumberFormat("ko-KR").format(value)}원`;

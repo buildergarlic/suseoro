@@ -1,6 +1,6 @@
 """Small, edition-verified ISBN lookup for SuSeoRo.
 
-Primary sources verified 2026-09-15:
+Primary sources verified 2026-09-15; NL and Aladin rechecked 2026-09-16:
 https://www.nl.go.kr/NL/contents/N31101030500.do
 https://openlibrary.org/dev/docs/api/books
 https://openlibrary.org/developers/api
@@ -20,6 +20,9 @@ access on 2026-10-30; this app therefore adds no Aladin dependency.
 NL ISBN records contain PRE_PRICE (예정가격), not a current seller quote.
 Google ebook prices are not used for print acquisition. Open Library has no
 price. No provider response is accepted without its own matching ISBN.
+NL's public link searches holdings by ISBN; its API does not provide a verified
+catalogue detail URL. KDC is unavailable for newer records; SUBJECT may provide
+the broad subject instead. Actual NL error responses use RESULT and ERR_CODE.
 
 Transport is deliberately a mockable module helper; no credentials are read
 from the environment or logged. Socket operations time out after at most three
@@ -176,11 +179,11 @@ def _nl(isbn: str, key: str, deadline: float, warnings: list[str]) -> dict[str, 
     }), deadline)
     if not isinstance(payload, dict):
         raise ValueError("Invalid provider schema")
-    error_code = str(payload.get("error_code", payload.get("ERROR_CODE", "")))
+    error_code = _text(payload.get("ERR_CODE") or payload.get("error_code") or payload.get("ERROR_CODE"))
     if error_code in {"010", "011"}:
         warnings.append("국립중앙도서관 인증키를 확인해 주세요.")
         return None
-    if error_code:
+    if error_code or _text(payload.get("RESULT")).upper() == "ERROR":
         warnings.append("국립중앙도서관에서 조회 오류를 반환했습니다.")
         return None
     docs = payload.get("docs", [])
@@ -193,8 +196,10 @@ def _nl(isbn: str, key: str, deadline: float, warnings: list[str]) -> dict[str, 
         book = _blank(isbn)
         book.update(title=_text(item.get("TITLE")), author=_text(item.get("AUTHOR")),
                     publisher=_text(item.get("PUBLISHER")), price=_price(item.get("PRE_PRICE")),
-                    published_date=_date(item.get("PUBLISH_PREDATE")), category=_text(item.get("KDC")),
-                    link="https://www.nl.go.kr/", source="국립중앙도서관")
+                    published_date=_date(item.get("PUBLISH_PREDATE")),
+                    category=_text(item.get("KDC")) or _text(item.get("SUBJECT")),
+                    link="https://www.nl.go.kr/NL/contents/search.do?" + urlencode({"kwd": isbn}),
+                    source="국립중앙도서관")
         if book["price"] is not None:
             warnings.append("국립중앙도서관의 가격은 예정가격입니다. 현재 정가와 발행일을 확인해 주세요.")
         return book

@@ -134,6 +134,45 @@ def test_nl_error_payload_falls_back(monkeypatch):
     assert "secret-key" not in str(result)
 
 
+@pytest.mark.parametrize("code", ["010", "011"])
+def test_nl_live_auth_error_shape_is_reported_before_fallback(monkeypatch, code):
+    # Characterized from the public endpoint on 2026-09-16 with no/invalid key.
+    install_transport(monkeypatch, [
+        {"RESULT": "ERROR", "ERR_CODE": code, "ERR_MESSAGE": "private-key"}, ol_book(),
+    ])
+    result = module().lookup_isbn(ISBN, nl_api_key="private-key")
+    assert result["found"] is True
+    assert result["book"]["source"] == "Open Library"
+    assert any("국립중앙도서관" in warning and "인증키" in warning for warning in result["warnings"])
+    assert "private-key" not in str(result)
+
+
+@pytest.mark.parametrize("payload", [
+    {"RESULT": "ERROR", "ERR_CODE": "000", "ERR_MESSAGE": "private-key"},
+    {"RESULT": "ERROR", "ERR_CODE": "012", "ERR_MESSAGE": "private-key"},
+    {"RESULT": "ERROR", "ERR_MESSAGE": "private-key"},
+])
+def test_nl_declared_error_is_not_treated_as_an_empty_search(monkeypatch, payload):
+    install_transport(monkeypatch, [payload, ol_book()])
+    result = module().lookup_isbn(ISBN, nl_api_key="private-key")
+    assert result["found"] is True
+    assert any("국립중앙도서관" in warning and "오류" in warning for warning in result["warnings"])
+    assert "private-key" not in str(result)
+
+
+def test_nl_link_searches_canonical_isbn_without_api_key_or_invented_record_id(monkeypatch):
+    install_transport(monkeypatch, [nl_book()])
+    result = module().lookup_isbn("0-14-032872-6", nl_api_key="private-key")
+    assert result["book"]["link"] == "https://www.nl.go.kr/NL/contents/search.do?kwd=9780140328721"
+    assert "private-key" not in result["book"]["link"]
+
+
+def test_nl_uses_available_subject_when_modern_record_has_no_kdc(monkeypatch):
+    install_transport(monkeypatch, [nl_book(KDC="", SUBJECT="<b>8</b>")])
+    result = module().lookup_isbn(ISBN, nl_api_key="private-key")
+    assert result["book"]["category"] == "8"
+
+
 def test_missing_author_and_publisher_remain_blank(monkeypatch):
     install_transport(monkeypatch, [ol_book(by_statement=None, authors=[], publishers=None)])
     result = module().lookup_isbn(ISBN)

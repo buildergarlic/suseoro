@@ -52,7 +52,7 @@ export function createLibraryApi(fetcher: Fetcher = (input, init) => fetch(input
     templates: () => json<Template[]>("/templates"),
     uploadTemplate: (file: File) => upload<Template>("/templates", file),
     exportList: (id: string, format: "xlsx" | "csv" | "html", template_id?: string) => download(`/lists/${id}/export`, `발주서.${format}`, { format, ...(template_id ? { template_id } : {}) }),
-    settings: (settings: { school_name?: string; nl_api_key?: string }) => json<Settings>("/settings", send(settings, "PATCH")),
+    settings: (settings: { school_name?: string; nl_api_key?: string; text_size?: number; row_density?: "comfortable" | "compact" }) => json<Settings>("/settings", send(settings, "PATCH")),
     backup: () => download("/backup", "수서로-백업.json"),
     restore: (file: File) => upload<{ ok: boolean }>("/restore", file),
     updates: () => json<UpdateInfo>("/updates"),

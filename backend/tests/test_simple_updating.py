@@ -10,7 +10,11 @@ def updater():
     return updating
 
 
-def release(version="2.1.0", *, data=b"MZinstaller", digest=True):
+def release(version=None, *, data=b"MZinstaller", digest=True):
+    if version is None:
+        # Download tests must exercise an available update after every app release.
+        major, minor, _patch = map(int, updater().VERSION.split("."))
+        version = f"{major}.{minor + 1}.0"
     name = f"Suseoro-Setup-{version}.exe"
     asset = {"name": name, "size": len(data),
              "browser_download_url": f"https://github.com/buildergarlic/suseoro/releases/download/v{version}/{name}"}
@@ -21,7 +25,7 @@ def release(version="2.1.0", *, data=b"MZinstaller", digest=True):
 
 
 def test_stable_new_version_requires_exact_windows_asset(monkeypatch):
-    monkeypatch.setattr(updater(), "_get_json", lambda url: release())
+    monkeypatch.setattr(updater(), "_get_json", lambda url: release("2.1.0"))
     result = updater().check_update("2.0.0")
     assert result["available"] is True
     assert result["latest_version"] == "2.1.0"
@@ -51,11 +55,12 @@ def test_metadata_failure_returns_korean_message(monkeypatch):
 
 def test_download_hash_verified_before_final_file(monkeypatch, tmp_path):
     data = b"MZinstaller"
-    monkeypatch.setattr(updater(), "_get_json", lambda url: release(data=data))
+    metadata = release(data=data)
+    monkeypatch.setattr(updater(), "_get_json", lambda url: metadata)
     monkeypatch.setattr(updater(), "_open_url", lambda url, timeout: BytesIO(data))
     result = updater().check_update()
     path = updater().download_update(result, tmp_path)
-    assert path.name == "Suseoro-Setup-2.1.0.exe"
+    assert path.name == metadata["assets"][0]["name"]
     assert path.read_bytes() == data
     assert updater().verify_download(path, tmp_path)
     path.write_bytes(b"tampered")
@@ -66,7 +71,7 @@ def test_download_hash_verified_before_final_file(monkeypatch, tmp_path):
 def test_hash_mismatch_leaves_no_executable_or_partial_file(monkeypatch, tmp_path):
     monkeypatch.setattr(updater(), "_get_json", lambda url: release())
     monkeypatch.setattr(updater(), "_open_url", lambda url, timeout: BytesIO(b"MZincorrect"))
-    with pytest.raises(updater().UpdateError):
+    with pytest.raises(updater().UpdateError, match="설치 파일 검증에 실패"):
         updater().download_update(updater().check_update(), tmp_path)
     assert not list(tmp_path.rglob("*.exe"))
     assert not list(tmp_path.rglob("*.part"))
@@ -90,13 +95,13 @@ def test_official_sidecar_used_when_release_digest_missing(monkeypatch, tmp_path
 
 def test_download_refuses_missing_checksum(monkeypatch, tmp_path):
     monkeypatch.setattr(updater(), "_get_json", lambda url: release(digest=False))
-    with pytest.raises(updater().UpdateError):
+    with pytest.raises(updater().UpdateError, match="공식 SHA-256 검증 정보가 없어"):
         updater().download_update(updater().check_update(), tmp_path)
 
 
 def test_forged_download_information_is_rechecked_against_official_metadata(monkeypatch, tmp_path):
     monkeypatch.setattr(updater(), "_get_json", lambda url: release())
-    forged = {"latest_version": "9.0.0", "available": True,
+    forged = {"latest_version": "0.0.0", "available": True,
               "asset": {"browser_download_url": "https://evil.example/payload.exe"}}
     with pytest.raises(updater().UpdateError):
         updater().download_update(forged, tmp_path)
@@ -106,7 +111,7 @@ def test_oversized_installer_is_rejected_before_download(monkeypatch, tmp_path):
     metadata = release()
     metadata["assets"][0]["size"] = 2_000_000_000
     monkeypatch.setattr(updater(), "_get_json", lambda url: metadata)
-    with pytest.raises(updater().UpdateError):
+    with pytest.raises(updater().UpdateError, match="설치 파일 크기가 허용 범위"):
         updater().download_update(updater().check_update(), tmp_path)
 
 

@@ -40,10 +40,14 @@ class CalamineCompatibilityError(RuntimeError):
 def _load_with_calamine(path: Path) -> list[tuple[str, Iterable[list[Any]]]]:
     try:
         workbook = CalamineWorkbook.from_path(path)
-        return [
-            (name, workbook.get_sheet_by_name(name).to_python())
-            for name in workbook.sheet_names
-        ]
+        try:
+            # Formula references and provenance use absolute worksheet coordinates.
+            return [
+                (name, workbook.get_sheet_by_name(name).to_python(skip_empty_area=False))
+                for name in workbook.sheet_names
+            ]
+        finally:
+            workbook.close()
     except (CalamineError, OSError, ValueError) as error:
         raise CalamineCompatibilityError(str(error)) from error
 

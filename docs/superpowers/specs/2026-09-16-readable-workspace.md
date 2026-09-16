@@ -1,0 +1,13 @@
+# SuSeoRo readable Windows workspace
+Date: 2026-09-16. Base: a5351fda (2.0.3). User authorized complete UI/UX overhaul, robust heterogeneous file ingestion, ISBN lookup, and source links.
+
+Preserve Python/FastAPI local SQLite and React/WebView2, all existing user data, APIs, backups, offline manuals, updater and voluntary support. Develop in C:/SuSeoRo/.worktrees/suseoro-ux-imports. Do not publish a release or alter the live data folder.
+
+1. Replace 9–12px pale green/cream presentation with a neutral Windows productivity workspace. Default body 16px; captions >=13px; scalable rem typography; 16/18/20px text choices and comfortable/compact row density saved locally. Do not shrink text at narrow breakpoints. Clear command bar, concise labels, tabular budget strip, sticky table headers, keyboard focus, reduced motion, high contrast. Existing-book editor becomes a right-side inspection drawer with explicit save. Keep purchase selection distinct from editing.
+2. Keep import preview before persistence. Recognize decorated/merged headers, multiple sheets, offsets, headerless data, exact ISBN10/13 and numeric formats; preserve raw data and source row. Never silently invent values or omit ambiguous candidate rows. Show count, warnings and source location before import, filter to review-needed rows; map originals without dropping unrelated sheets.
+3. National Library ISBN API is primary when a user supplies a free key. Handle actual RESULT/ERR_CODE envelopes, malformed replies, timeout and exact edition validation; no credential leakage or automatic registration. Open Library remains fallback. Aladin official OpenAPI closes Oct30 2026 and stopped new keys Sep4, so do not create new dependency.
+4. Per-book links: ISBN-based Aladin and National Library search, explicitly labeled search unless a verified detail record URL exists. Preserve existing manually supplied safe http(s) reference link. Do not build fabricated product/record IDs. Canonicalize ISBN10 to13, never link an invalid code as valid.
+5. Verify backend regressions, frontend tests/lint/typecheck/build and actual local UI at desktop/narrow/large-text settings using synthetic data. Actual failing user file not yet provided; clearly state this limit. Provide local preview/build and concise change evidence. No provider-key live success claim without a key.
+
+Sources: Microsoft Fluent typography, Windows NavigationView/command bar/list-details/keyboard official guides (research saved in current thread work/windows-design-research.md); Aladin official closure notice https://blog.aladin.co.kr/openapi/17486624; NL official ISBN API documentation.
+

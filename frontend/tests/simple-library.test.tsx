@@ -14,14 +14,14 @@ it("rounds fractional discounts at the same half-won boundary as the order file"
 });
 const book = (id: string, fields: Partial<BookFields> = {}): Book => ({ ...emptyBook(), id, title: "어린 왕자", author: "생텍쥐페리", publisher: "문학출판", isbn: "9788936434267", price: 10_000, held: false, duplicate: false, ...fields });
 function fixture(initial: Book[] = []) {
-  const state = { books: initial, deleted: null as Book | null, failSave: false, failExport: false, imports: null as null | { kind: string; rows: PreviewRow[] }, exports: null as null | Record<string, unknown>, lookupCount: 0, restoreCount: 0 };
+  const state = { display: { text_size: 16, row_density: "comfortable" }, books: initial, deleted: null as Book | null, failSave: false, failExport: false, imports: null as null | { kind: string; rows: PreviewRow[] }, exports: null as null | Record<string, unknown>, lookupCount: 0, restoreCount: 0 };
   const list: AcquisitionList = { id: "list-1", name: "2026 2학기 도서 구입", year: 2026, budget: 15_000_000, discount_percent: 10, created_at: "2026-09-15" };
   const preview: PreviewRow = { ...emptyBook(), title: "가져온 제목", isbn: "9788936434267", price: null, needs_review: true, source: "학교 추천.xlsx", raw_values: { 도서명: "가져온 제목" }, provenance: { filename: "학교 추천.xlsx", row: 2 } };
   const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = requestUrl(input).replace("/api/library", ""), method = init?.method ?? "GET";
     const payload = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
     if (path !== "/bootstrap" && method !== "GET") expect(new Headers(init?.headers).get("X-Suseoro-Token")).toBe("test-token");
-    if (path === "/bootstrap") return json({ version: "2.0.0", csrf_token: "test-token", settings: { school_name: "햇살초등학교", nl_api_key_configured: false }, lists: [list], update: null });
+    if (path === "/bootstrap") return json({ version: "2.0.0", csrf_token: "test-token", settings: { school_name: "햇살초등학교", nl_api_key_configured: false, ...state.display }, lists: [list], update: null });
     if (path === "/updates/status") return json({ available: false, phase: "idle", auto_enabled: false, auto_supported: false });
     if (path === "/shutdown") return json({ ok: true });
     if (path === "/lists/list-1" && method === "GET") {
@@ -43,7 +43,7 @@ function fixture(initial: Book[] = []) {
     if (path === "/lists/list-1/imports") { state.imports = payload as typeof state.imports; const rows = payload.rows as PreviewRow[]; if (payload.kind === "recommendations") state.books.push(...rows.map((row, index) => book(`imported-${index}`, row))); return json({ added: rows.length, warnings: [] }); }
     if (path === "/templates") return json([]);
     if (path === "/lists/list-1/export") { state.exports = payload; return state.failExport ? json({ detail: "선택한 책의 ISBN을 확인해 주세요." }, 400) : new Response("export-content", { headers: { "Content-Disposition": "attachment; filename=order.csv" } }); }
-    if (path === "/settings") return json({ school_name: payload.school_name ?? "햇살초등학교", nl_api_key_configured: !!payload.nl_api_key });
+    if (path === "/settings") { if (typeof payload.text_size === "number") state.display.text_size = payload.text_size; if (typeof payload.row_density === "string") state.display.row_density = payload.row_density; return json({ school_name: payload.school_name ?? "햇살초등학교", nl_api_key_configured: !!payload.nl_api_key, ...state.display }); }
     if (path === "/restore") { state.restoreCount += 1; return json({ ok: true }); }
     return json({ detail: `Unexpected route: ${method} ${path}` }, 404);
   });
@@ -51,9 +51,120 @@ function fixture(initial: Book[] = []) {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:export") });
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(anchorClick);
+});
+
+it("opens canonical ISBN search links from an existing book and rejects executable references", async () => {
+  const { api } = fixture([book("ten", { isbn: "0-306-40615-2", link: "javascript:alert(1)" })]);
+  render(<SimpleLibraryApp api={api} />);
+  expect(await screen.findByRole("link", { name: "어린 왕자 알라딘 ISBN 검색" })).toHaveAttribute("href", "https://www.aladin.co.kr/search/wsearchresult.aspx?SearchTarget=Book&SearchWord=9780306406157");
+  expect(screen.getByRole("link", { name: "어린 왕자 국립중앙도서관 ISBN 검색" })).toHaveAttribute("href", "https://www.nl.go.kr/NL/contents/search.do?kwd=9780306406157");
+  expect(screen.queryByRole("link", { name: "어린 왕자 참고 링크" })).not.toBeInTheDocument();
+});
+
+it("restores text and density from app data even when a new launch has no localStorage", async () => {
+  const user = userEvent.setup(), { api, state } = fixture();
+  const first = render(<SimpleLibraryApp api={api} />);
+  await screen.findByRole("region", { name: "예산 현황" });
+  const size = await screen.findByRole("combobox", { name: "글자 크기" });
+  await user.selectOptions(size, "18");
+  expect(document.documentElement.style.fontSize).toBe("18px");
+  await user.click(screen.getByRole("button", { name: "간결한 행 간격" }));
+  expect(document.querySelector(".simple-app")).toHaveClass("density-compact");
+  expect(document.documentElement.style.fontSize).toBe("18px");
+  await waitFor(() => expect(state.display).toEqual({ text_size: 18, row_density: "compact" }));
+  first.unmount();
+  localStorage.clear();
+  render(<SimpleLibraryApp api={api} />);
+  await screen.findByRole("region", { name: "예산 현황" });
+  expect(screen.getByRole("combobox", { name: "글자 크기" })).toHaveValue("18");
+  expect(document.querySelector(".simple-app")).toHaveClass("density-compact");
+});
+
+it("focuses book search with Ctrl+F without interrupting an open editor", async () => {
+  const user = userEvent.setup();
+  render(<SimpleLibraryApp api={fixture([book("one")]).api} />);
+  await screen.findByRole("button", { name: "어린 왕자" });
+  await user.keyboard("{Control>}f{/Control}");
+  expect(screen.getByRole("textbox", { name: "도서 검색" })).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "어린 왕자 수정" }));
+  const title = screen.getByLabelText(/책 제목/);
+  await user.click(title);
+  await user.keyboard("{Control>}f{/Control}");
+  expect(title).toHaveFocus();
+});
+
+it("registers the ISBN provider without losing pending ISBN input", async () => {
+  const user = userEvent.setup(), { api, transport } = fixture();
+  render(<SimpleLibraryApp api={api} />);
+  await user.click(await screen.findByRole("button", { name: "ISBN 추가" }));
+  expect(screen.getByLabelText("ISBN")).toHaveFocus();
+  await user.type(screen.getByLabelText("ISBN"), "9788936434267");
+  await user.click(screen.getByText("국립중앙도서관 인증키 등록"));
+  await user.type(screen.getByLabelText("국립중앙도서관 인증키"), "test-key-only");
+  await user.click(screen.getByRole("button", { name: "인증키 저장" }));
+  await screen.findByText("국립중앙도서관 인증키 등록됨");
+  expect(screen.getByLabelText("ISBN")).toHaveValue("9788936434267");
+  expect(screen.getByLabelText("국립중앙도서관 인증키")).toHaveValue("");
+  const saved = transport.mock.calls.find(call => requestUrl(call[0]).endsWith("/settings"));
+  const body = saved?.[1]?.body;
+  expect(JSON.parse(typeof body === "string" ? body : "{}")).toEqual({ nl_api_key: "test-key-only" });
+});
+
+it("keeps original row indexes when filtering and correcting imports and preserves diagnostics", async () => {
+  const user = userEvent.setup(), { api, state } = fixture();
+  vi.spyOn(api, "preview").mockResolvedValue({ import_id: "import-1", filename: "다른 양식.xlsx", warnings: [], rows: [
+    { ...emptyBook(), title: "정상 도서", price: 10000, source_sheet: "추천목록", source_row: 5 },
+    { ...emptyBook(), title: "확인 도서", price: null, needs_review: true, source_sheet: "추천목록", source_row: 6, warnings: ["정가 확인"] },
+  ], diagnostics: [{ kind: "preamble", sheet: "추천목록", row: 1, message: "안내문", raw_text: "2026 사서 추천도서" }] });
+  render(<SimpleLibraryApp api={api} />);
+  await user.click(await screen.findByRole("button", { name: "파일 가져오기" }));
+  await user.upload(screen.getByLabelText("가져올 파일"), new File(["fixture"], "다른 양식.xlsx"));
+  await screen.findByLabelText("2행 책 제목");
+  expect(screen.getByText("추천목록 · 원본 6행")).toBeInTheDocument();
+  await user.click(screen.getByLabelText("확인 필요한 행만 보기 (1)"));
+  expect(screen.queryByLabelText("1행 책 제목")).not.toBeInTheDocument();
+  await user.clear(screen.getByLabelText("2행 책 제목"));
+  await user.type(screen.getByLabelText("2행 책 제목"), "확인 완료 제목");
+  await user.type(screen.getByLabelText("2행 정가"), "17000");
+  await user.click(screen.getByText("안내문·반복 머리글·합계 1행 별도 보관"));
+  expect(screen.getByText("2026 사서 추천도서")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "2건 가져오기" }));
+  await waitFor(() => expect(state.imports?.rows).toHaveLength(2));
+  expect(state.imports?.rows[0].title).toBe("정상 도서");
+  expect(state.imports?.rows[1]).toMatchObject({ title: "확인 완료 제목", price: 17000, source_row: 6 });
+});
+
+it("keeps a filtered unknown-price row mounted until the entire price has been entered", async () => {
+  const user = userEvent.setup(), { api, state } = fixture();
+  vi.spyOn(api, "preview").mockResolvedValue({ import_id: "import-1", filename: "가격.xlsx", warnings: [], rows: [{ ...emptyBook(), title: "정가 미확인", price: null, needs_review: false }] });
+  render(<SimpleLibraryApp api={api} />);
+  await user.click(await screen.findByRole("button", { name: "파일 가져오기" }));
+  await user.upload(screen.getByLabelText("가져올 파일"), new File(["fixture"], "가격.xlsx"));
+  await user.click(await screen.findByLabelText("확인 필요한 행만 보기 (1)"));
+  await user.type(screen.getByLabelText("1행 정가"), "12000");
+  expect(screen.getByLabelText("1행 정가")).toHaveValue(12000);
+  expect(screen.getByLabelText("1행 정가")).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "1건 가져오기" }));
+  await waitFor(() => expect(state.imports?.rows[0].price).toBe(12000));
+});
+
+it("locks book fields while ISBN lookup is pending so metadata cannot move to another ISBN", async () => {
+  const user = userEvent.setup(), { api } = fixture([book("one", { author: "" })]);
+  let finish!: (result: Awaited<ReturnType<typeof api.lookup>>) => void;
+  vi.spyOn(api, "lookup").mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  render(<SimpleLibraryApp api={api} />);
+  await user.click(await screen.findByRole("button", { name: "어린 왕자 수정" }));
+  await user.click(screen.getByRole("button", { name: "ISBN으로 빈 정보 채우기" }));
+  expect(screen.getByLabelText("ISBN")).toBeDisabled();
+  expect(screen.getByLabelText(/책 제목/)).toBeDisabled();
+  finish({ found: true, book: { ...emptyBook(), author: "조회 저자", isbn: "9788936434267" }, warnings: [] });
+  await waitFor(() => expect(screen.getByLabelText("ISBN")).toBeEnabled());
+  expect(screen.getByLabelText("ISBN")).toHaveValue("9788936434267");
+  expect(screen.getByLabelText("저자")).toHaveValue("조회 저자");
 });
 
 describe("개인 수서 목록", () => {

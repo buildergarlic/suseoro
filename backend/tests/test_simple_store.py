@@ -22,6 +22,44 @@ def test_default_budget_and_persistent_changes(tmp_path):
     assert state['summary']['remaining'] == 14_968_000
 
 
+def test_display_preferences_default_and_survive_a_new_store_instance(tmp_path):
+    store = LibraryStore(tmp_path)
+    assert store.settings()['text_size'] == 16
+    assert store.settings()['row_density'] == 'comfortable'
+    store.update_settings({'text_size': 20, 'row_density': 'compact', 'nl_api_key': 'local-secret'})
+    reopened = LibraryStore(tmp_path)
+    assert reopened.settings()['text_size'] == 20
+    assert reopened.settings()['row_density'] == 'compact'
+    assert reopened.settings()['nl_api_key_configured'] is True
+    assert 'local-secret' not in str(reopened.settings())
+    assert reopened.backup()['settings'] == {'school_name': '우리 학교'}
+    assert 'local-secret' not in str(reopened.backup())
+    reopened.restore(reopened.backup())
+    assert reopened.settings()['text_size'] == 20
+    assert reopened.settings()['row_density'] == 'compact'
+
+
+@pytest.mark.parametrize('size', [16, 18, 20])
+def test_supported_text_sizes_are_returned_as_integers(tmp_path, size):
+    store = LibraryStore(tmp_path)
+    result = store.update_settings({'text_size': size})
+    assert result['text_size'] == size and type(result['text_size']) is int
+
+
+@pytest.mark.parametrize('patch', [
+    {'text_size': 17}, {'text_size': '18'}, {'text_size': 18.0}, {'text_size': True},
+    {'text_size': None}, {'row_density': 'dense'}, {'row_density': ''},
+    {'row_density': None}, {'row_density': []},
+])
+def test_invalid_display_preferences_do_not_partially_change_settings(tmp_path, patch):
+    store = LibraryStore(tmp_path)
+    store.update_settings({'text_size': 18, 'row_density': 'compact', 'school_name': '기존 학교'})
+    before = store.settings()
+    with pytest.raises(ValueError):
+        store.update_settings({'school_name': '변경 학교', **patch})
+    assert LibraryStore(tmp_path).settings() == before
+
+
 def test_unknown_price_is_not_a_free_book_and_export_requires_review(tmp_path):
     store = LibraryStore(tmp_path)
     list_id = store.lists()[0]['id']

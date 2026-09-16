@@ -82,6 +82,8 @@ class _BoundedPdfProbe:
 
 
 def detect_encoding(contents: bytes) -> tuple[str, str]:
+    if contents.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return "utf-16", contents.decode("utf-16")
     if contents.startswith(codecs.BOM_UTF8):
         return "utf-8-sig", contents.decode("utf-8-sig")
     for encoding in ("utf-8", "cp949", "euc-kr"):
@@ -95,6 +97,9 @@ def detect_encoding(contents: bytes) -> tuple[str, str]:
 def _detect_encoding_chunks(chunks: list[bytes], *, final: bool) -> tuple[str, str]:
     prefix = b"".join(chunks)[: len(codecs.BOM_UTF8)]
     encodings = (
+        ("utf-16",)
+        if prefix.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE))
+        else
         ("utf-8-sig",)
         if prefix.startswith(codecs.BOM_UTF8)
         else (
@@ -231,7 +236,7 @@ def _workbook_detection(
             best = FileDetection(format_name)
             best_score = 0
             for sheet_name in workbook.sheet_names:
-                rows = workbook.get_sheet_by_name(sheet_name).to_python(nrows=25)
+                rows = workbook.get_sheet_by_name(sheet_name).to_python(nrows=25, skip_empty_area=False)
                 detected = _content_detection(
                     rows,
                     format_name=format_name,
@@ -353,7 +358,7 @@ def detect_file_type(path: Path) -> FileDetection:
                 return FileDetection("MARC")
         if len(head) >= 24 and head[20:24] == b"4500":
             return FileDetection("UNKNOWN")
-    if b"\x00" in head:
+    if b"\x00" in head and not head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
         return FileDetection("UNKNOWN")
     try:
         return _text_file_detection(path)

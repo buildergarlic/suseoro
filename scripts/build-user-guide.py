@@ -61,10 +61,10 @@ def build(source: Path) -> None:
     content = content.replace("<table>", '<div class="table-wrap"><table>').replace("</table>", "</table></div>")
     page = f'''<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="학교도서관 사서를 위한 수서로 2.0 사용설명서. 설치, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
+<meta name="description" content="학교도서관 사서를 위한 수서로 2.1 사용설명서. 화면 조절, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
 <title>{escape(title)} | 수서로 도움말</title><style>{CSS}</style></head>
 <body><a class="skip" href="#main">본문으로 바로 가기</a>
-<header class="topbar"><a class="brand" href="index.html">수서로 2.0 · 도움말</a><nav aria-label="설명서 메뉴"><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
+<header class="topbar"><a class="brand" href="index.html">수서로 2.1 · 도움말</a><nav aria-label="설명서 메뉴"><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
 <div class="layout"><aside aria-label="이 페이지 목차"><details open><summary>목차</summary>{converter.toc}</details></aside>
 <main id="main"><p class="meta">수서로 {VERSION} 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button>{content}</main></div>
 <footer>수서로 · 학교도서관 사서의 도서 구입을 돕습니다. <a href="index.html">도움말 처음으로</a></footer></body></html>
@@ -94,7 +94,7 @@ if __name__ == "__main__":
             for source in files:
                 archive.write(source, source.name)
             archive.write(ROOT / "LICENSE", "LICENSE")
-            archive.writestr("먼저 읽어주세요.txt", """수서로 2.0 사용설명서
+            archive.writestr("먼저 읽어주세요.txt", """수서로 2.1 사용설명서
 
 1. 이 ZIP 파일의 압축을 모두 풀어 주세요.
 2. index.html을 더블클릭하면 설명서가 열립니다.

@@ -223,7 +223,12 @@ class LibraryStore:
     def settings(self):
         with self.connection() as db:
             rows = dict(db.execute('SELECT key,value FROM settings'))
-        return {'school_name': rows.get('school_name', '우리 학교'), 'nl_api_key_configured': bool(rows.get('nl_api_key'))}
+        size = rows.get('text_size', '16')
+        density = rows.get('row_density', 'comfortable')
+        return {'school_name': rows.get('school_name', '우리 학교'),
+                'nl_api_key_configured': bool(rows.get('nl_api_key')),
+                'text_size': int(size) if size in ('16', '18', '20') else 16,
+                'row_density': density if density in ('comfortable', 'compact') else 'comfortable'}
 
     def secret(self, name):
         with self.connection() as db:
@@ -231,13 +236,21 @@ class LibraryStore:
             return row['value'] if row else ''
 
     def update_settings(self, values):
-        allowed = {'school_name', 'nl_api_key'}
+        allowed = {'school_name', 'nl_api_key', 'text_size', 'row_density'}
         for key, value in values.items():
-            if key not in allowed or not isinstance(value, str) or len(value) > 1000:
+            if key not in allowed:
+                raise ValueError('설정값을 확인해 주세요.')
+            if key == 'text_size':
+                if type(value) is not int or value not in (16, 18, 20):
+                    raise ValueError('글자 크기는 16, 18, 20 중에서 선택해 주세요.')
+            elif key == 'row_density':
+                if not isinstance(value, str) or value not in ('comfortable', 'compact'):
+                    raise ValueError('행 간격을 다시 선택해 주세요.')
+            elif not isinstance(value, str) or len(value) > 1000:
                 raise ValueError('설정값을 확인해 주세요.')
         with self.connection() as db:
             for key, value in values.items():
-                db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (key, value.strip()))
+                db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (key, str(value).strip()))
         return self.settings()
 
     def lists(self):

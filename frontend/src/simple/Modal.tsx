@@ -7,11 +7,12 @@ export function Modal({ title, description, children, onClose, wide = false, bus
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const panel = ref.current;
-    (panel?.querySelector<HTMLElement>('input:not([type="file"]):not(:disabled),select:not(:disabled),textarea:not(:disabled)') ?? panel?.querySelector<HTMLElement>("button:not(:disabled)"))?.focus();
+    const visible = (item: HTMLElement) => !item.hidden && !item.closest('[hidden], details:not([open])') && item.getAttribute('type') !== 'hidden';
+    ([...panel?.querySelectorAll<HTMLElement>('input:not([type="file"]):not(:disabled),select:not(:disabled),textarea:not(:disabled)') ?? []].find(visible) ?? panel?.querySelector<HTMLElement>("button:not(:disabled)"))?.focus();
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape" && !busyRef.current) onClose();
       if (event.key !== "Tab" || !panel) return;
-      const items = [...panel.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex="0"]')].filter(item => !item.hidden);
+      const items = [...panel.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex="0"],summary')].filter(item => visible(item) || (item.tagName === "SUMMARY" && !item.parentElement?.parentElement?.closest('details:not([open]),[hidden]')));
       const first = items[0], last = items.at(-1);
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
