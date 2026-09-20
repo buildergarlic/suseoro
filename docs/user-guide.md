@@ -54,15 +54,134 @@
 
 ## 2. 설치하고 처음 실행하기
 
-**목적:** 자신의 PC에서 수서로를 실행합니다.
+**처음 설치하신다면 아래 ① → ② → ③ 순서대로 따라 하세요.** Windows 10/11 64비트 PC에서 설치할 수 있으며, 회원가입이나 Python 설치는 필요하지 않습니다.
 
-### 설치형으로 시작
+<nav class="install-shortcuts" aria-label="설치 안내 바로 가기">
+<a href="#install-download">① 설치 파일 받기</a>
+<a href="#install-warning">② Windows 경고창</a>
+<a href="#install-finish">③ 설치 마치기</a>
+<a href="#install-help">진행이 안 될 때</a>
+</nav>
 
-1. [수서로 공개 배포 페이지](https://github.com/buildergarlic/suseoro/releases/latest)를 엽니다.
-2. 해당 릴리스의 **Suseoro-Setup-버전.exe**를 내려받습니다. 전달받은 로컬 검토 파일은 공개 배포물과 구분해서 사용합니다.
-3. 내려받은 설치 파일을 실행하고 설치 창의 안내를 따릅니다.
-4. 설치가 끝나면 바탕화면 또는 시작 메뉴에서 **수서로**를 엽니다.
-5. 왼쪽에 **내 구입 목록**, 오른쪽에 예산과 도서 목록이 나타나는지 확인합니다.
+<p class="install-caption">아래 그림은 버튼 위치를 쉽게 찾도록 그린 <strong>예시 화면</strong>입니다. Windows·브라우저 버전과 학교 PC 설정에 따라 문구나 모양이 다를 수 있습니다.</p>
+
+<h3 id="install-download">① 설치 파일을 내려받으세요</h3>
+
+1. [수서로 공식 다운로드 페이지 열기 ↗](https://github.com/buildergarlic/suseoro/releases/latest)를 누릅니다.
+2. 페이지 아래쪽 **Assets**(첨부 파일) 목록을 찾습니다. 목록이 접혀 있으면 **Assets**를 누릅니다.
+3. **Suseoro-Setup-버전.exe**를 한 번 눌러 내려받습니다. 처음 설치할 때는 이름에 **Setup**이 있고 끝이 **.exe**인 파일을 고르세요. 버전 숫자는 달라질 수 있습니다.
+4. 내려받기가 끝나면 **파일 열기**를 누르거나, 파일 탐색기의 **다운로드** 폴더에서 해당 파일을 두 번 누릅니다.
+
+<figure class="install-figure">
+<svg viewBox="0 0 600 340" role="img" aria-labelledby="install-assets-title install-assets-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="install-assets-title">설치할 파일은 Suseoro-Setup-버전.exe입니다</title>
+<desc id="install-assets-desc">GitHub 배포 페이지의 Assets 목록 예시입니다. 첫 번째 Setup exe 파일을 강조했습니다. Portable zip은 무설치형이고 Guide zip은 설명서입니다.</desc>
+<rect x="1" y="1" width="598" height="338" rx="14" fill="#fff" stroke="#cdd9d2"/>
+<path d="M1 57H599" stroke="#cdd9d2"/><text x="24" y="37" font-size="20" fill="#425b4c">공식 배포 페이지 · 첨부 파일 예시</text>
+<text x="24" y="94" font-size="24" font-weight="700" fill="#17392f">▾ Assets</text>
+<rect x="18" y="111" width="564" height="72" rx="10" fill="#e9f3eb" stroke="#226348" stroke-width="3"/>
+<text x="34" y="142" font-size="22" font-weight="700" fill="#145436">Suseoro-Setup-2.1.2.exe</text>
+<text x="34" y="168" font-size="20" fill="#226348">↑ 이 파일을 누르세요 · 기본 설치</text>
+<text x="34" y="222" font-size="21" fill="#52675f">Suseoro-Portable-2.1.2.zip</text>
+<text x="34" y="268" font-size="21" fill="#52675f">Suseoro-Guide-2.1.2.zip</text>
+<text x="34" y="313" font-size="19" fill="#52675f">Source code · 소스 코드</text>
+</svg>
+<figcaption>그림 1. 여러 파일 중 <strong>Setup … .exe</strong>를 고르세요. Portable은 무설치형, Guide는 설명서입니다.</figcaption>
+</figure>
+
+**다운로드 중에 경고가 보이나요?** Edge에서 “일반적으로 다운로드되지 않습니다”와 같은 안내가 나오면, 먼저 다운로드 주소가 **github.com/buildergarlic/suseoro**이고 파일명이 위와 같은지 확인하세요. 직접 공식 페이지에서 받은 파일을 신뢰하는 경우, 파일 옆 **… → 유지 → 자세히 보기 → 계속 유지** 순서로 진행할 수 있습니다. 브라우저 버전에 따라 버튼 이름은 조금 다릅니다. “바이러스 발견”이나 “위험한 파일” 경고라면 진행하지 말고 학교 전산 담당자에게 확인하세요. [Microsoft의 다운로드 경고 안내 ↗](https://learn.microsoft.com/ko-kr/deployedge/microsoft-edge-security-smartscreen#파일-분석)
+
+<h3 id="install-warning">② “Windows의 PC 보호” 창이 나타나면</h3>
+
+이 창이 나오지 않으면 [③ 설치 마치기](#install-finish)로 바로 가세요.
+
+수서로 설치 파일에는 아직 코드 서명이 없어, Windows가 잘 알려지지 않은 앱의 실행을 확인하는 **SmartScreen** 경고를 표시할 수 있습니다. **직접 공식 배포 페이지에서 받은 설치 파일인지 확인한 뒤** 아래 순서로 진행하세요. 경고창 자체가 파일의 안전을 보장하는 것은 아닙니다.
+
+1. 파란색 경고창에서 밑줄이 있는 **추가 정보**를 누릅니다.
+2. 펼쳐진 **앱** 항목이 방금 받은 **Suseoro-Setup-버전.exe**인지 확인합니다. 현재 배포본은 **게시자: 알 수 없는 게시자**로 표시될 수 있습니다.
+3. 출처와 파일명을 확인했다면 아래쪽 **실행**을 누릅니다. **실행 안 함**은 설치를 취소하는 버튼입니다.
+
+<figure class="install-figure install-screen">
+<svg viewBox="0 0 600 360" role="img" aria-labelledby="install-more-title install-more-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="install-more-title">첫 번째 경고창에서 추가 정보를 누릅니다</title>
+<desc id="install-more-desc">파란 Windows의 PC 보호 창 예시입니다. 설명 아래 왼쪽의 추가 정보 링크를 노란색 테두리로 표시했습니다. 오른쪽 아래에는 실행 안 함 버튼만 있습니다.</desc>
+<rect width="600" height="360" rx="12" fill="#0067b8"/>
+<text x="28" y="56" font-size="32" fill="#fff">Windows의 PC 보호</text>
+<text x="28" y="104" font-size="21" fill="#fff">Microsoft Defender SmartScreen에서</text>
+<text x="28" y="135" font-size="21" fill="#fff">인식할 수 없는 앱의 시작을 차단했습니다.</text>
+<rect x="19" y="162" width="148" height="52" rx="5" fill="none" stroke="#ffe083" stroke-width="4"/>
+<text x="30" y="196" font-size="25" text-decoration="underline" fill="#fff">추가 정보</text>
+<path d="M246 188H180m0 0 13-10m-13 10 13 10" fill="none" stroke="#ffe083" stroke-width="3"/>
+<text x="261" y="196" font-size="24" font-weight="700" fill="#ffe083">1. 여기를 누르세요</text>
+<rect x="400" y="280" width="171" height="51" fill="#005494" stroke="#91bee1"/>
+<text x="485" y="313" text-anchor="middle" font-size="23" fill="#fff">실행 안 함</text>
+</svg>
+<figcaption>그림 2. 먼저 <strong>추가 정보</strong>를 눌러야 실행 버튼이 나타납니다.</figcaption>
+</figure>
+
+<figure class="install-figure install-screen">
+<svg viewBox="0 0 600 430" role="img" aria-labelledby="install-run-title install-run-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="install-run-title">앱 이름을 확인하고 실행을 누릅니다</title>
+<desc id="install-run-desc">추가 정보를 펼친 Windows 경고창 예시입니다. 앱은 Suseoro-Setup-2.1.2.exe, 게시자는 알 수 없는 게시자입니다. 아래 두 버튼 중 왼쪽 실행 버튼을 노란색으로 강조했습니다.</desc>
+<rect width="600" height="430" rx="12" fill="#0067b8"/>
+<text x="28" y="56" font-size="32" fill="#fff">Windows의 PC 보호</text>
+<text x="28" y="105" font-size="21" fill="#fff">실행하기 전에 앱 이름을 확인하세요.</text>
+<text x="28" y="162" font-size="22" fill="#fff">앱: Suseoro-Setup-2.1.2.exe</text>
+<text x="28" y="200" font-size="22" fill="#fff">게시자: 알 수 없는 게시자</text>
+<text x="28" y="264" font-size="23" font-weight="700" fill="#ffe083">2. 출처와 파일명 확인 후 ‘실행’</text>
+<path d="M315 280V325m0 0-10-13m10 13 10-13" fill="none" stroke="#ffe083" stroke-width="3"/>
+<rect x="233" y="340" width="155" height="60" rx="4" fill="none" stroke="#ffe083" stroke-width="4"/>
+<rect x="240" y="347" width="141" height="46" fill="#005494" stroke="#91bee1"/>
+<text x="310" y="378" text-anchor="middle" font-size="24" fill="#fff">실행</text>
+<rect x="408" y="347" width="163" height="46" fill="#005494" stroke="#91bee1"/>
+<text x="489" y="378" text-anchor="middle" font-size="23" fill="#fff">실행 안 함</text>
+</svg>
+<figcaption>그림 3. <strong>추가 정보 → 앱 이름 확인 → 실행</strong>. 그림의 버전 숫자는 예시입니다.</figcaption>
+</figure>
+
+**실행 버튼이 없다면** 아래 [진행이 안 될 때](#install-help)를 확인하세요. SmartScreen의 동작은 [Microsoft 공식 안내 ↗](https://learn.microsoft.com/ko-kr/windows/apps/package-and-deploy/publish-first-app#6단계-새-앱에-대한-smartscreen-처리)에서도 볼 수 있습니다.
+
+<h3 id="install-finish">③ 설치를 마치고 수서로를 여세요</h3>
+
+1. **수서로 설치** 창이 열리면 아래쪽 진행 버튼을 눌러 설치를 시작합니다.
+2. 파일을 설치하는 동안 기다립니다. 일반 설치는 관리자 권한 없이 현재 Windows 사용자 계정에 설치됩니다.
+3. 완료 화면에서 **수서로 실행**에 체크한 채 **마침**을 누릅니다.
+4. 이후에는 바탕화면의 **수서로** 아이콘을 두 번 누르거나, Windows **시작** 메뉴에서 **수서로**를 검색해 엽니다.
+
+<figure class="install-figure">
+<svg viewBox="0 0 600 350" role="img" aria-labelledby="install-done-title install-done-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="install-done-title">설치 완료 화면에서 수서로 실행을 체크하고 마침을 누릅니다</title>
+<desc id="install-done-desc">설치 마법사의 완료 화면을 단순하게 그린 예시입니다. 수서로 실행 체크 상자가 선택되어 있고 오른쪽 아래 마침 버튼을 초록색 테두리로 강조했습니다.</desc>
+<rect x="1" y="1" width="598" height="348" rx="12" fill="#fff" stroke="#cdd9d2"/>
+<path d="M1 51H599" stroke="#cdd9d2"/><text x="23" y="34" font-size="21" fill="#17392f">수서로 설치</text>
+<rect x="1" y="52" width="127" height="222" fill="#e9f3eb"/>
+<path d="M31 129q17-8 34 3 17-11 34-3v68q-17-8-34 3-17-11-34-3Zm34 3v68" fill="none" stroke="#226348" stroke-width="4"/>
+<text x="154" y="105" font-size="28" font-weight="700" fill="#17392f">설치가 완료되었습니다</text>
+<text x="154" y="147" font-size="21" fill="#52675f">마침을 누르면 수서로가 열립니다.</text>
+<rect x="155" y="185" width="25" height="25" rx="3" fill="#226348"/>
+<path d="m160 197 5 6 11-14" fill="none" stroke="#fff" stroke-width="3"/>
+<text x="191" y="206" font-size="24" fill="#17392f">수서로 실행</text>
+<path d="M1 274H599" stroke="#cdd9d2"/>
+<text x="25" y="319" font-size="22" fill="#226348">체크를 확인하고 마침 →</text>
+<rect x="409" y="287" width="168" height="49" rx="5" fill="#e9f3eb" stroke="#226348" stroke-width="3"/>
+<text x="493" y="319" text-anchor="middle" font-size="24" font-weight="700" fill="#17392f">마침</text>
+</svg>
+<figcaption>그림 4. <strong>수서로 실행</strong>을 체크하고 <strong>마침</strong>을 누르세요.</figcaption>
+</figure>
+
+**설치 끝!** 왼쪽에 **내 구입 목록**, 오른쪽에 예산과 도서 목록이 나타나면 사용할 준비가 된 것입니다. 이어서 [학교 이름 설정](#3-학교-이름과-isbn-조회-설정)을 하거나 [그림으로 사용법 익히기](visual-guide.html)를 보세요.
+
+<h3 id="install-help">진행이 안 될 때</h3>
+
+| 지금 보이는 상황 | 이렇게 하세요 |
+|---|---|
+| **실행** 버튼이 없거나 “관리자가 차단했습니다”라고 나옴 | 학교 PC의 보안 정책일 수 있습니다. 창을 닫고 전산 담당자에게 공식 다운로드 주소와 경고 문구를 보여 주세요. |
+| **사용자 계정 컨트롤**에서 관리자 암호를 요구함 | 수서로의 기본 설치는 관리자 권한을 요구하지 않습니다. 실행한 파일을 다시 확인하고, 학교 전산 담당자에게 문의하세요. |
+| Smart App Control 또는 백신이 실행을 차단함 | 보안 기능을 끄거나 예외를 추가하지 말고, 전산 담당자에게 설치 가능 여부를 확인하세요. |
+| “수서로가 실행 중입니다”라고 나옴 | 열려 있는 수서로 창을 닫고 설치 창에서 **다시 시도**를 누릅니다. |
+| 설치 후 화면이 열리지 않거나 WebView2 안내가 나옴 | 시작 메뉴의 **수서로 (브라우저)**를 실행해 보세요. WebView2 설치가 필요하면 학교 전산 담당자에게 문의하세요. |
+
+이미 설치한 수서로의 새 버전은 프로그램의 **학교 설정 · 백업 → 업데이트 확인**에서도 확인할 수 있습니다. [업데이트 안내 보기](#15-업데이트와-프로그램-종료)
 
 ### 설치 없이 시작
 
