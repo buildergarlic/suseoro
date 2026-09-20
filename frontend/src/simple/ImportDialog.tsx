@@ -13,8 +13,8 @@ function sourceLocation(row: PreviewRow) {
   return [sheet, number ? `원본 ${number}행` : "", page ? `${page}쪽` : ""].filter(Boolean).join(" · ");
 }
 const columns = [{ key: "title", label: "책 제목" }, { key: "author", label: "저자" }, { key: "publisher", label: "출판사" }, { key: "isbn", label: "ISBN" }, { key: "price", label: "정가" }, { key: "quantity", label: "수량" }, { key: "source", label: "추천 출처" }, { key: "category", label: "분류" }, { key: "requester", label: "요청자" }, { key: "audience", label: "대상" }, { key: "priority", label: "우선순위" }, { key: "note", label: "메모" }, { key: "published_date", label: "발행일" }, { key: "link", label: "참고 링크" }];
-export function ImportDialog({ api, listId, onClose, onImported }: { api: LibraryApi; listId: string; onClose: () => void; onImported: (message: string) => Promise<void> }) {
-  const [preview, setPreview] = useState<ImportPreview | null>(null), [kind, setKind] = useState<"recommendations" | "holdings">("recommendations");
+export function ImportDialog({ api, listId, initialKind = "recommendations", onClose, onImported }: { api: LibraryApi; listId: string; initialKind?: "recommendations" | "holdings"; onClose: () => void; onImported: (message: string) => Promise<void> }) {
+  const [preview, setPreview] = useState<ImportPreview | null>(null), [kind, setKind] = useState<"recommendations" | "holdings">(initialKind);
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [editing, setEditing] = useState<number | null>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [lookupProgress, setLookupProgress] = useState(""), [lookupNotice, setLookupNotice] = useState("");

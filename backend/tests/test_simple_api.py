@@ -58,7 +58,7 @@ def test_key_never_echoed_in_settings_or_backup(client):
 def test_display_preferences_save_through_api_and_survive_a_new_app_port(tmp_path, size):
     with TestClient(create_app(tmp_path), base_url='http://127.0.0.1:3847') as first:
         initial = first.get('/api/library/bootstrap').json()
-        assert initial['settings']['text_size'] == 18
+        assert initial['settings']['text_size'] == 16
         assert initial['settings']['row_density'] == 'comfortable'
         response = first.patch('/api/library/settings', headers={'X-Suseoro-Token': initial['csrf_token']}, json={'text_size': size, 'row_density': 'compact'})
         assert response.status_code == 200

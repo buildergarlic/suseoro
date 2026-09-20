@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="학교도서관 사서를 위한 수서로 2.1.1 사용설명서. 글자 크기, 책 표지, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
-<title>수서로 2.1.1 상세 사용설명서 | 수서로 도움말</title><style>
+<meta name="description" content="학교도서관 사서를 위한 수서로 2.1.2 사용설명서. 글자 크기, 책 표지, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
+<title>수서로 2.1.2 상세 사용설명서 | 수서로 도움말</title><style>
 :root{color-scheme:light;--ink:#17392f;--muted:#52675f;--paper:#fffcf5;--line:#d9e1d8;--green:#226348}
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:1rem}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:16px;line-height:1.85;word-break:keep-all;overflow-wrap:anywhere}
@@ -21,7 +21,7 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 @media print{@page{size:A4;margin:16mm 15mm}body{background:white;font-size:10pt;line-height:1.6;color:black}.topbar,aside,.skip,.print-button,footer{display:none}.layout{display:block;max-width:none;margin:0;padding:0}h1{font-size:24pt}h2{font-size:17pt;margin:26px 0 12px;break-after:avoid}h3{font-size:13pt;break-after:avoid}a{color:inherit;text-decoration:none}blockquote{border:1px solid #aaa;background:none}table{font-size:9pt}.table-wrap{overflow:visible}tr{break-inside:avoid}code{font-size:9pt}p,li{orphans:3;widows:3}}
 </style></head>
 <body><a class="skip" href="#main">본문으로 바로 가기</a>
-<header class="topbar"><a class="brand" href="index.html">수서로 2.1.1 · 도움말</a><nav aria-label="설명서 메뉴"><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
+<header class="topbar"><a class="brand" href="index.html">수서로 2.1.2 · 도움말</a><nav aria-label="설명서 메뉴"><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
 <div class="layout"><aside aria-label="이 페이지 목차"><details open><summary>목차</summary><div class="toc">
 <ul>
 <li><a href="#1-수서로로-하는-일">1. 수서로로 하는 일</a></li>
@@ -44,10 +44,10 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 </ul>
 </div>
 </details></aside>
-<main id="main"><p class="meta">수서로 2.1.1 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button><h1 id="수서로-211-상세-사용설명서">수서로 2.1.1 상세 사용설명서</h1>
+<main id="main"><p class="meta">수서로 2.1.2 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button><h1 id="수서로-212-상세-사용설명서">수서로 2.1.2 상세 사용설명서</h1>
 <p><strong>학교도서관 사서를 위한 도서 구입 목록 안내서</strong></p>
-<p>대상 버전: 수서로 2.1.1 · Windows 10/11 64비트</p>
-<p>2.1.1은 공개 버전 2.0.3 이후의 화면·글자 크기·표지·추천 파일·ISBN 조회 개선을 모은 버전입니다. 2.1.0은 로컬 검토만 진행했으며 공개하지 않았습니다.</p>
+<p>대상 버전: 수서로 2.1.2 · Windows 10/11 64비트</p>
+<p>2.1.2은 공개 버전 2.0.3 이후의 화면·글자 크기·표지·추천 파일·ISBN 조회 개선을 모은 버전입니다. 2.1.0은 로컬 검토만 진행했으며 공개하지 않았습니다.</p>
 <p>수서로는 추천받은 책을 한곳에 모으고, 필요한 책을 선택하고, 예산에 맞춘 발주서를 만드는 도구입니다. 회원가입이나 별도 서버 준비 없이 내 PC에서 사용합니다.</p>
 <p>처음이라면 <a href="visual-guide.html">그림으로 보는 쉬운 안내</a>를 먼저 보세요. 짧은 안내는 <a href="quick-start.html">이것만 알면 됩니다</a>에 있습니다. 이 설명서는 실제 화면의 버튼 이름을 <strong>굵게</strong> 표시합니다.</p>
 <p><strong>프로그램 안에서 보기:</strong> 왼쪽 아래 <strong>사용설명서</strong>를 누릅니다. <strong>그림 안내</strong>, <strong>상세 설명서</strong>, <strong>간단한 사용법</strong> 중 필요한 내용을 고르세요. <strong>닫기</strong>를 누르거나 <code>Esc</code>를 누르면 작업하던 목록으로 돌아옵니다. 설명서와 예산 연습은 설치 파일에 들어 있어 인터넷 없이도 이용할 수 있습니다. 이 기능은 2.0.1부터 제공하며, 2.0.0 사용자는 <strong>학교 설정 · 백업 → 업데이트 확인 → 업데이트 설치</strong>로 업데이트하세요.</p>
@@ -249,15 +249,15 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 <p><strong>기억할 점:</strong> 탭과 검색은 <strong>보이는 행만 바꾸는 기능</strong>입니다. 검색 결과에 보이지 않는 책도 구입에 체크되어 있으면 발주서에 포함됩니다. 발주 전 <strong>구입 선택</strong> 탭에서 검색어를 지우고 전체 선택 목록을 확인하세요.</p>
 <h3 id="글자-크기행-간격빠른-검색">글자 크기·행 간격·빠른 검색</h3>
 <ul>
-<li>기본 글자 크기는 <strong>18px</strong>입니다. 오른쪽 위 <strong>글자 크기</strong>의 <strong>A− / A+</strong>를 누르거나 선택 상자에서 <strong>16·18·20·22·24px</strong>를 고르세요. 앱 화면의 글자 크기가 바뀝니다.</li>
+<li>기본 글자 크기는 <strong>16px</strong>입니다. 오른쪽 위 <strong>글자 크기</strong>의 <strong>A− / A+</strong>를 누르거나 선택 상자에서 <strong>16·18·20·22·24px</strong>를 고르세요. 앱 화면의 글자 크기가 바뀝니다.</li>
 <li><strong>간결하게</strong>를 켜면 도서 행의 여백이 줄어 한 화면에서 더 많은 책을 볼 수 있습니다. 다시 누르면 넉넉한 간격으로 돌아옵니다.</li>
-<li>이 두 설정은 이 PC의 앱 자료에 저장되어 프로그램을 종료한 뒤 다시 열어도 복원됩니다. 이미 선택해 둔 16·18·20px 크기는 유지하며, 새로 시작하는 경우에 18px를 사용합니다. 다른 PC로 옮기는 학교 자료 백업에는 화면 설정이 포함되지 않습니다.</li>
+<li>이 두 설정은 이 PC의 앱 자료에 저장되어 프로그램을 종료한 뒤 다시 열어도 복원됩니다. 이미 선택해 둔 16·18·20px 크기는 유지하며, 새로 시작하는 경우에 16px를 사용합니다. 다른 PC로 옮기는 학교 자료 백업에는 화면 설정이 포함되지 않습니다.</li>
 <li>창 가장자리를 끌어 넓히거나 제목 표시줄의 <strong>최대화</strong>를 누르면 더 넓게 볼 수 있습니다. 큰 글자나 좁은 창에서 열이 다 보이지 않으면 도서 표 안의 가로 스크롤로 정가·수량·수정 열을 확인하세요. 글자 설정은 발주서의 가격·수량을 바꾸지 않습니다.</li>
 <li>별도 창이 열려 있지 않은 목록 화면에서 <code>Ctrl+F</code>를 누르면 <strong>도서 검색</strong>으로 이동합니다. 제목·저자·ISBN을 입력하고, <strong>검색어 지우기</strong>로 전체 목록을 다시 봅니다.</li>
 <li>책 제목이나 <strong>수정</strong>을 누르면 오른쪽 편집 영역이 열립니다. 고친 값은 <strong>저장</strong>을 눌러야 반영됩니다.</li>
 </ul>
 <h3 id="책-표지-보기">책 표지 보기</h3>
-<p>유효한 ISBN이 있으면 책 제목 왼쪽에 Open Library 또는 Google Books가 제공하는 표지 썸네일을 표시합니다. ISBN이 없거나 잘못되었거나, 제공되는 표지가 없거나 연결에 실패하면 <strong>표지 없음</strong>이 보입니다. 표지 유무는 목록 저장·도서 선택·발주서 작성에 영향을 주지 않습니다.</p>
+<p>유효한 ISBN이 있으면 <strong>알라딘 공개 상품 페이지의 ISBN을 대조한 표지</strong>를 우선 표시합니다. API 키는 필요하지 않으며 종료 예정인 OpenAPI를 사용하지 않습니다. 알라딘 표지를 가져오지 못하면 Open Library·Google Books를 확인합니다. 연결 실패 시 세 차례 자동 재시도한 뒤 <strong>표지 재조회</strong> 버튼을 표시합니다. ISBN이 없거나 잘못된 경우에는 <strong>표지 없음</strong>으로 표시합니다. 공개 페이지 구조·접근 정책과 인터넷 상태에 따라 표지 제공이 달라질 수 있습니다. 표지 유무는 목록 저장·도서 선택·발주서 작성에 영향을 주지 않습니다.</p>
 <p>표지를 조회할 때 해당 ISBN을 외부 제공기관에 전송합니다. 표지 조회에는 인터넷이 필요하며 학교명·요청자·메모·추천 문서 전체를 보내지 않습니다. <strong>표지는 책을 알아보기 위한 참고 그림이며 상품·판본·정가가 맞다는 확정 표시가 아닙니다.</strong> 실제 ISBN과 서지정보를 함께 확인하세요.</p>
 <h3 id="개발자-후원">개발자 후원</h3>
 <p>왼쪽 아래 <strong>개발자 후원</strong>을 누르면 개발자 소개와 후원 안내를 볼 수 있습니다. <strong>GitHub에서 후원하기 ↗</strong>를 누르면 브라우저에서 <a href="https://github.com/sponsors/buildergarlic">빌더갈릭의 GitHub Sponsors</a>가 열립니다. 금액과 후원 방식은 후원 페이지에서 직접 선택하세요. 후원은 선택 사항이며 모든 기능은 후원 없이도 사용할 수 있습니다. <strong>목록으로 돌아가기</strong> 또는 <code>Esc</code>로 안내를 닫으면 작업 중인 목록으로 돌아옵니다.</p>
@@ -1165,5 +1165,7 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 </ul>
 <p>학생·교사 실명, 연락처, 인증키, 실제 학교 백업 전체를 공개 게시물에 올리지 마세요. 문제를 재현할 수 있다면 개인정보를 지우고 <strong>가상의 책 몇 행으로 만든 예제</strong>를 준비하는 편이 좋습니다.</p>
 <hr />
-<p><a href="visual-guide.html">그림으로 보는 쉬운 안내</a> · <a href="quick-start.html">간단한 사용법</a> · <a href="https://github.com/buildergarlic/suseoro">수서로 저장소</a> · <a href="https://github.com/buildergarlic/suseoro/releases/latest">최신 버전</a></p></main></div>
+<p><a href="visual-guide.html">그림으로 보는 쉬운 안내</a> · <a href="quick-start.html">간단한 사용법</a> · <a href="https://github.com/buildergarlic/suseoro">수서로 저장소</a> · <a href="https://github.com/buildergarlic/suseoro/releases/latest">최신 버전</a></p>
+<h3 id="우리-도서관-소장-여부-확인">우리 도서관 소장 여부 확인</h3>
+<p>책 제목 바로 아래에서 <strong>소장 중 · 중복</strong>, <strong>소장목록에 없음</strong>, <strong>소장 확인 전</strong>, <strong>소장 대조 불가</strong>를 구분합니다. 소장 일치는 ISBN 또는 제목·저자 일치 근거를 함께 표시하며, <strong>소장 중복</strong> 필터로 해당 책만 볼 수 있습니다. 소장자료를 가져오지 않았다면 미소장으로 판정하지 않습니다. 목록 위 <strong>소장목록 가져오기 / 갱신</strong>으로 최신 DLS 소장자료를 올리세요. 결과는 업로드한 소장자료 기준이며 판본별 ISBN이 다르면 별도 도서로 취급합니다. 구입 선택 여부는 직접 결정합니다.</p></main></div>
 <footer>수서로 · 학교도서관 사서의 도서 구입을 돕습니다. <a href="index.html">도움말 처음으로</a></footer></body></html>

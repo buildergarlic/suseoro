@@ -223,11 +223,11 @@ class LibraryStore:
     def settings(self):
         with self.connection() as db:
             rows = dict(db.execute('SELECT key,value FROM settings'))
-        size = rows.get('text_size', '18')
+        size = rows.get('text_size', '16')
         density = rows.get('row_density', 'comfortable')
         return {'school_name': rows.get('school_name', '우리 학교'),
                 'nl_api_key_configured': bool(rows.get('nl_api_key')),
-                'text_size': int(size) if size in ('16', '18', '20', '22', '24') else 18,
+                'text_size': int(size) if size in ('16', '18', '20', '22', '24') else 16,
                 'row_density': density if density in ('comfortable', 'compact') else 'comfortable'}
 
     def secret(self, name):
@@ -349,6 +349,9 @@ class LibraryStore:
             title_key = (normalize_key(b['title']), normalize_author(b['author']))
             title_matches = unidentified_titles if isbn else owned_titles
             b['held'] = bool(isbn in owned_isbns or (all(title_key) and title_key in title_matches))
+            b['held_match'] = 'isbn' if isbn in owned_isbns else 'title_author' if b['held'] else None
+            b['holdings_status'] = ('unchecked' if not holdings else 'held' if b['held']
+                                    else 'not_held' if isbn or all(title_key) else 'uncheckable')
             b['duplicate'] = counts[identity] > 1 and bool(isbn or all(title_key))
             messages = list(b.get('warnings', []))
             if b['isbn'] and not isbn:
@@ -370,7 +373,7 @@ class LibraryStore:
                    'missing_price_count': sum(b['price'] is None for b in selected),
                    'review_count': sum(b['needs_review'] or bool(b['warnings']) for b in books),
                    'held_count': sum(b['held'] for b in books), 'duplicate_count': sum(b['duplicate'] for b in books)}
-        return {'list': info, 'books': books, 'summary': summary}
+        return {'list': info, 'books': books, 'summary': summary, 'holdings_count': len(holdings)}
 
     def export_selection(self, list_id):
         state = self.list_state(list_id)

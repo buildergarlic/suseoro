@@ -22,9 +22,27 @@ def test_default_budget_and_persistent_changes(tmp_path):
     assert state['summary']['remaining'] == 14_968_000
 
 
+def test_holdings_status_distinguishes_unchecked_missing_and_exact_matches(tmp_path):
+    store = LibraryStore(tmp_path)
+    list_id = store.lists()[0]['id']
+    store.add_book(list_id, {'title': '소장 책', 'author': '김작가', 'isbn': '9791160517408'})
+    assert store.list_state(list_id)['books'][0]['holdings_status'] == 'unchecked'
+    store.replace_holdings([{'title': '다른 책', 'author': '박작가', 'isbn': '9780140328721'}])
+    assert store.list_state(list_id)['books'][0]['holdings_status'] == 'not_held'
+    store.replace_holdings([{'title': '소장 책', 'author': '김작가', 'isbn': '9791160517408'}])
+    state = store.list_state(list_id)
+    assert state['holdings_count'] == 1
+    assert state['books'][0]['holdings_status'] == 'held'
+    assert state['books'][0]['held_match'] == 'isbn'
+    store.replace_holdings([{'title': '소장 책', 'author': '김작가'}])
+    assert store.list_state(list_id)['books'][0]['held_match'] == 'title_author'
+    store.add_book(list_id, {'title': '정보 부족'})
+    assert store.list_state(list_id)['books'][1]['holdings_status'] == 'uncheckable'
+
+
 def test_display_preferences_default_and_survive_a_new_store_instance(tmp_path):
     store = LibraryStore(tmp_path)
-    assert store.settings()['text_size'] == 18
+    assert store.settings()['text_size'] == 16
     assert store.settings()['row_density'] == 'comfortable'
     store.update_settings({'text_size': 20, 'row_density': 'compact', 'nl_api_key': 'local-secret'})
     reopened = LibraryStore(tmp_path)
@@ -59,7 +77,7 @@ def test_unreadable_saved_text_size_falls_back_to_readable_default(tmp_path):
     store = LibraryStore(tmp_path)
     with store.connection() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('text_size', 'invalid'))
-    assert LibraryStore(tmp_path).settings()['text_size'] == 18
+    assert LibraryStore(tmp_path).settings()['text_size'] == 16
 
 
 @pytest.mark.parametrize('patch', [

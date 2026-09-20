@@ -72,8 +72,29 @@ it("loads canonical ISBN thumbnails and keeps an accessible placeholder when no 
   expect(cover).toHaveAttribute("loading", "lazy");
   expect(screen.getByRole("img", { name: "ISBN 없는 책 표지 없음" })).toBeInTheDocument();
   fireEvent.error(cover);
-  expect(screen.getByRole("img", { name: "어린 왕자 표지 없음" })).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("재시도 중");
   expect(screen.queryByRole("img", { name: "어린 왕자 표지" })).not.toBeInTheDocument();
+});
+
+it("shows holdings beside titles and filters library duplicates independently of purchase selection", async () => {
+  const user = userEvent.setup();
+  const held = { ...book("held", { title: "소장된 책", selected: true }), held: true, holdings_status: "held" as const, held_match: "isbn" as const };
+  const absent = { ...book("absent", { title: "새 책" }), holdings_status: "not_held" as const };
+  render(<SimpleLibraryApp api={fixture([held, absent]).api} />);
+  const title = await screen.findByRole("button", { name: "소장된 책" });
+  expect(within(title.closest("td")!).getByText("소장 중 · 중복")).toBeInTheDocument();
+  expect(screen.getByText("ISBN 일치")).toBeInTheDocument();
+  expect(screen.getByText("소장목록에 없음")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /소장 중복/ }));
+  expect(screen.queryByRole("button", { name: "새 책" })).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "소장된 책 구입 선택" })).toBeChecked();
+});
+
+it("does not claim a book is absent before holdings are uploaded", async () => {
+  render(<SimpleLibraryApp api={fixture([book("unchecked")]).api} />);
+  expect(await screen.findByText("소장 확인 전")).toBeInTheDocument();
+  expect(screen.queryByText("소장목록에 없음")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "소장목록 가져오기" })).toBeInTheDocument();
 });
 
 it("lets users enlarge text to 24px with visible controls and persists the exact choice", async () => {

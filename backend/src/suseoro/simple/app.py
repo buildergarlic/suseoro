@@ -113,7 +113,7 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
     def cover_image(isbn: str):
         image = app.state.covers.get(isbn)
         if image is None:
-            return Response(status_code=404, headers={'Cache-Control': 'private, max-age=120'})
+            return Response(status_code=404, headers={'Cache-Control': 'no-store'})
         return Response(image.data, media_type='image/jpeg', headers={
             'Cache-Control': 'private, max-age=86400', 'X-Cover-Source': image.source,
         })

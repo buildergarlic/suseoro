@@ -13,6 +13,11 @@ import pytest
 from suseoro.simple import covers
 from suseoro.simple.app import create_app
 
+@pytest.fixture(autouse=True)
+def isolate_legacy_providers(monkeypatch):
+    monkeypatch.setattr(covers.CoverService, '_aladin', lambda *args: None)
+
+
 ISBN = '9788936434267'
 OTHER = '9780140328721'
 
@@ -61,13 +66,14 @@ def test_endpoint_returns_validated_jpeg_and_reuses_cover(tmp_path, monkeypatch)
     assert len(calls) == 1 and '?default=false' in calls[0]
 
 
-def test_missing_cover_returns_404_and_is_negatively_cached(tmp_path, monkeypatch):
-    calls = transport(monkeypatch, [not_found(), (b'suseoroCover({});', 'application/javascript')])
+def test_missing_cover_returns_uncached_404_for_retry(tmp_path, monkeypatch):
+    calls = transport(monkeypatch, [not_found(), (b'suseoroCover({});', 'application/javascript')] * 2)
     with TestClient(create_app(tmp_path), base_url='http://127.0.0.1:3847') as client:
         for _ in range(2):
             response = client.get('/api/library/covers/' + ISBN)
             assert response.status_code == 404 and response.content == b''
-    assert len(calls) == 2
+            assert response.headers['cache-control'] == 'no-store'
+    assert len(calls) == 4
 
 
 def test_exact_google_isbn_fallback_fetches_only_allowlisted_thumbnail(monkeypatch):

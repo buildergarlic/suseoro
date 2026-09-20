@@ -7,7 +7,11 @@ export interface BookFields {
   priority: "high" | "normal" | "low"; source: string; note: string; published_date: string;
   link: string; needs_review: boolean; warnings: string[];
 }
-export interface Book extends BookFields { id: string; held: boolean; duplicate: boolean }
+export interface Book extends BookFields {
+  id: string; held: boolean; duplicate: boolean;
+  holdings_status?: "held" | "not_held" | "unchecked" | "uncheckable";
+  held_match?: "isbn" | "title_author" | null;
+}
 export interface PreviewRow extends BookFields {
   raw_values?: Record<string, unknown>;
   raw?: string | Record<string, unknown>; raw_text?: string; provenance?: unknown;
@@ -17,7 +21,7 @@ export interface Summary {
   selected_count: number; total_quantity: number; list_total: number; order_total: number;
   remaining: number; missing_price_count: number; review_count: number; held_count: number; duplicate_count: number;
 }
-export interface ListDetail { list: AcquisitionList; books: Book[]; summary: Summary }
+export interface ListDetail { list: AcquisitionList; books: Book[]; summary: Summary; holdings_count?: number }
 export interface Settings { school_name: string; nl_api_key_configured: boolean; text_size?: number; row_density?: "comfortable" | "compact" }
 export interface UpdateInfo {
   current_version?: string; latest_version?: string; available: boolean; url?: string; message?: string;

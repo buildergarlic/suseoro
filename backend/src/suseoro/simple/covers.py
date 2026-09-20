@@ -1,4 +1,7 @@
-"""Bounded ISBN-only thumbnails for the local desktop, without provider keys.
+"""Bounded ISBN-only thumbnails, preferring Aladin's public product metadata.
+
+The product page must identify the requested ISBN before its cover is used.
+No API key is required; the retiring Aladin OpenAPI is not used.
 
 Official sources checked 2026-09-16:
 https://openlibrary.org/dev/docs/api/covers
@@ -16,6 +19,7 @@ from __future__ import annotations
 from collections import OrderedDict, deque
 from concurrent.futures import Future, TimeoutError as FutureTimeout
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from io import BytesIO
 import json
 import re
@@ -29,20 +33,40 @@ from PIL import Image
 from suseoro.catalog.normalization import canonical_isbn13
 
 REQUEST_TIMEOUT = 2.5
-LOOKUP_BUDGET = 7.0
+LOOKUP_BUDGET = 13.0
 MAX_WORKERS = 4
 MAX_PENDING = 32
 MAX_IMAGE_BYTES = 1_000_000
 MAX_JSON_BYTES = 100_000
+MAX_PAGE_BYTES = 2_000_000
 MAX_IMAGE_PIXELS = 2_000_000
 MAX_CACHE_ENTRIES = 256
 MAX_CACHE_BYTES = 16 * 1024 * 1024
 POSITIVE_TTL = 24 * 60 * 60
-NEGATIVE_TTL = 120
 OPEN_LIBRARY_LIMIT = 90
 GOOGLE_LIMIT = 60
+ALADIN_LIMIT = 120
 RATE_WINDOW = 300
 _GOOGLE_HOSTS = {'books.google.com', 'books.googleusercontent.com'}
+
+
+def _aladin_image(url: str) -> bool:
+    parsed = urlsplit(url)
+    return parsed.hostname == 'image.aladin.co.kr' and bool(re.fullmatch(
+        r'/product/\d+/\d+/cover(?:\d+)?/[^/]+\.(?:jpg|jpeg|png|webp)', parsed.path, re.IGNORECASE))
+
+
+class ProductMetadata(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.values: dict[str, str] = {}
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'meta':
+            attributes = dict(attrs)
+            key = attributes.get('property') or attributes.get('name')
+            if key in ('books:isbn', 'og:barcode', 'og:image'):
+                self.values[key] = attributes.get('content') or ''
 
 
 def _allowed_url(url: str) -> str:
@@ -51,6 +75,8 @@ def _allowed_url(url: str) -> str:
     parsed = urlsplit(url)
     host = parsed.hostname or ''
     allowed = (host in {'covers.openlibrary.org', *_GOOGLE_HOSTS}
+               or (host == 'www.aladin.co.kr' and parsed.path.lower() == '/shop/wproduct.aspx')
+               or _aladin_image(url)
                or re.fullmatch(r'ia\d{6}\.(?:us|eu)\.archive\.org', host)
                or (host == 'archive.org' and parsed.path.startswith('/download/')))
     if (parsed.scheme != 'https' or not allowed or parsed.username or parsed.password
@@ -133,7 +159,7 @@ class CoverService:
         self._cache: OrderedDict[str, tuple[float, CoverImage | None]] = OrderedDict()
         self._cache_bytes = 0
         self._inflight: dict[str, Future] = {}
-        self._requests = {'openlibrary': deque(), 'google': deque()}
+        self._requests = {'aladin': deque(), 'openlibrary': deque(), 'google': deque()}
 
     def _permit(self, provider: str) -> bool:
         with self._lock:
@@ -141,13 +167,43 @@ class CoverService:
             history = self._requests[provider]
             while history and history[0] <= now - RATE_WINDOW:
                 history.popleft()
-            limit = OPEN_LIBRARY_LIMIT if provider == 'openlibrary' else GOOGLE_LIMIT
+            limit = {'aladin': ALADIN_LIMIT, 'openlibrary': OPEN_LIBRARY_LIMIT, 'google': GOOGLE_LIMIT}[provider]
             if len(history) >= limit:
                 return False
             history.append(now)
             return True
 
+    def _aladin(self, isbn: str, deadline: float) -> CoverImage | None:
+        if not self._permit('aladin'):
+            return None
+        try:
+            page, mime = _fetch_bytes(f'https://www.aladin.co.kr/shop/wproduct.aspx?ISBN={isbn}',
+                                      deadline=deadline, max_bytes=MAX_PAGE_BYTES)
+            if mime not in ('text/html', 'application/xhtml+xml'):
+                return None
+            metadata = ProductMetadata()
+            # Only ASCII metadata is needed; Korean page encoding does not affect it.
+            metadata.feed(page.decode('utf-8', errors='replace'))
+            identifiers = [metadata.values[key] for key in ('books:isbn', 'og:barcode') if metadata.values.get(key)]
+            if not identifiers or any(canonical_isbn13(value) != isbn for value in identifiers):
+                return None
+            url = metadata.values.get('og:image', '')
+            if url.startswith('//'):
+                url = 'https:' + url
+            elif url.startswith('http://'):
+                url = 'https://' + url[7:]
+            if not _aladin_image(url):
+                return None
+            _allowed_url(url)
+            data, mime = _fetch_bytes(url, deadline=deadline, max_bytes=MAX_IMAGE_BYTES)
+            return _thumbnail(data, mime, 'Aladin')
+        except Exception:
+            return None
+
     def _lookup(self, isbn: str, deadline: float) -> CoverImage | None:
+        image = self._aladin(isbn, deadline)
+        if image:
+            return image
         if self._permit('openlibrary'):
             try:
                 data, mime = _fetch_bytes(f'https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg?default=false', deadline=deadline, max_bytes=MAX_IMAGE_BYTES)
@@ -185,10 +241,13 @@ class CoverService:
             return None
 
     def _remember(self, isbn: str, image: CoverImage | None) -> None:
+        # A timeout, busy queue or provider outage must never become a cached miss.
+        if image is None:
+            return
         previous = self._cache.pop(isbn, None)
         if previous and previous[1]:
             self._cache_bytes -= len(previous[1].data)
-        self._cache[isbn] = (time.monotonic() + (POSITIVE_TTL if image else NEGATIVE_TTL), image)
+        self._cache[isbn] = (time.monotonic() + POSITIVE_TTL, image)
         self._cache_bytes += len(image.data) if image else 0
         while len(self._cache) > MAX_CACHE_ENTRIES or self._cache_bytes > MAX_CACHE_BYTES:
             _, (_, removed) = self._cache.popitem(last=False)
@@ -222,7 +281,7 @@ class CoverService:
             def work():
                 image = None
                 try:
-                    image = self._lookup(canonical, deadline)
+                    image = self._lookup(canonical, time.monotonic() + LOOKUP_BUDGET)
                 except Exception:
                     pass
                 finally:

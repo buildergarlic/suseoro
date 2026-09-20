@@ -1,6 +1,6 @@
 :root {
   font-family: "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", "맑은 고딕", system-ui, sans-serif;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 400;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -178,6 +178,15 @@ a { color: var(--accent); text-underline-offset: .2em; }
 .book-links a:hover { text-decoration: underline; }
 .book-links svg { width: .875rem; height: .875rem; flex-shrink: 0; }
 .book-badges { display: flex; flex-wrap: wrap; align-items: center; gap: .3125rem; }
+.holdings-status { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .5rem; margin: .375rem 0; font-size: .875rem; }
+.holdings-badge { display: inline-flex; align-items: center; gap: .25rem; padding: .1875rem .4375rem; border: 1px solid #b9c2cf; border-radius: 4px; color: #465263; background: #f4f6f9; font-weight: 600; line-height: 1.4; }
+.holdings-held .holdings-badge { border-color: #e4a895; color: #9b2c18; background: #fff0e9; }
+.holdings-not_held .holdings-badge { border-color: #b9d7c4; color: #24613c; background: #eef8f1; }
+.holdings-status small { color: var(--text-secondary); font-size: .8125rem; }
+.held-row td:first-child { box-shadow: inset 3px 0 #b5472c; }
+.holdings-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .25rem .75rem; padding: .375rem 1.125rem .75rem; color: var(--text-secondary); font-size: .875rem; }
+.holdings-summary .text-button { flex-shrink: 0; }
+.cover-retry { padding: .125rem; border: 0; color: var(--accent); background: transparent; font-size: .75rem; text-decoration: underline; }
 .badge { display: inline-flex; max-width: 100%; align-items: center; padding: .125rem .375rem; border: 1px solid #d8dfe8; border-radius: 4px; color: #465263; background: #f4f6f9; font-size: .875rem; font-weight: 400; line-height: 1.4; overflow-wrap: anywhere; }
 .badge.source { border-color: transparent; background: transparent; padding-left: 0; color: var(--text-secondary); }
 .badge.lavender { background: #f0f3f8; color: #465263; }
