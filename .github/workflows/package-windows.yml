@@ -34,9 +34,23 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory .tools/nsis -Force | Out-Null
-          Invoke-WebRequest 'https://sourceforge.net/projects/nsis/files/NSIS%203/3.12/nsis-3.12.zip/download' -OutFile .tools/nsis.zip
           $expected = '56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f'
-          if ((Get-FileHash .tools/nsis.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'NSIS checksum mismatch' }
+          $verified = $false
+          foreach ($mirror in @(
+            'https://distfiles.macports.org/nsis/nsis-3.12.zip',
+            'https://mirrors.mit.edu/macports/distfiles/nsis/nsis-3.12.zip'
+          )) {
+            try {
+              Invoke-WebRequest $mirror -OutFile .tools/nsis.zip
+              if ((Get-FileHash .tools/nsis.zip -Algorithm SHA256).Hash.ToLowerInvariant() -eq $expected) {
+                $verified = $true
+                break
+              }
+              Write-Warning "NSIS checksum mismatch from $mirror"
+            }
+            catch { Write-Warning "NSIS download failed from ${mirror}: $_" }
+          }
+          if (-not $verified) { throw 'Could not download checksum-verified NSIS 3.12' }
           Expand-Archive .tools/nsis.zip .tools/nsis
       - name: Build and smoke-test application
         env:
