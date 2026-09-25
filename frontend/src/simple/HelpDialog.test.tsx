@@ -28,8 +28,8 @@ describe("프로그램 안 사용설명서", () => {
     const open = screen.getByRole("button", { name: "사용설명서" });
     await user.click(open);
     const dialog = screen.getByRole("dialog", { name: "사용설명서" });
-    expect(within(dialog).getByTitle("수서로 사용설명서 · 안내 처음")).toHaveAttribute("src", "/help/index.html");
-    await user.click(within(dialog).getByRole("button", { name: "목록으로 돌아가기" }));
+    expect(within(dialog).getByTitle("수서로 사용설명서 · 처음 따라 하기")).toHaveAttribute("src", "/help/quick-start.html");
+    await user.click(within(dialog).getByRole("button", { name: "작업 화면으로 돌아가기" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(open).toHaveFocus();
     expect(screen.getByRole("textbox", { name: "도서 검색" })).toHaveValue("우주");
@@ -42,7 +42,7 @@ describe("프로그램 안 사용설명서", () => {
   it("switches bundled guides inside a restricted frame and provides a local fallback", async () => {
     const user = userEvent.setup();
     render(<HelpDialog onClose={vi.fn()} />);
-    for (const [title, file] of [["그림 안내", "visual-guide.html"], ["상세 설명서", "user-guide.html"], ["간단한 사용법", "quick-start.html"]]) {
+    for (const [title, file] of [["그림 안내", "visual-guide.html"], ["상세 설명서", "user-guide.html"], ["처음 따라 하기", "quick-start.html"]]) {
       await user.click(screen.getByRole("button", { name: title }));
       const frame = screen.getByTitle(`수서로 사용설명서 · ${title}`);
       expect(frame).toHaveAttribute("src", `/help/${file}`);
@@ -50,7 +50,7 @@ describe("프로그램 안 사용설명서", () => {
       expect(frame).toHaveAttribute("tabindex", "0");
       fireEvent.load(frame);
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
-      expect(screen.getByRole("link", { name: /설명서가 보이지 않으면/ })).toHaveAttribute("href", `/help/${file}`);
+      expect(screen.getByRole("link", { name: /새 창으로 열어 나란히 보기/ })).toHaveAttribute("href", `/help/${file}`);
       expect(screen.getByRole("button", { name: title })).toHaveAttribute("aria-pressed", "true");
     }
   });
@@ -58,7 +58,7 @@ describe("프로그램 안 사용설명서", () => {
   it("accepts Escape messages only from the guide frame and still supports the parent close button", async () => {
     const user = userEvent.setup(), onClose = vi.fn();
     render(<HelpDialog onClose={onClose} />);
-    const frame = screen.getByTitle<HTMLIFrameElement>("수서로 사용설명서 · 안내 처음");
+    const frame = screen.getByTitle<HTMLIFrameElement>("수서로 사용설명서 · 처음 따라 하기");
     fireEvent(window, new MessageEvent("message", { source: window, data: { type: "suseoro-help-close" }, origin: "null" }));
     fireEvent(window, new MessageEvent("message", { source: frame.contentWindow, data: { type: "unrelated" }, origin: "null" }));
     expect(onClose).not.toHaveBeenCalled();

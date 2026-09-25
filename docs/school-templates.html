@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="학교도서관 사서를 위한 수서로 2.2.2 사용설명서. 글자 크기, 책 표지, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
+<meta name="description" content="학교도서관 사서를 위한 수서로 2.2.3 사용설명서. 글자 크기, 책 표지, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
 <title>학교 Excel 발주서 양식 | 수서로 도움말</title><style>
 :root{color-scheme:light;--ink:#17392f;--muted:#52675f;--paper:#fffcf5;--line:#d9e1d8;--green:#226348}
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:1rem}
@@ -17,19 +17,20 @@ p,ul,ol{margin:14px 0}li{margin:7px 0}strong{color:#163e2e}blockquote{margin:24p
 code{font-family:Consolas,monospace;font-size:.9em;background:#edf0e8;border-radius:4px;padding:2px 5px;word-break:break-word}pre{overflow:auto;padding:18px;background:#edf0e8;border-radius:12px}pre code{padding:0}hr{border:0;border-top:1px solid var(--line);margin:32px 0}.meta{font-size:13px;color:var(--muted)}
 footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font-size:13px;color:var(--muted)}.print-button{font:inherit;border:1px solid #bdd1ba;background:white;color:var(--ink);border-radius:9px;padding:7px 13px;cursor:pointer}.print-button:focus-visible{outline:3px solid #a9510c;outline-offset:3px}
 .install-shortcuts{display:flex;flex-wrap:wrap;gap:10px;margin:24px 0}.install-shortcuts a{display:block;padding:8px 14px;border:1px solid #bdd1ba;border-radius:9px;background:#eef4e7;text-decoration:none;font-weight:700}.install-caption{color:var(--muted);font-size:14px}.install-figure{max-width:600px;margin:24px auto 32px;break-inside:avoid}.install-figure svg{display:block;width:100%;height:auto;font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif}.install-figure figcaption{font-size:15px;line-height:1.7;margin-top:12px;color:var(--muted)}.install-screen{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.guide-quick-start .layout{grid-template-columns:225px minmax(0,900px);gap:38px}.guide-quick-start h1{color:#174c39;margin:12px 0 18px}.guide-quick-start .start-action{margin:18px 0}.guide-quick-start .start-action a{display:inline-block;padding:10px 18px;border-radius:10px;background:#226348;color:white;font-weight:700;text-decoration:none}.guide-quick-start .start-action a:hover{background:#174b34}.guide-quick-start main>h2{margin:42px 0 18px;padding:15px 20px;border:0;border-left:6px solid #2d7653;border-radius:0 14px 14px 0;background:#e9f3e5;font-size:25px}.guide-quick-start main>h2+ol{padding-left:27px}.guide-quick-start main>h2+ol li{padding-left:5px;margin:10px 0}.guide-quick-start .success-signal{padding:12px 18px;border:1px solid #c2debf;border-radius:12px;background:#f0f8ec}.guide-quick-start .success-signal strong{color:#155d38}.guide-quick-start main>blockquote{border-left-color:#db8d38;background:#fff3df}.guide-quick-start table{font-size:15px}.guide-quick-start th{background:#dfeedd}
 @media(max-width:850px){.layout{display:block;margin-top:24px;padding:0 20px}aside details{position:static;max-height:260px;margin-bottom:30px}h2{font-size:24px;margin-top:44px}.topbar nav{gap:14px}.table-wrap{word-break:normal}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{@page{size:A4;margin:16mm 15mm}body{background:white;font-size:10pt;line-height:1.6;color:black}.topbar,aside,.skip,.print-button,footer{display:none}.layout{display:block;max-width:none;margin:0;padding:0}h1{font-size:24pt}h2{font-size:17pt;margin:26px 0 12px;break-after:avoid}h3{font-size:13pt;break-after:avoid}a{color:inherit;text-decoration:none}blockquote{border:1px solid #aaa;background:none}table{font-size:9pt}.table-wrap{overflow:visible}tr{break-inside:avoid}code{font-size:9pt}p,li{orphans:3;widows:3}}
 </style></head>
-<body><a class="skip" href="#main">본문으로 바로 가기</a>
-<header class="topbar"><a class="brand" href="index.html">수서로 2.2.2 · 도움말</a><nav aria-label="설명서 메뉴"><a href="user-guide.html#2-설치하고-처음-실행하기">설치하기</a><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
+<body class="guide-school-templates"><a class="skip" href="#main">본문으로 바로 가기</a>
+<header class="topbar"><a class="brand" href="index.html">수서로 2.2.3 · 도움말</a><nav aria-label="설명서 메뉴"><a href="quick-start.html">처음 따라 하기</a><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="user-guide.html#2-설치하고-처음-실행하기">설치하기</a></nav></header>
 <div class="layout"><aside aria-label="이 페이지 목차"><details open><summary>목차</summary><div class="toc">
 <ul>
 <li><a href="#자동으로-채우는-값">자동으로 채우는 값</a></li>
 </ul>
 </div>
 </details></aside>
-<main id="main"><p class="meta">수서로 2.2.2 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button><h1 id="학교-excel-발주서-양식">학교 Excel 발주서 양식</h1>
+<main id="main"><p class="meta">수서로 2.2.3 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button><h1 id="학교-excel-발주서-양식">학교 Excel 발주서 양식</h1>
 <p>발주서 저장 창에서 <strong>학교 양식 추가 (.xlsx)</strong>를 선택하세요. 한 번 저장한 양식은 다음 발주에도 사용할 수 있습니다.</p>
 <ul>
 <li>한 행에 열 제목을 적습니다. 예: 번호, 도서명, 저자, 출판사, ISBN, 정가, 수량, 할인율, 구입단가, 금액, 비고. 할인 후 한 권 금액을 넣으려면 <strong>구입단가</strong>를 쓰세요. <strong>단가</strong>만 적으면 정가로 인식합니다.</li>

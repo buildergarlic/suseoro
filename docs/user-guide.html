@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="학교도서관 사서를 위한 수서로 2.2.2 사용설명서. 글자 크기, 책 표지, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
-<title>수서로 2.2.2 상세 사용설명서 | 수서로 도움말</title><style>
+<meta name="description" content="학교도서관 사서를 위한 수서로 2.2.3 사용설명서. 글자 크기, 책 표지, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
+<title>수서로 2.2.3 상세 사용설명서 | 수서로 도움말</title><style>
 :root{color-scheme:light;--ink:#17392f;--muted:#52675f;--paper:#fffcf5;--line:#d9e1d8;--green:#226348}
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:1rem}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:16px;line-height:1.85;word-break:keep-all;overflow-wrap:anywhere}
@@ -17,15 +17,16 @@ p,ul,ol{margin:14px 0}li{margin:7px 0}strong{color:#163e2e}blockquote{margin:24p
 code{font-family:Consolas,monospace;font-size:.9em;background:#edf0e8;border-radius:4px;padding:2px 5px;word-break:break-word}pre{overflow:auto;padding:18px;background:#edf0e8;border-radius:12px}pre code{padding:0}hr{border:0;border-top:1px solid var(--line);margin:32px 0}.meta{font-size:13px;color:var(--muted)}
 footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font-size:13px;color:var(--muted)}.print-button{font:inherit;border:1px solid #bdd1ba;background:white;color:var(--ink);border-radius:9px;padding:7px 13px;cursor:pointer}.print-button:focus-visible{outline:3px solid #a9510c;outline-offset:3px}
 .install-shortcuts{display:flex;flex-wrap:wrap;gap:10px;margin:24px 0}.install-shortcuts a{display:block;padding:8px 14px;border:1px solid #bdd1ba;border-radius:9px;background:#eef4e7;text-decoration:none;font-weight:700}.install-caption{color:var(--muted);font-size:14px}.install-figure{max-width:600px;margin:24px auto 32px;break-inside:avoid}.install-figure svg{display:block;width:100%;height:auto;font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif}.install-figure figcaption{font-size:15px;line-height:1.7;margin-top:12px;color:var(--muted)}.install-screen{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.guide-quick-start .layout{grid-template-columns:225px minmax(0,900px);gap:38px}.guide-quick-start h1{color:#174c39;margin:12px 0 18px}.guide-quick-start .start-action{margin:18px 0}.guide-quick-start .start-action a{display:inline-block;padding:10px 18px;border-radius:10px;background:#226348;color:white;font-weight:700;text-decoration:none}.guide-quick-start .start-action a:hover{background:#174b34}.guide-quick-start main>h2{margin:42px 0 18px;padding:15px 20px;border:0;border-left:6px solid #2d7653;border-radius:0 14px 14px 0;background:#e9f3e5;font-size:25px}.guide-quick-start main>h2+ol{padding-left:27px}.guide-quick-start main>h2+ol li{padding-left:5px;margin:10px 0}.guide-quick-start .success-signal{padding:12px 18px;border:1px solid #c2debf;border-radius:12px;background:#f0f8ec}.guide-quick-start .success-signal strong{color:#155d38}.guide-quick-start main>blockquote{border-left-color:#db8d38;background:#fff3df}.guide-quick-start table{font-size:15px}.guide-quick-start th{background:#dfeedd}
 @media(max-width:850px){.layout{display:block;margin-top:24px;padding:0 20px}aside details{position:static;max-height:260px;margin-bottom:30px}h2{font-size:24px;margin-top:44px}.topbar nav{gap:14px}.table-wrap{word-break:normal}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{@page{size:A4;margin:16mm 15mm}body{background:white;font-size:10pt;line-height:1.6;color:black}.topbar,aside,.skip,.print-button,footer{display:none}.layout{display:block;max-width:none;margin:0;padding:0}h1{font-size:24pt}h2{font-size:17pt;margin:26px 0 12px;break-after:avoid}h3{font-size:13pt;break-after:avoid}a{color:inherit;text-decoration:none}blockquote{border:1px solid #aaa;background:none}table{font-size:9pt}.table-wrap{overflow:visible}tr{break-inside:avoid}code{font-size:9pt}p,li{orphans:3;widows:3}}
 </style></head>
-<body><a class="skip" href="#main">본문으로 바로 가기</a>
-<header class="topbar"><a class="brand" href="index.html">수서로 2.2.2 · 도움말</a><nav aria-label="설명서 메뉴"><a href="user-guide.html#2-설치하고-처음-실행하기">설치하기</a><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
+<body class="guide-user-guide"><a class="skip" href="#main">본문으로 바로 가기</a>
+<header class="topbar"><a class="brand" href="index.html">수서로 2.2.3 · 도움말</a><nav aria-label="설명서 메뉴"><a href="quick-start.html">처음 따라 하기</a><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="user-guide.html#2-설치하고-처음-실행하기">설치하기</a></nav></header>
 <div class="layout"><aside aria-label="이 페이지 목차"><details open><summary>목차</summary><div class="toc">
 <ul>
-<li><a href="#추천목록-통합과-일괄-검토">추천목록 통합과 일괄 검토</a></li>
+<li><a href="#처음이라면-왼쪽에서-고르고-오른쪽에서-확인하세요">처음이라면: 왼쪽에서 고르고, 오른쪽에서 확인하세요</a></li>
 <li><a href="#1-수서로로-하는-일">1. 수서로로 하는 일</a></li>
 <li><a href="#2-설치하고-처음-실행하기">2. 설치하고 처음 실행하기</a></li>
 <li><a href="#3-학교-이름과-isbn-조회-설정">3. 학교 이름과 ISBN 조회 설정</a></li>
@@ -46,17 +47,51 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 </ul>
 </div>
 </details></aside>
-<main id="main"><p class="meta">수서로 2.2.2 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button><h1 id="수서로-222-상세-사용설명서">수서로 2.2.2 상세 사용설명서</h1>
+<main id="main"><p class="meta">수서로 2.2.3 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button><h1 id="수서로-223-상세-사용설명서">수서로 2.2.3 상세 사용설명서</h1>
 <p><strong>학교도서관 사서를 위한 도서 구입 목록 안내서</strong></p>
-<h2 id="추천목록-통합과-일괄-검토">추천목록 통합과 일괄 검토</h2>
-<p><strong>파일 가져오기</strong>에서 추천 파일 여러 개를 함께 선택하세요. 자동으로 열을 맞추며 <strong>같은 책 합치기</strong>로 중복 추천을 한 종으로 모읍니다. 원본과 출처는 보존하고 구입 수량은 합산하지 않습니다. 가격·서지 충돌과 서로 다른 판본은 확인 대상으로 남깁니다.</p>
-<p>ISBN이 없어도 제목·저자·출판사·가격이 확인된 구조화 목록은 바로 진행할 수 있습니다. 기존 확인 필요 자료는 <strong>ISBN 없음</strong> 필터 → 도서 목록 오른쪽 위 <strong>일괄 작업</strong> 열기 → <strong>검색·필터 결과 N건 전체 선택</strong> → <strong>서지 확인 완료</strong>로 처리하세요. 가격 누락·잘못된 ISBN·식별 정보 부족은 남겨두고 이유를 알려줍니다. <strong>작업</strong> 체크와 <strong>구입</strong> 체크는 별개이며 구입 여부는 유지됩니다.</p>
-<p>목록과 미리보기는 100건씩 표시하지만 검색 결과 전체를 일괄 처리할 수 있습니다. 가져오기·일괄 작업 뒤 <strong>되돌리기</strong>를 사용할 수 있으며 이후 편집이 있으면 이를 덮어쓰지 않습니다. 원본을 별도 표준 파일로 만들어 재업로드할 필요는 없습니다. 외부 서지 조회는 선택 기능입니다.</p>
-<p>대상 버전: 수서로 2.2.2 · Windows 10/11 64비트</p>
-<p>2.2.2는 왼쪽 메뉴에 목록·예산·작업을 모으고 도서 표를 넓혀 여러 책을 한 번에 확인하기 쉽게 했습니다. 등록한 학교 소장목록과 현재 구입 목록에 저장된 추천도서를 열람할 수 있습니다. 여러 기관의 추천 파일 통합, ISBN 없는 도서의 일괄 검토와 되돌리기도 제공합니다. 추천 출처·원문·구입 수량을 보존하며, 별도 전처리나 외부 ISBN 조회 없이 사용할 수 있습니다.</p>
+<p>대상 버전: 수서로 2.2.3 · Windows 10/11 64비트</p>
 <p>수서로는 추천받은 책을 한곳에 모으고, 필요한 책을 선택하고, 예산에 맞춘 발주서를 만드는 도구입니다. 회원가입이나 별도 서버 준비 없이 내 PC에서 사용합니다.</p>
-<p>처음이라면 <a href="visual-guide.html">그림으로 보는 쉬운 안내</a>를 먼저 보세요. 짧은 안내는 <a href="quick-start.html">이것만 알면 됩니다</a>에 있습니다. 이 설명서는 실제 화면의 버튼 이름을 <strong>굵게</strong> 표시합니다.</p>
-<p><strong>프로그램 안에서 보기:</strong> 왼쪽 메뉴의 <strong>사용설명서</strong>를 누릅니다. <strong>그림 안내</strong>, <strong>상세 설명서</strong>, <strong>간단한 사용법</strong> 중 필요한 내용을 고르세요. <strong>닫기</strong>를 누르거나 <code>Esc</code>를 누르면 작업하던 목록으로 돌아옵니다. 설명서와 예산 연습은 설치 파일에 들어 있어 인터넷 없이도 이용할 수 있습니다. 이 기능은 2.0.1부터 제공하며, 2.0.0 사용자는 <strong>학교 설정 · 백업 → 업데이트 확인 → 업데이트 설치</strong>로 업데이트하세요.</p>
+<h2 id="처음이라면-왼쪽에서-고르고-오른쪽에서-확인하세요">처음이라면: 왼쪽에서 고르고, 오른쪽에서 확인하세요</h2>
+<p>2.2.3 화면의 왼쪽에는 목록·예산·주요 작업·등록 자료가 있고, 오른쪽에는 책을 여러 권씩 볼 수 있는 도서 표가 있습니다. 처음에는 다음 다섯 걸음만 따라 해 보세요. 실제 화면의 버튼 이름은 <strong>굵게</strong> 적었습니다.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>걸음</th>
+<th>누를 곳</th>
+<th>화면에서 확인할 결과</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>① 바구니 준비</td>
+<td>왼쪽 <strong>새 목록 만들기</strong> 또는 기존 <strong>내 구입 목록</strong> → <strong>목록 · 예산 설정</strong></td>
+<td>사용할 목록 이름과 <strong>이번 목록 예산</strong>이 보입니다.</td>
+</tr>
+<tr>
+<td>② 책 담기</td>
+<td>왼쪽 <strong>ISBN 추가</strong>, <strong>파일 가져오기</strong>, 또는 도서 표 아래 <strong>＋ 직접 추가</strong></td>
+<td>오른쪽 <strong>도서 목록</strong>에 책이 나타납니다.</td>
+</tr>
+<tr>
+<td>③ 이미 있는 책 살피기</td>
+<td>왼쪽 <strong>등록 자료 → 학교 소장목록</strong>과 <strong>추천도서 목록</strong></td>
+<td>소장자료를 검색하고, 현재 목록에 저장한 추천 출처를 볼 수 있습니다.</td>
+</tr>
+<tr>
+<td>④ 이번에 살 책 고르기</td>
+<td>도서 표의 <strong>구입</strong> 체크 → 왼쪽 <strong>이번 목록 예산</strong></td>
+<td>선택 금액과 남은 예산이 바뀝니다. 보류할 책은 체크를 끕니다.</td>
+</tr>
+<tr>
+<td>⑤ 파일로 마무리</td>
+<td>왼쪽 <strong>발주서 저장</strong> → <strong>Excel</strong> → <strong>발주서 저장</strong></td>
+<td>내려받은 발주서를 열어 책·수량·금액을 확인합니다. 이어서 <strong>학교 설정 · 백업 → 백업 파일 저장</strong>을 누릅니다.</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>막히면:</strong> 도서 표에서 책이 안 보일 때는 <strong>전체</strong> 탭을 누르고 검색어를 지워 보세요. 왼쪽 메뉴가 보이지 않는 좁은 창에서는 위쪽 <strong>☰ 메뉴 열기</strong>를 누릅니다. 발주서 저장 버튼을 누를 수 없으면 <a href="#11-최종-발주서-저장하기">저장 전 점검</a>을 보세요.</p>
+<p>빠르게 전체 흐름을 보고 싶다면 <a href="quick-start.html">첫 10분 따라 하기</a>, 그림과 예산 연습이 필요하다면 <a href="visual-guide.html">그림 안내</a>를 여세요. 상세한 예외와 학교 양식은 이 설명서의 해당 장에서 찾을 수 있습니다.</p>
+<p><strong>프로그램 안에서 보기:</strong> 왼쪽 <strong>사용설명서</strong>를 누르면 <strong>처음 따라 하기</strong>가 먼저 열립니다. <strong>그림 안내</strong>와 <strong>상세 설명서</strong> 탭도 선택할 수 있습니다. <strong>새 창으로 열어 나란히 보기 ↗</strong>로 설명서를 프로그램 옆에 띄우거나, <strong>작업 화면으로 돌아가기</strong> 또는 <code>Esc</code>로 닫으세요. 설명서와 예산 연습은 설치 파일에 들어 있어 인터넷 없이도 이용할 수 있습니다.</p>
 <blockquote>
 <p><strong>설명서의 학교명·사람·책 제목·가격·구입 사례는 모두 가상이며 연습용입니다.</strong> 실제 업무에서는 학교의 수서 기준, 실물 도서 정보와 확인한 정가를 사용하세요.</p>
 </blockquote>
@@ -128,10 +163,10 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 <path d="M1 57H599" stroke="#cdd9d2"/><text x="24" y="37" font-size="20" fill="#425b4c">공식 배포 페이지 · 첨부 파일 예시</text>
 <text x="24" y="94" font-size="24" font-weight="700" fill="#17392f">▾ Assets</text>
 <rect x="18" y="111" width="564" height="72" rx="10" fill="#e9f3eb" stroke="#226348" stroke-width="3"/>
-<text x="34" y="142" font-size="22" font-weight="700" fill="#145436">Suseoro-Setup-2.2.2.exe</text>
+<text x="34" y="142" font-size="22" font-weight="700" fill="#145436">Suseoro-Setup-2.2.3.exe</text>
 <text x="34" y="168" font-size="20" fill="#226348">↑ 이 파일을 누르세요 · 기본 설치</text>
-<text x="34" y="222" font-size="21" fill="#52675f">Suseoro-Portable-2.2.2.zip</text>
-<text x="34" y="268" font-size="21" fill="#52675f">Suseoro-Guide-2.2.2.zip</text>
+<text x="34" y="222" font-size="21" fill="#52675f">Suseoro-Portable-2.2.3.zip</text>
+<text x="34" y="268" font-size="21" fill="#52675f">Suseoro-Guide-2.2.3.zip</text>
 <text x="34" y="313" font-size="19" fill="#52675f">Source code · 소스 코드</text>
 </svg>
 <figcaption>그림 1. 여러 파일 중 <strong>Setup … .exe</strong>를 고르세요. Portable은 무설치형, Guide는 설명서입니다.</figcaption>
@@ -168,11 +203,11 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 <figure class="install-figure install-screen">
 <svg viewBox="0 0 600 430" role="img" aria-labelledby="install-run-title install-run-desc" xmlns="http://www.w3.org/2000/svg">
 <title id="install-run-title">앱 이름을 확인하고 실행을 누릅니다</title>
-<desc id="install-run-desc">추가 정보를 펼친 Windows 경고창 예시입니다. 앱은 Suseoro-Setup-2.2.2.exe, 게시자는 알 수 없는 게시자입니다. 아래 두 버튼 중 왼쪽 실행 버튼을 노란색으로 강조했습니다.</desc>
+<desc id="install-run-desc">추가 정보를 펼친 Windows 경고창 예시입니다. 앱은 Suseoro-Setup-2.2.3.exe, 게시자는 알 수 없는 게시자입니다. 아래 두 버튼 중 왼쪽 실행 버튼을 노란색으로 강조했습니다.</desc>
 <rect width="600" height="430" rx="12" fill="#0067b8"/>
 <text x="28" y="56" font-size="32" fill="#fff">Windows의 PC 보호</text>
 <text x="28" y="105" font-size="21" fill="#fff">실행하기 전에 앱 이름을 확인하세요.</text>
-<text x="28" y="162" font-size="22" fill="#fff">앱: Suseoro-Setup-2.2.2.exe</text>
+<text x="28" y="162" font-size="22" fill="#fff">앱: Suseoro-Setup-2.2.3.exe</text>
 <text x="28" y="200" font-size="22" fill="#fff">게시자: 알 수 없는 게시자</text>
 <text x="28" y="264" font-size="23" font-weight="700" fill="#ffe083">2. 출처와 파일명 확인 후 ‘실행’</text>
 <path d="M315 280V325m0 0-10-13m10 13 10-13" fill="none" stroke="#ffe083" stroke-width="3"/>
@@ -291,6 +326,12 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 <li>등록을 해제하려면 <strong>등록한 인증키 삭제</strong>를 누릅니다. 빈 입력란으로 학교 이름만 저장하면 기존 인증키는 유지됩니다.</li>
 </ul>
 <h2 id="4-첫-화면-익히기">4. 첫 화면 익히기</h2>
+<p><strong>지금 할 일: 책 한 권을 찾고 구입 여부를 살펴보세요.</strong></p>
+<ul>
+<li><strong>누를 곳:</strong> 왼쪽 <strong>내 구입 목록</strong>에서 작업할 목록 선택 → 오른쪽 <strong>도서 목록</strong>의 <strong>전체</strong> 탭 → 책 제목이나 ISBN 검색.</li>
+<li><strong>확인할 결과:</strong> 검색한 책의 제목·정가·<strong>구입</strong> 체크가 보이고, 왼쪽 <strong>이번 목록 예산</strong>에는 선택 금액이 보입니다.</li>
+<li><strong>막히면:</strong> 목록이 비어 있으면 왼쪽 <strong>ISBN 추가</strong> 또는 <strong>파일 가져오기</strong>로 책을 담으세요. 좁은 창에서는 위쪽 <strong>☰ 메뉴 열기</strong>를 누르고, 정가 열이 안 보이면 도서 표 안에서 가로로 스크롤하세요.</li>
+</ul>
 <p><strong>목적:</strong> 필요한 기능을 어디에서 찾는지 익힙니다.</p>
 <div class="table-wrap"><table>
 <thead>
@@ -374,7 +415,7 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 <tr>
 <td>왼쪽 메뉴 아래</td>
 <td><strong>사용설명서</strong></td>
-<td>프로그램 안에서 그림 안내·상세 설명서·간단한 사용법을 엽니다.</td>
+<td>프로그램 안에서 첫 10분 따라 하기·그림 안내·상세 설명서를 엽니다.</td>
 </tr>
 </tbody>
 </table></div>
@@ -434,7 +475,7 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 </tbody>
 </table></div>
 <p>위 두 도서 행을 모두 선택했다면 <strong>2종·5권</strong>, 선택 금액은 <strong>60,333원</strong>입니다. 예산이 15,000,000원이면 남은 예산은 <strong>14,939,667원</strong>입니다.</p>
-<p><strong>완료 상태:</strong> 왼쪽 메뉴의 <strong>이번 목록 예산</strong>에 설정한 예산과 할인율이 보이고, 책을 선택하거나 수량을 바꾸면 금액이 다시 계산됩니다.</p>
+<p><strong>완료 상태:</strong> 왼쪽 메뉴의 <strong>이번 목록 예산</strong>에 설정한 예산이 보이고, 할인율은 <strong>목록 · 예산 설정</strong>에서 확인할 수 있습니다. 책을 선택하거나 수량을 바꾸면 선택 금액이 다시 계산됩니다.</p>
 <p><strong>기억할 점</strong></p>
 <ul>
 <li>할인율은 목록 전체에 적용하며 소수점 둘째 자리까지 입력할 수 있습니다. 예시의 10%는 연습값입니다. 실제로 적용할 할인율은 학교의 구입 조건에 맞춥니다.</li>
@@ -578,6 +619,13 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 <p><strong>기억할 점:</strong> 아직 살지 결정하지 못한 책은 삭제보다 <strong>보류</strong>가 편합니다. 삭제 취소는 화면의 최근 삭제 알림을 통해 사용하며, 알림을 닫거나 화면을 다시 열면 그 버튼을 이용할 수 없습니다. 다른 책을 삭제하면 최근 삭제 대상도 바뀝니다. 전체 삭제 이력을 자유롭게 복원하는 휴지통 화면은 없습니다.</p>
 <h2 id="8-추천도서-파일-가져오기">8. 추천도서 파일 가져오기</h2>
 <p><strong>목적:</strong> 여러 기관의 서로 다른 추천 목록을 일정한 도서 행으로 정리합니다.</p>
+<p><strong>먼저 해 보기: 추천 파일 두 개를 한 목록에 모아 보세요.</strong></p>
+<ul>
+<li><strong>누를 곳:</strong> 왼쪽 <strong>파일 가져오기 → 추천도서 목록 → 가져올 파일 선택</strong>. 파일을 여러 개 선택하거나 <strong>파일 더 선택하기</strong>로 추가합니다. 파일 이름을 하나씩 눌러 미리보기를 살펴본 뒤 <strong>같은 책 합치기</strong>를 확인하고 <strong>○건 가져오기</strong>를 누릅니다.</li>
+<li><strong>확인할 결과:</strong> 현재 구입 목록에 책이 나타나고, 같은 책으로 합쳐진 행에는 <strong>추천 N회 · 1종으로 통합</strong>이 보입니다. 구입 수량은 추천 횟수만큼 늘어나지 않습니다.</li>
+<li><strong>막히면:</strong> 제목·가격이 엉뚱한 칸에 있으면 <strong>열 연결 확인</strong>을 펼쳐 원본 열을 맞추세요. <strong>확인 필요</strong>가 있으면 미리보기의 <strong>상세</strong>와 <strong>원문 보기</strong>로 대조합니다. 파일 읽기에 실패했다면 해당 파일의 <strong>다시 읽기</strong>를 누르거나 제외한 뒤 진행합니다.</li>
+</ul>
+<p>같은 책이 여러 기관에서 추천되면 한 종으로 모으되 추천기관·파일·원본 행을 보관합니다. 가격이나 서지정보가 충돌하면 사서가 직접 확인하고, 판·권차가 다른 책은 별도로 남깁니다. ISBN이 없어도 제목·저자·출판사·가격이 확인된 구조화 목록은 가져올 수 있습니다. 외부 ISBN 조회는 선택 기능입니다.</p>
 <h3 id="준비할-파일">준비할 파일</h3>
 <p>파일 선택 화면은 <code>.xlsx</code>, <code>.xls</code>, <code>.csv</code>, <code>.tsv</code>, <code>.txt</code>, <code>.pdf</code>, <code>.hwp</code>, <code>.hwpx</code>, <code>.docx</code>를 받습니다. <strong>파일당 50 MB 이하</strong>로 준비하세요. ODS나 XLSB 파일은 현재 화면에서 직접 고르기보다 Excel 등의 프로그램에서 <code>.xlsx</code>로 저장해 사용하세요.</p>
 <div class="table-wrap"><table>
@@ -616,18 +664,19 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 <ol>
 <li>구입 후보를 담을 목록을 선택하고 <strong>파일 가져오기</strong>를 누릅니다.</li>
 <li>위쪽에서 <strong>추천도서 목록</strong>을 선택합니다.</li>
-<li><strong>가져올 파일 선택</strong>을 눌러 파일을 엽니다.</li>
-<li>미리보기의 건수와 <strong>확인할 점</strong>을 읽습니다. 이 단계에서는 아직 구입 목록에 추가되지 않았습니다.</li>
-<li>제목·저자·ISBN·정가·수량이 올바른 칸에 들어갔는지 봅니다.</li>
+<li><strong>가져올 파일 선택</strong>으로 여러 파일을 함께 고르거나, 첫 파일을 읽은 뒤 <strong>파일 더 선택하기</strong>로 파일을 추가합니다.</li>
+<li>파일 목록에서 각 파일 이름을 누르며 미리보기의 건수와 <strong>확인할 점</strong>을 읽습니다. 이 단계에서는 아직 구입 목록에 추가되지 않았습니다.</li>
+<li>파일마다 제목·저자·ISBN·정가·수량이 올바른 칸에 들어갔는지 봅니다.</li>
 <li>열이 잘못 연결되었다면 <strong>열 연결 확인 · 제목이나 가격이 다른 열에 있나요?</strong>를 펼칩니다. 파일의 열 이름이 제공되는 경우에 사용할 수 있습니다.</li>
 <li>수서로의 각 항목에 맞는 원본 열을 선택하고 <strong>열 연결 적용</strong>을 누릅니다. 예를 들어 수서로의 <strong>책 제목</strong>에 원본의 <code>서명</code>, <strong>정가</strong>에 원본의 <code>도서정가</code> 열을 연결합니다.</li>
 <li>연결이 맞아진 뒤 책 제목·저자·ISBN·정가·수량을 미리보기에서 고칩니다. 더 많은 항목은 행의 <strong>상세</strong>를 누릅니다.</li>
 <li>합계행·안내 문구·이번에 가져오지 않을 행은 오른쪽 <strong>×</strong>로 제외합니다.</li>
 <li>필요한 경우 <strong>ISBN으로 빈 정보 채우기</strong>를 이용하고 원문과 결과를 검토합니다.</li>
-<li>최종 건수와 자료 종류가 맞으면 <strong>○건 가져오기</strong>를 누릅니다.</li>
+<li><strong>같은 책 합치기</strong>를 확인합니다. 켜져 있으면 여러 추천 출처의 같은 책을 한 종으로 모으고 수량은 합산하지 않습니다.</li>
+<li>모든 파일의 최종 건수와 자료 종류가 맞으면 <strong>○건 가져오기</strong>를 누릅니다.</li>
 </ol>
 <blockquote>
-<p><strong>열 연결 적용은 원본 파일을 다시 읽습니다.</strong> 미리보기에서 고친 값이나 제외한 행, 조회로 채운 정보를 유지하는 단계가 아닙니다. 열 연결을 먼저 끝낸 뒤 개별 수정과 검토를 진행하세요.</p>
+<p><strong>열 연결 적용은 현재 파일을 다시 읽지만 직접 고친 값과 제외한 행은 유지합니다.</strong> 그래도 결과를 다시 살펴야 새로 연결한 열과 직접 고친 값이 의도대로 맞는지 알 수 있습니다. 실수를 줄이려면 열 연결을 먼저 끝내고 책별로 수정하세요.</p>
 </blockquote>
 <h3 id="원문을-비교하는-방법">원문을 비교하는 방법</h3>
 <ol>
@@ -645,24 +694,30 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 <li>기존에 입력한 정보는 유지합니다. 채워진 결과도 직접 확인할 수 있도록 <strong>확인 필요</strong>로 표시합니다.</li>
 <li>정가를 찾지 못하는 등 빈값이 계속 남으면 다음 실행에서도 같은 행이 대상이 될 수 있습니다. <strong>버튼을 두 번 누른다고 반드시 다음 50권을 처리하는 것은 아닙니다.</strong> 많은 파일은 50권 정도씩 나누어 처리하면 확인하기 쉽습니다.</li>
 </ul>
-<p><strong>완료 상태:</strong> “추천도서 ○건을 가져왔습니다.” 안내와 함께 현재 구입 목록에 도서 행이 나타납니다. 가격 미확인·확인 필요 상태도 후보로 저장할 수 있습니다.</p>
+<p><strong>완료 상태:</strong> “추천도서 ○건에서 ○건 추가, ○건 합치기 완료” 안내와 함께 현재 구입 목록에 도서 행이 나타납니다. 가격 미확인·확인 필요 상태도 후보로 저장할 수 있습니다.</p>
 <h3 id="저장한-추천도서-목록-보기">저장한 추천도서 목록 보기</h3>
 <ol>
 <li>왼쪽 메뉴에서 구입 목록을 선택하고 <strong>등록 자료 → 추천도서 목록</strong>을 누릅니다.</li>
 <li><strong>추천 출처</strong>를 선택하거나 제목·저자·ISBN 등으로 검색해 저장된 책을 살펴봅니다.</li>
 <li><strong>구입 목록으로 돌아가기</strong>를 누르면 도서 작업표로 돌아옵니다.</li>
 </ol>
-<p>이 화면은 <strong>현재 구입 목록에 저장된 모든 도서</strong>를 저장된 추천 출처를 바탕으로 묶어 보여 줍니다. 가져온 책의 출처에 원본 파일명이 있으면 기관명·파일명으로 묶고 행·시트 표시는 그룹명에서 뺍니다. 출처를 수정해 파일명이 없어지면 수정한 출처로 묶습니다. ISBN 추가·직접 추가로 넣은 책도 포함되며, 출처가 비어 있으면 <strong>출처 미입력</strong>으로 표시합니다. <strong>추천 파일의 원본이나 업로드 이력, 파일별 가져오기 기록을 재현하는 화면은 아닙니다.</strong> 책 정보나 출처를 바꾸려면 구입 목록의 해당 책을 수정하세요.</p>
+<p>이 화면은 <strong>현재 구입 목록에 저장된 모든 도서</strong>를 저장된 추천 출처를 바탕으로 묶어 보여 줍니다. 같은 책이 여러 기관에서 추천되었다면 각 출처 그룹에 나타나지만 전체 도서 수에서는 한 번만 셉니다. 가져온 책은 보존된 기관명·파일명으로 묶고 행·시트 표시는 그룹명에서 뺍니다. 책의 현재 <strong>추천 출처</strong>를 수정해도 이미 보존된 추천 원문의 출처는 바뀌지 않습니다. ISBN 추가·직접 추가로 넣은 책도 포함되며, 출처가 비어 있으면 <strong>출처 미입력</strong>으로 표시합니다. <strong>이 화면은 원본 파일 전체나 파일별 업로드 이력을 재현하지 않습니다.</strong> 추천받은 원문과 기관·파일의 기록은 <strong>구입 목록으로 돌아가기 → 해당 책 제목 또는 수정 → 추천 출처와 원문</strong>에서 확인하세요. 책 정보나 현재 출처를 바꾸려면 구입 목록의 해당 책을 수정합니다.</p>
 <p><strong>기억할 점</strong></p>
 <ul>
 <li>미리보기의 <strong>준비됨</strong>은 해당 행에 확인 필요 표시가 없다는 뜻입니다. 정확한 판본·정가 확인이나 최종 구입 승인을 대신하지 않습니다.</li>
 <li>숫자가 잘못 읽혔을 때는 정가·할인가·세트가격·수량이 바뀌지 않았는지 봅니다. “10권 150,000원”을 한 권 정가 150,000원으로 넣지 않도록 확인하세요.</li>
 <li>미리보기 행의 가격 합계는 <strong>정가 × 수량</strong>입니다. 목록 할인율을 반영한 최종 선택 금액은 가져온 뒤 왼쪽 메뉴의 <strong>이번 목록 예산</strong>에서 확인합니다.</li>
-<li>이 단계의 <strong>×</strong>는 원본 파일의 행을 지우지 않습니다. 현재 미리보기에서 제외합니다. 잘못 제외했다면 원본을 다시 읽을 수 있지만, 그때는 다른 미리보기 수정도 다시 해야 합니다.</li>
-<li>가져오기를 반복하면 같은 책이 다시 추가될 수 있습니다. 가져온 후 <strong>중복 추천</strong> 표시를 검토하세요.</li>
+<li>이 단계의 <strong>×</strong>는 원본 파일의 행을 지우지 않고 현재 미리보기에서 제외합니다. 잘못 제외한 행만 되돌리는 버튼은 없으므로, 가져오기 전에 해당 파일을 제외하고 다시 선택하세요. 이 경우 그 파일의 미리보기 수정은 다시 확인해야 합니다.</li>
+<li>가져오기를 반복할 때도 <strong>같은 책 합치기</strong> 설정과 결과 건수를 확인하세요. 제목만 같아도 판·권차가 다른 책은 별도로 남을 수 있으므로, 가져온 뒤 <strong>중복 추천</strong>과 <strong>추천 N회</strong> 표시를 살펴보세요.</li>
 </ul>
 <h2 id="9-학교-소장목록으로-중복-구입-살피기">9. 학교 소장목록으로 중복 구입 살피기</h2>
 <p><strong>목적:</strong> 이미 학교에 있는 책인지 비교해 불필요한 중복 구입을 줄입니다.</p>
+<p><strong>지금 할 일: 학교에 이미 있는 책인지 확인하세요.</strong></p>
+<ul>
+<li><strong>누를 곳:</strong> 왼쪽 <strong>등록 자료 → 학교 소장목록</strong>에서 책 제목이나 ISBN을 검색합니다. 소장자료가 비어 있다면 <strong>소장목록 가져오기</strong>를 눌러 학교의 최신 <strong>전체 목록 파일 1개</strong>를 등록합니다.</li>
+<li><strong>확인할 결과:</strong> 등록된 소장자료가 읽기 전용 표에 나타납니다. 구입 목록으로 돌아가면 일치한 후보에 <strong>소장 중 · 중복</strong>이 표시됩니다.</li>
+<li><strong>막히면:</strong> 소장목록에 책이 없다고 해서 무조건 미소장으로 단정하지 마세요. 최신 전체 소장목록을 등록했는지 확인하고, 제목은 같아도 ISBN이 다른 판본일 수 있으니 실물·학교 시스템과 비교하세요.</li>
+</ul>
 <h3 id="클릭-순서_1">클릭 순서</h3>
 <ol>
 <li>학교에서 관리하는 <strong>최신 전체 소장목록</strong> 파일을 준비합니다. 가능하면 ISBN, 제목, 저자가 포함된 표를 사용하세요.</li>
@@ -691,6 +746,12 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 </ul>
 <h2 id="10-구입-선택보류확인-필요-관리">10. 구입 선택·보류·확인 필요 관리</h2>
 <p><strong>목적:</strong> 모든 후보를 보관하면서 이번에 살 책만 구분하고, 불확실한 정보를 해결합니다.</p>
+<p><strong>지금 할 일: 이번 발주에 넣을 책만 남겨 보세요.</strong></p>
+<ul>
+<li><strong>누를 곳:</strong> 도서 표 왼쪽 <strong>구입</strong> 체크를 켜거나 끕니다. 검토할 책은 <strong>확인 필요</strong> 또는 <strong>ISBN 없음</strong> 탭에서 찾고, 제목이나 <strong>수정</strong>을 눌러 서지를 확인합니다.</li>
+<li><strong>확인할 결과:</strong> 체크를 켠 책은 <strong>구입 선택</strong> 탭에 남고 왼쪽 <strong>이번 목록 예산</strong>의 선택 금액에 반영됩니다. 체크를 끈 책은 <strong>보류</strong> 탭에 남습니다.</li>
+<li><strong>막히면:</strong> <strong>작업</strong> 체크는 일괄 작업 대상을 고르는 체크이며 <strong>구입</strong> 체크와 다릅니다. 가격이 비었거나 <strong>확인 필요</strong>가 남았다면 책 정보를 고친 뒤 저장하세요. ISBN이 없어도 제목·저자·출판사·가격을 확인한 책은 <strong>일괄 작업 → 서지 확인 완료</strong>로 처리할 수 있습니다.</li>
+</ul>
 <h3 id="구입과-보류-바꾸기">구입과 보류 바꾸기</h3>
 <ol>
 <li>도서 행 왼쪽 <strong>구입</strong> 체크를 켜면 이번 구입에 선택됩니다.</li>
@@ -751,12 +812,18 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 <ul>
 <li>잘못된 ISBN이나 소장·중복 표시가 있다는 이유만으로 항상 <strong>확인 필요</strong> 탭에 나타나지는 않습니다. 최종 점검은 <strong>구입 선택</strong> 탭에서도 진행하세요.</li>
 <li>중복은 <strong>현재 목록 안에서</strong> 비교합니다. 다른 학기·사업 목록에 같은 책이 있는지 자동으로 모두 찾아주지는 않습니다.</li>
-<li>동일 도서가 추천 출처별로 중복되었다면 남길 한 행의 메모·출처에 선정 근거를 정리하고, 다른 행을 보류하거나 삭제하세요. 복본을 구입하려면 수량도 확인합니다.</li>
+<li><strong>같은 책 합치기</strong>로 모은 책에는 여러 추천 출처가 한 행의 <strong>추천 출처와 원문</strong>에 남습니다. 추천 횟수가 구입 수량을 늘리지는 않으므로, 복본 구입이 필요하면 <strong>수정 → 수량</strong>을 직접 정하세요. 합치지 않은 별도 중복 행이 있다면 각각의 판본과 선정 이유를 살핀 뒤 보류하거나 삭제하세요.</li>
 <li>우선순위·분류·요청자·대상은 판단을 돕는 기록입니다. 우선순위를 “높음”으로 바꾸어도 자동 선택·정렬·예산 배분이 실행되지 않습니다.</li>
 <li>확인을 마치지 못한 후보는 보류 상태로 남겨 두고, 확인한 선택 도서만 발주할 수 있습니다.</li>
 </ul>
 <h2 id="11-최종-발주서-저장하기">11. 최종 발주서 저장하기</h2>
 <p><strong>목적:</strong> 구입 선택한 책을 학교에서 검토·제출할 파일로 만듭니다.</p>
+<p><strong>지금 할 일: 체크한 책으로 첫 발주서를 저장하세요.</strong></p>
+<ul>
+<li><strong>누를 곳:</strong> 도서 표의 <strong>구입 선택</strong> 탭에서 검색어를 지워 전체 선택 도서를 점검합니다. 왼쪽 <strong>발주서 저장 → Excel → 발주서 저장</strong>을 누릅니다.</li>
+<li><strong>확인할 결과:</strong> 내려받은 <code>.xlsx</code> 파일을 열면 체크한 책·수량·할인 후 금액·합계가 보입니다. 저장 직전 창의 종수와 금액이 파일에도 맞는지 확인하세요.</li>
+<li><strong>막히면:</strong> 저장 버튼이 비활성화되면 창의 <strong>저장 전에 확인해 주세요</strong>에 나온 가격 미확인·확인 필요·예산 초과 등을 해결합니다. 파일이 보이지 않으면 브라우저의 다운로드 목록이나 PC의 <strong>다운로드</strong> 폴더를 확인하세요.</li>
+</ul>
 <h3 id="저장-전에-확인할-조건">저장 전에 확인할 조건</h3>
 <ul>
 <li>[ ] 구입에 체크한 책이 한 종 이상 있습니다.</li>
@@ -1247,8 +1314,8 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 <td>미리보기의 각 열이 맞게 정리됩니다.</td>
 </tr>
 <tr>
-<td>열 연결을 다시 적용했더니 수정이 사라졌어요</td>
-<td>원본을 다시 읽은 결과입니다. 열 연결을 끝낸 뒤 개별 수정을 다시 진행합니다.</td>
+<td>열 연결을 다시 적용했더니 값이 이상해요</td>
+<td>직접 고친 값과 제외한 행은 유지되지만, 새로 연결한 열의 결과도 함께 보아야 합니다. 미리보기에서 원문과 수정값을 다시 비교하세요.</td>
 <td>열 연결과 수정값을 확인하고 가져오기를 마쳤습니다.</td>
 </tr>
 <tr>
@@ -1313,7 +1380,7 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 </ul>
 <p>학생·교사 실명, 연락처, 인증키, 실제 학교 백업 전체를 공개 게시물에 올리지 마세요. 문제를 재현할 수 있다면 개인정보를 지우고 <strong>가상의 책 몇 행으로 만든 예제</strong>를 준비하는 편이 좋습니다.</p>
 <hr />
-<p><a href="visual-guide.html">그림으로 보는 쉬운 안내</a> · <a href="quick-start.html">간단한 사용법</a> · <a href="https://github.com/buildergarlic/suseoro">수서로 저장소</a> · <a href="https://github.com/buildergarlic/suseoro/releases/latest">최신 버전</a></p>
+<p><a href="visual-guide.html">그림으로 보는 쉬운 안내</a> · <a href="quick-start.html">첫 10분 따라 하기</a> · <a href="https://github.com/buildergarlic/suseoro">수서로 저장소</a> · <a href="https://github.com/buildergarlic/suseoro/releases/latest">최신 버전</a></p>
 <h3 id="우리-도서관-소장-여부-확인">우리 도서관 소장 여부 확인</h3>
 <p>책 제목 바로 아래에서 <strong>소장 중 · 중복</strong>, <strong>소장목록에 없음</strong>, <strong>소장 확인 전</strong>, <strong>소장 대조 불가</strong>를 구분합니다. 소장 일치는 ISBN 또는 제목·저자 일치 근거를 함께 표시하며, <strong>소장 중복</strong> 필터로 해당 책만 볼 수 있습니다. 소장자료를 가져오지 않았다면 미소장으로 판정하지 않습니다. 왼쪽 메뉴의 <strong>등록 자료 → 학교 소장목록</strong>에서 저장된 자료를 확인하고 <strong>소장목록 가져오기</strong>로 최신 DLS 전체 소장자료를 올리세요. 결과는 업로드한 소장자료 기준이며 판본별 ISBN이 다르면 별도 도서로 취급합니다. 구입 선택 여부는 직접 결정합니다.</p></main></div>
 <footer>수서로 · 학교도서관 사서의 도서 구입을 돕습니다. <a href="index.html">도움말 처음으로</a></footer></body></html>

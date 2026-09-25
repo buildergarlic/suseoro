@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$PythonPath = '',
-    [string]$Version = '2.2.2',
+    [string]$Version = '2.2.3',
     [string]$TesseractDir = '',
     [string]$IsccPath = '',
     [string]$MakensisPath = '',

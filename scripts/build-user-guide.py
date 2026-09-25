@@ -34,6 +34,7 @@ p,ul,ol{margin:14px 0}li{margin:7px 0}strong{color:#163e2e}blockquote{margin:24p
 code{font-family:Consolas,monospace;font-size:.9em;background:#edf0e8;border-radius:4px;padding:2px 5px;word-break:break-word}pre{overflow:auto;padding:18px;background:#edf0e8;border-radius:12px}pre code{padding:0}hr{border:0;border-top:1px solid var(--line);margin:32px 0}.meta{font-size:13px;color:var(--muted)}
 footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font-size:13px;color:var(--muted)}.print-button{font:inherit;border:1px solid #bdd1ba;background:white;color:var(--ink);border-radius:9px;padding:7px 13px;cursor:pointer}.print-button:focus-visible{outline:3px solid #a9510c;outline-offset:3px}
 .install-shortcuts{display:flex;flex-wrap:wrap;gap:10px;margin:24px 0}.install-shortcuts a{display:block;padding:8px 14px;border:1px solid #bdd1ba;border-radius:9px;background:#eef4e7;text-decoration:none;font-weight:700}.install-caption{color:var(--muted);font-size:14px}.install-figure{max-width:600px;margin:24px auto 32px;break-inside:avoid}.install-figure svg{display:block;width:100%;height:auto;font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif}.install-figure figcaption{font-size:15px;line-height:1.7;margin-top:12px;color:var(--muted)}.install-screen{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.guide-quick-start .layout{grid-template-columns:225px minmax(0,900px);gap:38px}.guide-quick-start h1{color:#174c39;margin:12px 0 18px}.guide-quick-start .start-action{margin:18px 0}.guide-quick-start .start-action a{display:inline-block;padding:10px 18px;border-radius:10px;background:#226348;color:white;font-weight:700;text-decoration:none}.guide-quick-start .start-action a:hover{background:#174b34}.guide-quick-start main>h2{margin:42px 0 18px;padding:15px 20px;border:0;border-left:6px solid #2d7653;border-radius:0 14px 14px 0;background:#e9f3e5;font-size:25px}.guide-quick-start main>h2+ol{padding-left:27px}.guide-quick-start main>h2+ol li{padding-left:5px;margin:10px 0}.guide-quick-start .success-signal{padding:12px 18px;border:1px solid #c2debf;border-radius:12px;background:#f0f8ec}.guide-quick-start .success-signal strong{color:#155d38}.guide-quick-start main>blockquote{border-left-color:#db8d38;background:#fff3df}.guide-quick-start table{font-size:15px}.guide-quick-start th{background:#dfeedd}
 @media(max-width:850px){.layout{display:block;margin-top:24px;padding:0 20px}aside details{position:static;max-height:260px;margin-bottom:30px}h2{font-size:24px;margin-top:44px}.topbar nav{gap:14px}.table-wrap{word-break:normal}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 @media print{@page{size:A4;margin:16mm 15mm}body{background:white;font-size:10pt;line-height:1.6;color:black}.topbar,aside,.skip,.print-button,footer{display:none}.layout{display:block;max-width:none;margin:0;padding:0}h1{font-size:24pt}h2{font-size:17pt;margin:26px 0 12px;break-after:avoid}h3{font-size:13pt;break-after:avoid}a{color:inherit;text-decoration:none}blockquote{border:1px solid #aaa;background:none}table{font-size:9pt}.table-wrap{overflow:visible}tr{break-inside:avoid}code{font-size:9pt}p,li{orphans:3;widows:3}}
@@ -60,13 +61,17 @@ def build(source: Path) -> None:
     )
     content = local_links(converter.convert(text))
     content = content.replace("<table>", '<div class="table-wrap"><table>').replace("</table>", "</table></div>")
+    if source.stem == "quick-start":
+        content = content.replace("<p><strong>성공 신호:</strong>", '<p class="success-signal"><strong>성공 신호:</strong>')
+    details_open = "" if source.stem == "quick-start" else " open"
+    toc_label = "목차 펼치기" if source.stem == "quick-start" else "목차"
     page = f'''<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="학교도서관 사서를 위한 수서로 {VERSION} 사용설명서. 글자 크기, 책 표지, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
 <title>{escape(title)} | 수서로 도움말</title><style>{CSS}</style></head>
-<body><a class="skip" href="#main">본문으로 바로 가기</a>
-<header class="topbar"><a class="brand" href="index.html">수서로 {VERSION} · 도움말</a><nav aria-label="설명서 메뉴"><a href="user-guide.html#2-설치하고-처음-실행하기">설치하기</a><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
-<div class="layout"><aside aria-label="이 페이지 목차"><details open><summary>목차</summary>{converter.toc}</details></aside>
+<body class="guide-{source.stem}"><a class="skip" href="#main">본문으로 바로 가기</a>
+<header class="topbar"><a class="brand" href="index.html">수서로 {VERSION} · 도움말</a><nav aria-label="설명서 메뉴"><a href="quick-start.html">처음 따라 하기</a><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="user-guide.html#2-설치하고-처음-실행하기">설치하기</a></nav></header>
+<div class="layout"><aside aria-label="이 페이지 목차"><details{details_open}><summary>{toc_label}</summary>{converter.toc}</details></aside>
 <main id="main"><p class="meta">수서로 {VERSION} 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button>{content}</main></div>
 <footer>수서로 · 학교도서관 사서의 도서 구입을 돕습니다. <a href="index.html">도움말 처음으로</a></footer></body></html>
 '''
@@ -99,7 +104,7 @@ if __name__ == "__main__":
 
 1. 이 ZIP 파일의 압축을 모두 풀어 주세요.
 2. index.html을 더블클릭하면 설명서가 열립니다.
-3. 그림으로 익히기는 visual-guide.html, 상세 설명서는 user-guide.html입니다.
+3. 처음 따라 하기는 quick-start.html, 그림 안내는 visual-guide.html, 상세 설명서는 user-guide.html입니다.
 
 설명서의 글, 그림, 예산 연습은 인터넷 없이 열립니다.
 파일을 각각 옮기지 말고 같은 폴더에 두면 서로 연결됩니다.
