@@ -23,17 +23,18 @@ export function useBulkReview(api: LibraryApi, listId: string, scope: string, bo
     setBusy(true); setError("");
     try { await reloadSaved(); } finally { setBusy(false); }
   }
-  async function run(action: BulkAction) {
-    if (busy || refreshNeeded || !checked.size) return;
+  async function run(action: BulkAction, targetIds = [...checked]) {
+    if (busy || refreshNeeded || !targetIds.length) return false;
     setBusy(true); setError(""); setResult(null);
-    const label = action === "confirm_metadata" ? "서지 확인" : action === "select" ? "구입 선택" : "보류";
+    const label = action === "confirm_metadata" ? "서지 확인" : action === "select" ? "구입 선택" : action === "hold" ? "보류" : "삭제";
     try {
-      const value = await api.bulkBooks(listId, [...checked], action);
+      const value = await api.bulkBooks(listId, targetIds, action);
       setResult({ listId, value, label });
       if (value.updated && value.operation_id) remember(value.operation_id, label);
       setChecked(value.skipped.map(item => item.id));
       await reloadSaved();
-    } catch (caught) { setError(errorMessage(caught)); }
+      return true;
+    } catch (caught) { setError(errorMessage(caught)); return false; }
     finally { setBusy(false); }
   }
   async function undo() {

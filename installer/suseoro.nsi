@@ -6,7 +6,7 @@ Unicode True
 !include "WinVer.nsh"
 !include "FileFunc.nsh"
 !ifndef APP_VERSION
-  !define APP_VERSION "2.2.3"
+  !define APP_VERSION "2.2.4"
 !endif
 !ifndef SOURCE_DIR
   !define SOURCE_DIR "..\dist\Suseoro"

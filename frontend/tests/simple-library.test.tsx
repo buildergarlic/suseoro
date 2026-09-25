@@ -57,13 +57,72 @@ it("drops a bulk target when an ordinary purchase change moves it out of the cur
   await waitFor(() => expect(screen.queryByRole("checkbox", { name: "사과 일괄 작업 선택" })).not.toBeInTheDocument());
   expect(screen.getByRole("button", { name: "선택 도서 보류" })).toBeDisabled();
 });
+
+it("asks before deleting only work-checked books and restores them with bulk undo", async () => {
+  const user = userEvent.setup();
+  const { api, state, transport } = fixture([book("a", { title: "사과", selected: true }), book("b", { title: "배", selected: true })]);
+  render(<SimpleLibraryApp api={api} />);
+  await screen.findByRole("button", { name: "사과" });
+  await user.click(screen.getByText("일괄 작업"));
+  await user.click(screen.getByRole("checkbox", { name: "사과 일괄 작업 선택" }));
+  await user.click(screen.getByRole("button", { name: "선택한 책 삭제" }));
+  const confirm = screen.getByRole("dialog", { name: "선택한 책을 삭제할까요?" });
+  expect(within(confirm).getByText(/작업 체크한 1종/)).toBeInTheDocument();
+  await user.click(within(confirm).getByRole("button", { name: "취소" }));
+  expect(state.books.map(item => item.id)).toEqual(["a", "b"]);
+  expect(transport.mock.calls.some(([input]) => requestUrl(input).endsWith("/books/bulk"))).toBe(false);
+  await user.click(screen.getByRole("button", { name: "선택한 책 삭제" }));
+  await user.click(within(screen.getByRole("dialog", { name: "선택한 책을 삭제할까요?" })).getByRole("button", { name: "1종 삭제" }));
+  await waitFor(() => expect(state.books.map(item => item.id)).toEqual(["b"]));
+  expect(screen.queryByRole("button", { name: "사과" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "배" })).toBeInTheDocument();
+  const request = transport.mock.calls.find(([input]) => requestUrl(input).endsWith("/books/bulk"));
+  expect(JSON.parse(typeof request?.[1]?.body === "string" ? request[1].body : "{}")).toEqual({ action: "delete", book_ids: ["a"] });
+  await waitFor(() => expect(screen.getByRole("button", { name: "일괄 작업 되돌리기" })).toHaveFocus());
+  await user.click(screen.getByRole("button", { name: "일괄 작업 되돌리기" }));
+  await screen.findByRole("button", { name: "사과" });
+  expect(state.books.map(item => item.id)).toEqual(["a", "b"]);
+});
+
+it("keeps bulk undo available after deleting every book in a list", async () => {
+  const user = userEvent.setup();
+  const { api } = fixture([book("only", { title: "마지막 책" })]);
+  render(<SimpleLibraryApp api={api} />);
+  await screen.findByRole("button", { name: "마지막 책" });
+  await user.click(screen.getByText("일괄 작업"));
+  await user.click(screen.getByRole("checkbox", { name: "마지막 책 일괄 작업 선택" }));
+  await user.click(screen.getByRole("button", { name: "선택한 책 삭제" }));
+  await user.click(screen.getByRole("button", { name: "1종 삭제" }));
+  await screen.findByRole("heading", { name: "도서를 추가해 목록을 시작하세요" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "일괄 작업 되돌리기" })).toHaveFocus());
+  await user.click(screen.getByRole("button", { name: "일괄 작업 되돌리기" }));
+  await screen.findByRole("button", { name: "마지막 책" });
+});
+it("keeps the bulk deletion confirmation and selection when saving fails", async () => {
+  const user = userEvent.setup();
+  const { api, state } = fixture([book("a", { title: "사과" })]);
+  render(<SimpleLibraryApp api={api} />);
+  await screen.findByRole("button", { name: "사과" });
+  await user.click(screen.getByText("일괄 작업"));
+  await user.click(screen.getByRole("checkbox", { name: "사과 일괄 작업 선택" }));
+  await user.click(screen.getByRole("button", { name: "선택한 책 삭제" }));
+  state.failBulkDelete = true;
+  await user.click(within(screen.getByRole("dialog", { name: "선택한 책을 삭제할까요?" })).getByRole("button", { name: "1종 삭제" }));
+  expect(await within(screen.getByRole("dialog", { name: "선택한 책을 삭제할까요?" })).findByRole("alert")).toHaveTextContent("저장 공간에 접근할 수 없습니다.");
+  expect(screen.getByRole("checkbox", { name: "사과 일괄 작업 선택" })).toBeChecked();
+  expect(state.books.map(item => item.id)).toEqual(["a"]);
+  state.failBulkDelete = false;
+  await user.click(within(screen.getByRole("dialog", { name: "선택한 책을 삭제할까요?" })).getByRole("button", { name: "1종 삭제" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "선택한 책을 삭제할까요?" })).not.toBeInTheDocument());
+  expect(state.books).toHaveLength(0);
+});
 it("rounds fractional discounts at the same half-won boundary as the order file", () => {
   expect(orderAmount(500, 33.9, 2)).toBe(662);
   expect(orderAmount(15001, 9.7, 3)).toBe(40638);
 });
 const book = (id: string, fields: Partial<BookFields> = {}): Book => ({ ...emptyBook(), id, title: "어린 왕자", author: "생텍쥐페리", publisher: "문학출판", isbn: "9788936434267", price: 10_000, held: false, duplicate: false, ...fields });
 function fixture(initial: Book[] = []) {
-  const state = { display: { text_size: 16, row_density: "comfortable" }, books: initial, deleted: null as Book | null, failSave: false, failExport: false, imports: null as null | { kind: string; rows: PreviewRow[] }, exports: null as null | Record<string, unknown>, lookupCount: 0, restoreCount: 0 };
+  const state = { display: { text_size: 16, row_density: "comfortable" }, books: initial, deleted: null as Book | null, bulkDeleted: [] as { book: Book; index: number }[], failSave: false, failBulkDelete: false, failExport: false, imports: null as null | { kind: string; rows: PreviewRow[] }, exports: null as null | Record<string, unknown>, lookupCount: 0, restoreCount: 0 };
   const list: AcquisitionList = { id: "list-1", name: "2026 2학기 도서 구입", year: 2026, budget: 15_000_000, discount_percent: 10, created_at: "2026-09-15" };
   const preview: PreviewRow = { ...emptyBook(), title: "가져온 제목", isbn: "9788936434267", price: null, needs_review: true, source: "학교 추천.xlsx", raw_values: { 도서명: "가져온 제목" }, provenance: { filename: "학교 추천.xlsx", row: 2 } };
   const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -84,6 +143,7 @@ function fixture(initial: Book[] = []) {
     if (/\/books\/[^/]+\/restore$/.test(path)) { if (state.deleted) state.books.push(state.deleted); return json(state.deleted); }
     if (path === "/lists/list-1/books/bulk") {
       const ids = payload.book_ids as string[];
+      if (payload.action === "delete") { if (state.failBulkDelete) return json({ detail: "저장 공간에 접근할 수 없습니다." }, 503); state.bulkDeleted = state.books.flatMap((item, index) => ids.includes(item.id) ? [{ book: item, index }] : []); state.books = state.books.filter(item => !ids.includes(item.id)); return json({ updated: ids.length, skipped: [], operation_id: "bulk-1" }); }
       for (const item of state.books.filter(item => ids.includes(item.id))) {
         if (payload.action === "confirm_metadata") { item.needs_review = false; item.warnings = []; }
         else item.selected = payload.action === "select";
@@ -104,6 +164,7 @@ function fixture(initial: Book[] = []) {
       return json({ added: rows.length, merged: 0, input_count: rows.length, warnings: [], operation_id: "import-op" });
     }
     if (path === "/lists/list-1/operations/import-op/undo") { state.books = state.books.filter(item => !item.id.startsWith("imported-")); return json({ restored: 1 }); }
+    if (path === "/lists/list-1/operations/bulk-1/undo") { for (const item of state.bulkDeleted) state.books.splice(item.index, 0, item.book); state.bulkDeleted = []; return json({ restored: 1 }); }
     if (path === "/lists/list-1/imports") { state.imports = payload as typeof state.imports; const rows = payload.rows as PreviewRow[]; if (payload.kind === "recommendations") state.books.push(...rows.map((row, index) => book(`imported-${index}`, row))); return json({ added: rows.length, warnings: [] }); }
     if (path === "/templates") return json([]);
     if (path === "/lists/list-1/export") { state.exports = payload; return state.failExport ? json({ detail: "선택한 책의 ISBN을 확인해 주세요." }, 400) : new Response("export-content", { headers: { "Content-Disposition": "attachment; filename=order.csv" } }); }

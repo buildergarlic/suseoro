@@ -7,4 +7,4 @@ if not exist "%SUSEORO_REVIEW_EXE%" (
   pause
   exit /b 1
 )
-start "" "%SUSEORO_REVIEW_EXE%" --browser --data-dir "%LOCALAPPDATA%\Suseoro-Review-2.2.3"
+start "" "%SUSEORO_REVIEW_EXE%" --browser --data-dir "%LOCALAPPDATA%\Suseoro-Review-2.2.4"

@@ -192,12 +192,17 @@ def _ensure_history(book):
     book.setdefault('recommendation_count', len(book['contributions']))
 
 
-def _save_operation(db, list_id, before, books, result, *, request_id=None, fingerprint=None):
+def _save_operation(db, list_id, before, books, result, *, request_id=None, fingerprint=None,
+                    deleted_ids=()):
+    deleted_ids = set(deleted_ids)
     snapshots = []
     for book_id, previous in before.items():
         book = books[book_id]
         if previous is None:
             db.execute('INSERT INTO books(id,list_id,data) VALUES (?,?,?)', (book_id, list_id, encoded(book)))
+        elif book_id in deleted_ids:
+            # Keep the bibliographic data and provenance intact for backup and undo.
+            db.execute('UPDATE books SET deleted=1 WHERE id=? AND list_id=?', (book_id, list_id))
         else:
             db.execute('UPDATE books SET data=? WHERE id=? AND list_id=?', (encoded(book), book_id, list_id))
         revision = db.execute('SELECT revision FROM book_revisions WHERE id=?', (book_id,)).fetchone()['revision']
@@ -383,7 +388,7 @@ def bulk_books(store, list_id, values):
     if (not isinstance(book_ids, list) or not 1 <= len(book_ids) <= MAX_ROWS
             or any(not isinstance(item, str) or not 1 <= len(item) <= 64 for item in book_ids)
             or len(set(book_ids)) != len(book_ids)
-            or action not in ('confirm_metadata', 'select', 'hold')):
+            or action not in ('confirm_metadata', 'select', 'hold', 'delete')):
         raise ValueError('변경할 도서와 작업을 다시 선택해 주세요.')
     with store.connection() as db:
         db.execute('BEGIN IMMEDIATE')
@@ -392,10 +397,12 @@ def bulk_books(store, list_id, values):
         rows = {row['id']: row for row in db.execute('SELECT * FROM books WHERE list_id=? AND deleted=0', (list_id,))}
         if any(item not in rows for item in book_ids):
             raise KeyError('현재 목록에서 일부 도서를 찾을 수 없습니다. 아무 도서도 변경하지 않았습니다.')
-        display_rows = [json.loads(row['data']) for row in rows.values()]
-        holdings = [json.loads(row['data']) for row in db.execute('SELECT data FROM holdings')]
-        annotate_review(display_rows, holdings)
-        displayed = {row['id']: row for row in display_rows}
+        displayed = {}
+        if action == 'confirm_metadata':
+            display_rows = [json.loads(row['data']) for row in rows.values()]
+            holdings = [json.loads(row['data']) for row in db.execute('SELECT data FROM holdings')]
+            annotate_review(display_rows, holdings)
+            displayed = {row['id']: row for row in display_rows}
         before, books, skipped = {}, {}, []
         for book_id in book_ids:
             stored = rows[book_id]
@@ -420,11 +427,12 @@ def bulk_books(store, list_id, values):
                     'bibliography': {field: row[field] for field in (*BIB_FIELDS, 'isbn', 'price')}})
                 row['warnings'] = []
                 row['needs_review'] = False
-            else:
+            elif action in ('select', 'hold'):
                 row['selected'] = action == 'select'
             before[book_id] = {'data': stored['data'], 'deleted': stored['deleted']}
             books[book_id] = row
-        return _save_operation(db, list_id, before, books, {'updated': len(before), 'skipped': skipped})
+        return _save_operation(db, list_id, before, books, {'updated': len(before), 'skipped': skipped},
+                               deleted_ids=book_ids if action == 'delete' else ())
 
 
 def undo_operation(store, list_id, operation_id):

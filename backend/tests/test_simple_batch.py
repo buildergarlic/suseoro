@@ -162,6 +162,69 @@ def test_bulk_rejects_mixed_foreign_and_unknown_ids_without_partial_changes(stor
         assert store.list_state(lid)['books'][0]['selected'] is True
 
 
+def test_bulk_delete_hides_only_selected_books_and_undo_restores_the_exact_rows(store):
+    lid = store.lists()[0]['id']
+    first, second, third = store.add_books(lid, [
+        book(title='First', quantity=2, note='Keep my note'),
+        book(title='Second'),
+        book(title='Third', selected=False),
+    ])
+    original = copy.deepcopy(records(store))
+
+    result = store.bulk_books(lid, {'book_ids': [first['id'], third['id']], 'action': 'delete'})
+
+    assert result['updated'] == 2 and result['skipped'] == []
+    assert result['operation_id']
+    state = store.list_state(lid)
+    assert [row['id'] for row in state['books']] == [second['id']]
+    assert state['summary']['selected_count'] == 1
+    assert state['summary']['order_total'] == 12000
+    saved = {row['id']: row for row in store.backup()['books']}
+    assert saved[first['id']]['deleted'] is True
+    assert saved[second['id']]['deleted'] is False
+    assert saved[third['id']]['deleted'] is True
+    assert saved[first['id']]['note'] == 'Keep my note'
+
+    assert store.undo_operation(lid, result['operation_id']) == {'restored': 2}
+    assert records(store) == original
+    assert store.undo_operation(lid, result['operation_id']) == {'restored': 0}
+
+
+def test_bulk_delete_rejects_wrong_or_already_deleted_ids_without_partial_changes(store):
+    lid = store.lists()[0]['id']
+    own, removed = store.add_books(lid, [book(title='Own'), book(title='Already deleted')])
+    foreign_list = store.create_list({'name': 'Other'})['id']
+    foreign = store.add_book(foreign_list, book(title='Foreign'))
+    store.delete_book(lid, removed['id'])
+    before = copy.deepcopy(store.backup()['books'])
+
+    for wrong in ('unknown', foreign['id'], removed['id']):
+        with pytest.raises(KeyError):
+            store.bulk_books(lid, {'book_ids': [own['id'], wrong], 'action': 'delete'})
+        assert store.backup()['books'] == before
+
+    for invalid in ([], [own['id'], own['id']]):
+        with pytest.raises(ValueError):
+            store.bulk_books(lid, {'book_ids': invalid, 'action': 'delete'})
+        assert store.backup()['books'] == before
+
+
+def test_bulk_delete_undo_refuses_to_overwrite_a_later_restore_and_edit(store):
+    lid = store.lists()[0]['id']
+    first, second = store.add_books(lid, [book(title='First'), book(title='Second')])
+    result = store.bulk_books(lid, {'book_ids': [first['id'], second['id']], 'action': 'delete'})
+    store.restore_book(lid, first['id'])
+    store.update_book(lid, first['id'], {'note': 'Later edit'})
+
+    with pytest.raises(ValueError, match='변경'):
+        store.undo_operation(lid, result['operation_id'])
+
+    assert [row['id'] for row in records(store)] == [first['id']]
+    assert records(store)[0]['note'] == 'Later edit'
+    saved = {row['id']: row for row in store.backup()['books']}
+    assert saved[second['id']]['deleted'] is True
+
+
 def test_import_and_bulk_undo_restore_exact_values_and_refuse_newer_edits(store):
     lid = store.lists()[0]['id']
     original = store.add_book(lid, book())
@@ -378,3 +441,9 @@ def test_batch_endpoints_and_foreign_operation_boundary(tmp_path):
         foreign = client.post('/api/library/lists', json={'name': 'Other'}).json()['id']
         assert client.post(f'/api/library/lists/{foreign}/operations/{operation_id}/undo').status_code == 404
         assert client.post(base + f'/operations/{operation_id}/undo').json() == {'restored': 1}
+        deleted = client.post(base + '/books/bulk', json={'book_ids': [row['id']], 'action': 'delete'})
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()['updated'] == 1 and deleted.json()['skipped'] == []
+        assert client.get(base).json()['books'] == []
+        assert client.post(base + f"/operations/{deleted.json()['operation_id']}/undo").json() == {'restored': 1}
+        assert [book['id'] for book in client.get(base).json()['books']] == [row['id']]
