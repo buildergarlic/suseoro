@@ -202,7 +202,7 @@ if ($PortableZip) {
 }
 
 $checksumLines = @()
-foreach ($name in @("Suseoro-Setup-$Version.exe", "Suseoro-Portable-$Version.zip")) {
+foreach ($name in @("Suseoro-Setup-$Version.exe", "Suseoro-Portable-$Version.zip", "Suseoro-Guide-$Version.zip")) {
     $file = Join-Path $distRoot $name
     if (Test-Path -LiteralPath $file) {
         $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()

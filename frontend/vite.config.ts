@@ -12,6 +12,8 @@ export default defineConfig({
   test: {
     exclude: [...configDefaults.exclude, "e2e/**"],
     environment: "jsdom",
+    // Avoid CPU contention in large DOM interaction tests.
+    maxWorkers: 1,
     setupFiles: ["./src/test/setup.ts"],
     restoreMocks: true,
     clearMocks: true,

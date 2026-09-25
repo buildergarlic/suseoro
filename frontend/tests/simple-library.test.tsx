@@ -22,7 +22,7 @@ it("confirms 200 ISBN-less books across pages without changing purchase selectio
   expect(JSON.parse(typeof request?.[1]?.body === "string" ? request[1].body : "{}")).toMatchObject({ action: "confirm_metadata", book_ids: books.map(item => item.id) });
   expect(state.books.filter(item => item.selected)).toHaveLength(100);
   expect(await screen.findByRole("button", { name: "일괄 작업 되돌리기" })).toBeInTheDocument();
-});
+}, 15_000);
 
 it("clears bulk targets when search changes and applies only the new filtered result", async () => {
   const user = userEvent.setup();

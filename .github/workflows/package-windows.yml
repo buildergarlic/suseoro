@@ -5,7 +5,7 @@ on:
       version:
         description: Package version (must match source)
         required: true
-        default: '2.1.1'
+        default: '2.2.0'
 permissions:
   contents: read
 jobs:
@@ -29,7 +29,7 @@ jobs:
         working-directory: frontend
         run: npm run build
       - name: Build offline user guides
-        run: uv run scripts/build-user-guide.py
+        run: uv run scripts/build-user-guide.py --zip
       - name: Fetch official portable NSIS
         shell: pwsh
         run: |
@@ -50,6 +50,7 @@ jobs:
           path: |
             dist/Suseoro-Setup-*.exe
             dist/Suseoro-Portable-*.zip
+            dist/Suseoro-Guide-*.zip
             dist/*.sha256
             dist/SHA256SUMS
           if-no-files-found: error
