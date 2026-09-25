@@ -151,18 +151,26 @@ def _book(
     if any("\ufffd" in _text(value) for value in raw.values()):
         notices.append("읽을 수 없는 문자가 있습니다. 파일 인코딩과 원문을 확인해 주세요.")
     title = _text(fields.get("title"))
+    author = _text(fields.get("author"))
+    publisher = _text(fields.get("publisher"))
     isbn_input = _text(fields.get("isbn"))
     isbn = _isbn(isbn_input) if isbn_input else None
     isbn_columns = [header for header in raw if canonical_header(header.split("__", 1)[0]) == "isbn"]
     explicit_isbn = mapping is not None and (mapping.get("isbn") == "" or mapping.get("isbn") in raw or any(value == "isbn" and key in raw for key, value in mapping.items()))
     if not explicit_isbn:
-        candidates = [(header, _isbn(raw[header])) for header in isbn_columns if _isbn(raw[header])]
+        isbn_values = [(header, _isbn(raw[header])) for header in isbn_columns if _text(raw[header])]
+        candidates = [(header, value) for header, value in isbn_values if value]
         if candidates:
             candidates.sort(key=lambda item: "13" not in _key(item[0]))
             chosen_header, isbn = candidates[0]
             isbn_input = _text(raw[chosen_header])
             if len({value for _, value in candidates}) > 1:
                 notices.append("ISBN 열의 값이 서로 다릅니다. 해당 도서의 ISBN을 원본에서 확인해 주세요.")
+            if any(not value for _, value in isbn_values):
+                notices.append("일부 ISBN 열의 형식이나 체크숫자가 맞지 않습니다. 원본의 ISBN을 확인해 주세요.")
+        elif not isbn_input and isbn_values:
+            # A blank preferred ISBN13 column must not hide an invalid ISBN10.
+            isbn_input = _text(raw[isbn_values[0][0]])
     if isbn and canonical_isbn13(isbn_input) is None:
         notices.append("숫자 표기의 ISBN을 변환했습니다. 원본의 자릿수를 확인해 주세요.")
     price = _integer(fields.get("price"), minimum=0)
@@ -170,8 +178,12 @@ def _book(
     quantity = 1 if quantity_input in (None, "") else _integer(quantity_input, minimum=1, quantity=True)
     if not title:
         notices.append("도서명을 확인해 주세요.")
-    if not isbn:
-        notices.append("ISBN이 없거나 체크숫자가 맞지 않습니다. 정확한 ISBN을 확인해 주세요.")
+    if isbn_input and not isbn:
+        notices.append("ISBN 형식이나 체크숫자가 맞지 않습니다. 정확한 ISBN을 확인해 주세요.")
+    elif not isbn_input:
+        missing = [label for label, value in (("저자", author), ("출판사", publisher)) if not value]
+        if missing:
+            notices.append(f"서지 정보가 부족합니다. {'·'.join(missing)} 정보를 확인해 주세요.")
     if price is None:
         notices.append("정가를 확인해 주세요. 가격이 없으면 발주 금액에 포함되지 않습니다.")
     if quantity is None:
@@ -192,8 +204,8 @@ def _book(
     if page is not None:
         provenance["page"] = page
     return {
-        "title": title, "author": _text(fields.get("author")),
-        "publisher": _text(fields.get("publisher")), "isbn": isbn or isbn_input,
+        "title": title, "author": author,
+        "publisher": publisher, "isbn": isbn or isbn_input,
         "price": price, "quantity": quantity, "selected": True,
         "category": _text(fields.get("category")), "requester": _text(fields.get("requester")),
         "audience": _text(fields.get("audience")), "priority": priority if priority in {"high", "normal", "low"} else "normal",

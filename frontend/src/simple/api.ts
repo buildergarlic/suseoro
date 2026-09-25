@@ -1,4 +1,4 @@
-import type { AcquisitionList, Book, BookFields, Bootstrap, ImportPreview, ListDetail, PreviewRow, Settings, Template, UpdateInfo } from "./types";
+import type { AcquisitionList, BatchImportResult, Book, BookFields, Bootstrap, BulkAction, BulkResult, ImportPreview, ListDetail, PreviewRow, Settings, Template, UpdateInfo } from "./types";
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export function createLibraryApi(fetcher: Fetcher = (input, init) => fetch(input, init)) {
@@ -49,6 +49,9 @@ export function createLibraryApi(fetcher: Fetcher = (input, init) => fetch(input
     preview: (file: File) => upload<ImportPreview>("/imports/preview", file),
     remapPreview: (id: string, mapping: Record<string, string>) => json<ImportPreview>(`/imports/${id}/preview`, send({ mapping })),
     importRows: (id: string, import_id: string, rows: PreviewRow[], kind: "recommendations" | "holdings") => json<{ added: number; warnings: string[] }>(`/lists/${id}/imports`, send({ import_id, rows, kind })),
+    importBatch: (id: string, imports: { import_id: string; rows: PreviewRow[] }[], deduplicate: boolean, request_id: string) => json<BatchImportResult>(`/lists/${id}/imports/batch`, send({ imports, deduplicate, request_id })),
+    bulkBooks: (id: string, book_ids: string[], action: BulkAction) => json<BulkResult>(`/lists/${id}/books/bulk`, send({ book_ids, action })),
+    undoOperation: (id: string, operationId: string) => json<{ restored: number }>(`/lists/${id}/operations/${operationId}/undo`, { method: "POST" }),
     templates: () => json<Template[]>("/templates"),
     uploadTemplate: (file: File) => upload<Template>("/templates", file),
     exportList: (id: string, format: "xlsx" | "csv" | "html", template_id?: string) => download(`/lists/${id}/export`, `발주서.${format}`, { format, ...(template_id ? { template_id } : {}) }),

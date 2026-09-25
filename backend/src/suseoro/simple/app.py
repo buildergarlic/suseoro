@@ -145,6 +145,14 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
     def add_book(list_id: str, values: dict):
         return store.add_book(list_id, values)
 
+    @app.post(PREFIX + '/lists/{list_id}/books/bulk')
+    def bulk_books(list_id: str, values: dict):
+        return store.bulk_books(list_id, values)
+
+    @app.post(PREFIX + '/lists/{list_id}/operations/{operation_id}/undo')
+    def undo_operation(list_id: str, operation_id: str):
+        return store.undo_operation(list_id, operation_id)
+
     @app.patch(PREFIX + '/lists/{list_id}/books/{book_id}')
     def edit_book(list_id: str, book_id: str, values: dict):
         return store.update_book(list_id, book_id, values)
@@ -234,6 +242,10 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
         else:
             added = len(store.add_books(list_id, rows))
         return {'added': added, 'warnings': []}
+
+    @app.post(PREFIX + '/lists/{list_id}/imports/batch')
+    def commit_batch_import(list_id: str, values: dict):
+        return store.import_batch(list_id, values)
 
     @app.get(PREFIX + '/templates')
     def templates():

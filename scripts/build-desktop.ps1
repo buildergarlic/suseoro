@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$PythonPath = '',
-    [string]$Version = '2.1.2',
+    [string]$Version = '2.2.0',
     [string]$TesseractDir = '',
     [string]$IsccPath = '',
     [string]$MakensisPath = '',
@@ -171,6 +171,9 @@ for package in ('react', 'react-dom'):
 }
 
 if (-not (Test-Path -LiteralPath (Join-Path $appRoot 'Suseoro.exe'))) { throw 'No packaged Suseoro.exe is available.' }
+
+Copy-Item -LiteralPath (Join-Path $workspace 'desktop\Start-Review.cmd') -Destination $appRoot -Force
+Copy-Item -LiteralPath (Join-Path $workspace 'docs\recommendation-batch-guide.md') -Destination $appRoot -Force
 
 if (-not $SkipInstaller) {
     if ($IsccPath) {

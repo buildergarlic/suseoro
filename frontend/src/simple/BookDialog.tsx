@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import type { LibraryApi } from "./api";
+import { RecommendationHistory } from "./RecommendationHistory";
 import { BookLinks } from "./BookLinks";
 import { IsbnProviderSetup } from "./IsbnProviderSetup";
 import { InlineError, Modal } from "./Modal";
@@ -50,7 +51,7 @@ export function BookDialog({ book, api, listId, onClose, onSaved, onDeleted }: {
     } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); }
   }
   return <Modal className={book ? "detail-drawer" : ""} title={book ? "책 정보 수정" : "책 직접 추가"} description="모르는 정보는 비워 두고, 확인한 정보부터 채워 주세요." onClose={onClose} busy={busy}>
-    <form onSubmit={event => { void save(event); }}><div className="modal-body"><div className="lookup-inline"><button type="button" className="button secondary small" disabled={busy || !value.isbn.trim()} onClick={() => { void lookupMissing(); }}>ISBN으로 빈 정보 채우기</button><small>입력한 제목·가격은 유지합니다.</small></div><BookFieldsForm disabled={busy} value={value} onChange={setValue} /><InlineError message={error} /></div><footer className="modal-footer">{book && <button type="button" className="danger-text" onClick={() => { void remove(); }} disabled={busy}>이 책 삭제</button>}<span className="spacer" /><button type="button" className="button secondary" onClick={onClose} disabled={busy}>취소</button><button type="submit" className="button primary" disabled={busy}>{busy ? "처리 중…" : "저장"}</button></footer></form>
+    <form onSubmit={event => { void save(event); }}><div className="modal-body"><div className="lookup-inline"><button type="button" className="button secondary small" disabled={busy || !value.isbn.trim()} onClick={() => { void lookupMissing(); }}>ISBN으로 빈 정보 채우기</button><small>입력한 제목·가격은 유지합니다.</small></div><BookFieldsForm disabled={busy} value={value} onChange={setValue} />{book && <RecommendationHistory book={book} />}<InlineError message={error} /></div><footer className="modal-footer">{book && <button type="button" className="danger-text" onClick={() => { void remove(); }} disabled={busy}>이 책 삭제</button>}<span className="spacer" /><button type="button" className="button secondary" onClick={onClose} disabled={busy}>취소</button><button type="submit" className="button primary" disabled={busy}>{busy ? "처리 중…" : "저장"}</button></footer></form>
   </Modal>;
 }
 

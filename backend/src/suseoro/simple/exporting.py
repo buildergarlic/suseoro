@@ -121,7 +121,8 @@ def _prepared(books: list[dict], list_info: dict) -> tuple[list[dict], dict]:
         if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
             raise ValueError("수량을 확인해 주세요.")
         unit = int((Decimal(price) * (100 - discount) / 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-        rows.append({**book, "number": number, "order_price": unit, "line_total": unit * quantity, "discount_percent": float(discount)})
+        sources = list(dict.fromkeys(value for value in [book.get("source", ""), *book.get("sources", [])] if isinstance(value, str) and value))
+        rows.append({**book, "source": " · ".join(sources), "_source_entries": sources, "number": number, "order_price": unit, "line_total": unit * quantity, "discount_percent": float(discount)})
     totals = {
         "order_total": sum(row["line_total"] for row in rows),
         "list_total": sum(row["price"] * row["quantity"] for row in rows),
@@ -323,7 +324,21 @@ def export_books(books: list[dict], list_info: dict, school_name: str, format: s
         for book in rows:
             writer.writerow([escape_spreadsheet_cell(book.get(field, "")) for field, _, _ in _COLUMNS])
         return output.getvalue().encode("utf-8-sig"), filename, _MIME[format]
-    workbook = _custom(rows, totals, school_name, Path(template_path)) if template_path else _standard(rows, totals, school_name)
+    # Excel silently truncates strings at 32,767 characters. Keep long source
+    # histories in individual cells on an additional sheet instead.
+    overflow = [row for row in rows if len(row['source']) > 32000]
+    excel_rows = [{**row, 'source': '추천 출처가 많아 추가된 추천출처 시트에 모두 보관했습니다.'} if len(row['source']) > 32000 else row for row in rows]
+    workbook = _custom(excel_rows, totals, school_name, Path(template_path)) if template_path else _standard(excel_rows, totals, school_name)
+    if overflow:
+        history = workbook.create_sheet('추천출처')
+        history.append(['번호', '도서명', '추천 출처'])
+        for row in overflow:
+            for source in row['_source_entries']:
+                if source:
+                    history.append([row['number'], escape_spreadsheet_cell(row['title']), escape_spreadsheet_cell(source)])
+        history.freeze_panes = 'A2'
+        history.column_dimensions['B'].width = 36
+        history.column_dimensions['C'].width = 70
     output = BytesIO()
     try:
         workbook.save(output)

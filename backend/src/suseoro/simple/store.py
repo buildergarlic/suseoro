@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
-from suseoro.catalog.normalization import canonical_isbn13, normalize_key, normalize_author
+from suseoro.catalog.normalization import canonical_isbn13
 
 TEXT_FIELDS = ('title', 'author', 'publisher', 'isbn', 'category', 'requester', 'audience',
                'source', 'note', 'published_date', 'link')
@@ -203,6 +203,25 @@ class LibraryStore:
                 CREATE TABLE IF NOT EXISTS holdings (id TEXT PRIMARY KEY, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS imports (id TEXT PRIMARY KEY, filename TEXT NOT NULL, path TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS batch_operations (
+                    id TEXT PRIMARY KEY, list_id TEXT NOT NULL, request_id TEXT,
+                    fingerprint TEXT, result TEXT NOT NULL, snapshots TEXT NOT NULL,
+                    created_at TEXT NOT NULL, undone INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(list_id, request_id));
+                CREATE TABLE IF NOT EXISTS book_revisions (id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+                INSERT OR IGNORE INTO book_revisions SELECT id, 0 FROM books;
+                CREATE TRIGGER IF NOT EXISTS book_revision_insert AFTER INSERT ON books BEGIN
+                    INSERT INTO book_revisions VALUES (NEW.id, 1)
+                    ON CONFLICT(id) DO UPDATE SET revision=revision+1;
+                END;
+                CREATE TRIGGER IF NOT EXISTS book_revision_update AFTER UPDATE ON books BEGIN
+                    INSERT INTO book_revisions VALUES (NEW.id, 1)
+                    ON CONFLICT(id) DO UPDATE SET revision=revision+1;
+                END;
+                CREATE TRIGGER IF NOT EXISTS book_revision_delete AFTER DELETE ON books BEGIN
+                    INSERT INTO book_revisions VALUES (OLD.id, 1)
+                    ON CONFLICT(id) DO UPDATE SET revision=revision+1;
+                END;
             ''')
             if not db.execute('SELECT 1 FROM lists LIMIT 1').fetchone():
                 data = {**validate_list({}), 'id': identifier(), 'created_at': now()}
@@ -279,6 +298,18 @@ class LibraryStore:
     def add_book(self, list_id, values):
         return self.add_books(list_id, [values])[0]
 
+    def import_batch(self, list_id, values):
+        from suseoro.simple.batch import import_batch
+        return import_batch(self, list_id, values)
+
+    def bulk_books(self, list_id, values):
+        from suseoro.simple.batch import bulk_books
+        return bulk_books(self, list_id, values)
+
+    def undo_operation(self, list_id, operation_id):
+        from suseoro.simple.batch import undo_operation
+        return undo_operation(self, list_id, operation_id)
+
     def add_books(self, list_id, values):
         self.get_list(list_id)
         if len(values) > 20000:
@@ -291,6 +322,7 @@ class LibraryStore:
 
     def update_book(self, list_id, book_id, values):
         with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT data FROM books WHERE id=? AND list_id=? AND deleted=0', (book_id, list_id)).fetchone()
             if not row:
                 raise KeyError('도서를 찾을 수 없습니다.')
@@ -335,36 +367,8 @@ class LibraryStore:
         with self.connection() as db:
             books = [json.loads(r['data']) for r in db.execute('SELECT data FROM books WHERE list_id=? AND deleted=0 ORDER BY rowid', (list_id,))]
             holdings = [json.loads(r['data']) for r in db.execute('SELECT data FROM holdings')]
-        owned_isbns = {canonical_isbn13(b['isbn']) for b in holdings if canonical_isbn13(b['isbn'])}
-        owned_titles = {(normalize_key(b['title']), normalize_author(b['author'])) for b in holdings if b['title'] and b['author']}
-        unidentified_titles = {(normalize_key(b['title']), normalize_author(b['author'])) for b in holdings if b['title'] and b['author'] and not canonical_isbn13(b['isbn'])}
-        identities = []
-        for b in books:
-            isbn = canonical_isbn13(b['isbn'])
-            identities.append(('isbn', isbn) if isbn else ('text', normalize_key(b['title']), normalize_author(b['author'])))
-        from collections import Counter
-        counts = Counter(identities)
-        for b, identity in zip(books, identities):
-            isbn = canonical_isbn13(b['isbn'])
-            title_key = (normalize_key(b['title']), normalize_author(b['author']))
-            title_matches = unidentified_titles if isbn else owned_titles
-            b['held'] = bool(isbn in owned_isbns or (all(title_key) and title_key in title_matches))
-            b['held_match'] = 'isbn' if isbn in owned_isbns else 'title_author' if b['held'] else None
-            b['holdings_status'] = ('unchecked' if not holdings else 'held' if b['held']
-                                    else 'not_held' if isbn or all(title_key) else 'uncheckable')
-            b['duplicate'] = counts[identity] > 1 and bool(isbn or all(title_key))
-            messages = list(b.get('warnings', []))
-            if b['isbn'] and not isbn:
-                messages.append('ISBN 확인이 필요합니다.')
-            if not b['title']:
-                messages.append('도서명을 입력해 주세요.')
-            if b['price'] is None:
-                messages.append('가격을 확인해 주세요.')
-            if b['held']:
-                messages.append('소장목록에 같은 책이 있습니다.')
-            if b['duplicate']:
-                messages.append('현재 목록에 같은 책이 있습니다.')
-            b['warnings'] = list(dict.fromkeys(messages))
+        from suseoro.simple.batch import annotate_review
+        annotate_review(books, holdings)
         selected = [b for b in books if b['selected']]
         order_total = sum(unit_amount(b, info['discount_percent']) * b['quantity'] for b in selected)
         summary = {'selected_count': len(selected), 'total_quantity': sum(b['quantity'] for b in selected),
@@ -499,6 +503,8 @@ class LibraryStore:
                     raise ValueError('도서의 목록 연결이 올바르지 않습니다.')
                 book_ids.add(item['id'])
                 normalized = {**validate_book(item), 'id': item['id']}
+                from suseoro.simple.batch import restore_metadata
+                restore_metadata(item, normalized)
                 if 'reviewed_warnings' in item:
                     reviewed = item['reviewed_warnings']
                     if not isinstance(reviewed, list) or len(reviewed) > 100 or any(not isinstance(value, str) or len(value) > 4000 for value in reviewed):
@@ -525,6 +531,7 @@ class LibraryStore:
             with self.connection() as db:
                 db.execute('BEGIN IMMEDIATE')
                 self._safety_backup(self._backup_snapshot(db, allow_unavailable_attachments=True))
+                db.execute('DELETE FROM batch_operations')
                 db.execute('DELETE FROM books')
                 db.execute('DELETE FROM lists')
                 db.execute('DELETE FROM holdings')

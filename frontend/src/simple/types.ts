@@ -9,6 +9,9 @@ export interface BookFields {
 }
 export interface Book extends BookFields {
   id: string; held: boolean; duplicate: boolean;
+  recommendation_count?: number;
+  sources?: string[];
+  contributions?: { source?: string; filename?: string; provenance?: unknown; raw_text?: string; values?: Record<string, unknown> }[];
   holdings_status?: "held" | "not_held" | "unchecked" | "uncheckable";
   held_match?: "isbn" | "title_author" | null;
 }
@@ -31,6 +34,9 @@ export interface UpdateInfo {
 export interface Bootstrap { version: string; csrf_token: string; settings: Settings; lists: AcquisitionList[]; update: UpdateInfo | null }
 export interface ImportDiagnostic { kind: string; sheet?: string; row?: number; page?: number | null; raw_text: string; message: string }
 export interface ImportPreview { import_id: string; filename: string; rows: PreviewRow[]; warnings: string[]; headers?: string[]; mapping?: Record<string, unknown>; diagnostics?: ImportDiagnostic[] }
+export interface BatchImportResult { added: number; merged: number; input_count: number; warnings: string[]; operation_id: string }
+export type BulkAction = "confirm_metadata" | "select" | "hold";
+export interface BulkResult { updated: number; skipped: { id: string; reason: string }[]; operation_id: string }
 export interface Template { id: string; name: string; columns: string[]; warnings?: string[] }
 export const emptyBook = (): BookFields => ({ title: "", author: "", publisher: "", isbn: "", price: null, quantity: 1, selected: true, category: "", requester: "", audience: "", priority: "normal", source: "직접 입력", note: "", published_date: "", link: "", needs_review: false, warnings: [] });
 export const money = (value: number) => `${new Intl.NumberFormat("ko-KR").format(value)}원`;

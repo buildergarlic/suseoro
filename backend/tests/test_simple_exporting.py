@@ -17,6 +17,26 @@ BOOKS = [
 LIST = {"name": "2학기 구입", "year": 2026, "budget": 15000000, "discount_percent": 10}
 
 
+def test_merged_recommendation_sources_export_together_without_changing_quantity():
+    book = {**BOOKS[0], "isbn": "", "source": "수정한 출처", "sources": ["기관 A", "기관 B", "기관 A"]}
+    content, _, _ = export_books([book], LIST, "학교")
+    sheet = load_workbook(BytesIO(content)).active
+    headers = {cell.value: cell.column for cell in sheet[6]}
+    assert sheet.cell(7, headers["목록출처"]).value == "수정한 출처 · 기관 A · 기관 B"
+    assert sheet.cell(7, headers["수량"]).value == 2
+    assert sheet.cell(7, headers["ISBN"]).value is None
+
+
+def test_long_merged_sources_are_preserved_in_separate_sheet():
+    sources = [f"기관 {i:03} " + "가" * 100 for i in range(500)]
+    content, _, _ = export_books([{**BOOKS[0], "source": sources[0], "sources": sources}], LIST, "학교")
+    workbook = load_workbook(BytesIO(content))
+    assert "추천출처" in workbook.sheetnames
+    history = workbook["추천출처"]
+    assert [history.cell(index + 2, 3).value for index in range(500)] == sources
+    assert "추천출처" in workbook.active.cell(7, 12).value
+
+
 def test_standard_workbook_uses_unit_half_up_discount_and_safe_text():
     content, filename, mime = export_books(BOOKS, LIST, "수서중학교")
     workbook = load_workbook(BytesIO(content), data_only=False)

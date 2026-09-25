@@ -1,0 +1,11 @@
+.simple-app .bulk-review { margin: 0 24px 16px; padding: 16px; border: 1px solid #d9e4df; border-radius: 12px; background: #f5faf7; }
+.simple-app .bulk-review-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 10px; }
+.simple-app .bulk-review-controls strong { font-size: 1rem; color: #225943; }
+.simple-app .bulk-review .field-help { margin: 6px 0 0; }
+.simple-app .bulk-result { padding: 12px 0; }
+.simple-app .batch-col { width: 56px; text-align: center; }
+.simple-app .book-table .batch-col { padding-left: 12px; padding-right: 8px; }
+.simple-app .list-pagination { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 16px; padding: 16px; border-top: 1px solid #e5ebe8; }
+.simple-app .source-history { margin-top: 6px; max-width: 300px; overflow-wrap: anywhere; }
+.simple-app .source-history summary { cursor: pointer; color: #225943; }
+@media (max-width: 900px) { .simple-app .bulk-review { margin: 0 12px 12px; } }

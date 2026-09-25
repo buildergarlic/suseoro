@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="학교도서관 사서를 위한 수서로 2.1.2 사용설명서. 글자 크기, 책 표지, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
-<title>수서로 2.1.2 상세 사용설명서 | 수서로 도움말</title><style>
+<meta name="description" content="학교도서관 사서를 위한 수서로 2.2.0 사용설명서. 글자 크기, 책 표지, ISBN 추가, 추천 목록 정리, 예산, 발주서, 백업을 순서대로 안내합니다.">
+<title>수서로 2.2.0 상세 사용설명서 | 수서로 도움말</title><style>
 :root{color-scheme:light;--ink:#17392f;--muted:#52675f;--paper:#fffcf5;--line:#d9e1d8;--green:#226348}
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:1rem}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:16px;line-height:1.85;word-break:keep-all;overflow-wrap:anywhere}
@@ -22,9 +22,10 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 @media print{@page{size:A4;margin:16mm 15mm}body{background:white;font-size:10pt;line-height:1.6;color:black}.topbar,aside,.skip,.print-button,footer{display:none}.layout{display:block;max-width:none;margin:0;padding:0}h1{font-size:24pt}h2{font-size:17pt;margin:26px 0 12px;break-after:avoid}h3{font-size:13pt;break-after:avoid}a{color:inherit;text-decoration:none}blockquote{border:1px solid #aaa;background:none}table{font-size:9pt}.table-wrap{overflow:visible}tr{break-inside:avoid}code{font-size:9pt}p,li{orphans:3;widows:3}}
 </style></head>
 <body><a class="skip" href="#main">본문으로 바로 가기</a>
-<header class="topbar"><a class="brand" href="index.html">수서로 2.1.2 · 도움말</a><nav aria-label="설명서 메뉴"><a href="user-guide.html#2-설치하고-처음-실행하기">설치하기</a><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
+<header class="topbar"><a class="brand" href="index.html">수서로 2.2.0 · 도움말</a><nav aria-label="설명서 메뉴"><a href="user-guide.html#2-설치하고-처음-실행하기">설치하기</a><a href="visual-guide.html">그림으로 익히기</a><a href="user-guide.html">상세 설명서</a><a href="quick-start.html">간단한 사용법</a></nav></header>
 <div class="layout"><aside aria-label="이 페이지 목차"><details open><summary>목차</summary><div class="toc">
 <ul>
+<li><a href="#추천목록-통합과-일괄-검토-개발-버전">추천목록 통합과 일괄 검토 (개발 버전)</a></li>
 <li><a href="#1-수서로로-하는-일">1. 수서로로 하는 일</a></li>
 <li><a href="#2-설치하고-처음-실행하기">2. 설치하고 처음 실행하기</a></li>
 <li><a href="#3-학교-이름과-isbn-조회-설정">3. 학교 이름과 ISBN 조회 설정</a></li>
@@ -45,9 +46,13 @@ footer{border-top:1px solid var(--line);padding:26px 24px;text-align:center;font
 </ul>
 </div>
 </details></aside>
-<main id="main"><p class="meta">수서로 2.1.2 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button><h1 id="수서로-212-상세-사용설명서">수서로 2.1.2 상세 사용설명서</h1>
+<main id="main"><p class="meta">수서로 2.2.0 기준 · 인터넷 없이 읽을 수 있는 설명서</p><button class="print-button" onclick="window.print()" type="button">인쇄 / PDF로 보관</button><h1 id="수서로-220-상세-사용설명서">수서로 2.2.0 상세 사용설명서</h1>
 <p><strong>학교도서관 사서를 위한 도서 구입 목록 안내서</strong></p>
-<p>대상 버전: 수서로 2.1.2 · Windows 10/11 64비트</p>
+<h2 id="추천목록-통합과-일괄-검토-개발-버전">추천목록 통합과 일괄 검토 (개발 버전)</h2>
+<p><strong>파일 가져오기</strong>에서 추천 파일 여러 개를 함께 선택하세요. 자동으로 열을 맞추며 <strong>같은 책 합치기</strong>로 중복 추천을 한 종으로 모읍니다. 원본과 출처는 보존하고 구입 수량은 합산하지 않습니다. 가격·서지 충돌과 서로 다른 판본은 확인 대상으로 남깁니다.</p>
+<p>ISBN이 없어도 제목·저자·출판사·가격이 확인된 구조화 목록은 바로 진행할 수 있습니다. 기존 확인 필요 자료는 <strong>ISBN 없음</strong> 필터 → <strong>검색·필터 결과 N건 전체 선택</strong> → <strong>서지 확인 완료</strong>로 처리하세요. 가격 누락·잘못된 ISBN·식별 정보 부족은 남겨두고 이유를 알려줍니다. <strong>작업</strong> 체크와 <strong>구입</strong> 체크는 별개이며 구입 여부는 유지됩니다.</p>
+<p>목록과 미리보기는 100건씩 표시하지만 검색 결과 전체를 일괄 처리할 수 있습니다. 가져오기·일괄 작업 뒤 <strong>되돌리기</strong>를 사용할 수 있으며 이후 편집이 있으면 이를 덮어쓰지 않습니다. 원본을 별도 표준 파일로 만들어 재업로드할 필요는 없습니다. 외부 서지 조회는 선택 기능입니다.</p>
+<p>대상 버전: 수서로 2.2.0 로컬 검토본 · Windows 10/11 64비트</p>
 <p>2.1.2은 공개 버전 2.0.3 이후의 화면·글자 크기·표지·추천 파일·ISBN 조회 개선을 모은 버전입니다. 2.1.0은 로컬 검토만 진행했으며 공개하지 않았습니다.</p>
 <p>수서로는 추천받은 책을 한곳에 모으고, 필요한 책을 선택하고, 예산에 맞춘 발주서를 만드는 도구입니다. 회원가입이나 별도 서버 준비 없이 내 PC에서 사용합니다.</p>
 <p>처음이라면 <a href="visual-guide.html">그림으로 보는 쉬운 안내</a>를 먼저 보세요. 짧은 안내는 <a href="quick-start.html">이것만 알면 됩니다</a>에 있습니다. 이 설명서는 실제 화면의 버튼 이름을 <strong>굵게</strong> 표시합니다.</p>

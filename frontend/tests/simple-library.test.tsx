@@ -8,6 +8,48 @@ import { emptyBook, orderAmount, type AcquisitionList, type Book, type BookField
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 const requestUrl = (input: RequestInfo | URL) => typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 const anchorClick = vi.fn();
+it("confirms 200 ISBN-less books across pages without changing purchase selections", async () => {
+  const user = userEvent.setup();
+  const books = Array.from({ length: 200 }, (_, i) => book(`bulk-${i}`, { title: `검토 도서 ${i}`, isbn: "", needs_review: true, selected: i % 2 === 0 }));
+  const { api, transport, state } = fixture(books);
+  render(<SimpleLibraryApp api={api} />);
+  await screen.findByRole("button", { name: "검토 도서 0" });
+  expect(screen.queryByRole("button", { name: "검토 도서 199" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "검색·필터 결과 200건 전체 선택" }));
+  await user.click(screen.getByRole("button", { name: "선택 도서 서지 확인 완료" }));
+  await waitFor(() => expect(state.books.every(item => !item.needs_review)).toBe(true));
+  const request = transport.mock.calls.find(([input]) => requestUrl(input).endsWith("/books/bulk"));
+  expect(JSON.parse(typeof request?.[1]?.body === "string" ? request[1].body : "{}")).toMatchObject({ action: "confirm_metadata", book_ids: books.map(item => item.id) });
+  expect(state.books.filter(item => item.selected)).toHaveLength(100);
+  expect(await screen.findByRole("button", { name: "일괄 작업 되돌리기" })).toBeInTheDocument();
+});
+
+it("clears bulk targets when search changes and applies only the new filtered result", async () => {
+  const user = userEvent.setup();
+  const { api, transport } = fixture([book("a", { title: "사과", isbn: "" }), book("b", { title: "배" })]);
+  render(<SimpleLibraryApp api={api} />);
+  await screen.findByRole("button", { name: "사과" });
+  await user.click(screen.getByRole("checkbox", { name: "사과 일괄 작업 선택" }));
+  await user.type(screen.getByRole("textbox", { name: "도서 검색" }), "배");
+  expect(screen.getByRole("button", { name: "선택 도서 보류" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "검색·필터 결과 1건 전체 선택" }));
+  await user.click(screen.getByRole("button", { name: "선택 도서 보류" }));
+  await waitFor(() => expect(transport.mock.calls.some(([input]) => requestUrl(input).endsWith("/books/bulk"))).toBe(true));
+  const request = transport.mock.calls.find(([input]) => requestUrl(input).endsWith("/books/bulk"));
+  expect(JSON.parse(typeof request?.[1]?.body === "string" ? request[1].body : "{}")).toEqual({ action: "hold", book_ids: ["b"] });
+});
+
+it("drops a bulk target when an ordinary purchase change moves it out of the current filter", async () => {
+  const user = userEvent.setup();
+  const { api } = fixture([book("a", { title: "사과" }), book("b", { title: "배" })]);
+  render(<SimpleLibraryApp api={api} />);
+  await screen.findByRole("button", { name: "사과" });
+  await user.click(screen.getByRole("button", { name: /^구입 선택2$/ }));
+  await user.click(screen.getByRole("checkbox", { name: "사과 일괄 작업 선택" }));
+  await user.click(screen.getByRole("checkbox", { name: "사과 구입 선택" }));
+  await waitFor(() => expect(screen.queryByRole("checkbox", { name: "사과 일괄 작업 선택" })).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "선택 도서 보류" })).toBeDisabled();
+});
 it("rounds fractional discounts at the same half-won boundary as the order file", () => {
   expect(orderAmount(500, 33.9, 2)).toBe(662);
   expect(orderAmount(15001, 9.7, 3)).toBe(40638);
@@ -33,6 +75,14 @@ function fixture(initial: Book[] = []) {
       const added = book(`book-${state.books.length + 1}`, payload); state.books.push(added); return json(added);
     }
     if (/\/books\/[^/]+\/restore$/.test(path)) { if (state.deleted) state.books.push(state.deleted); return json(state.deleted); }
+    if (path === "/lists/list-1/books/bulk") {
+      const ids = payload.book_ids as string[];
+      for (const item of state.books.filter(item => ids.includes(item.id))) {
+        if (payload.action === "confirm_metadata") { item.needs_review = false; item.warnings = []; }
+        else item.selected = payload.action === "select";
+      }
+      return json({ updated: ids.length, skipped: [], operation_id: "bulk-1" });
+    }
     if (/\/books\/[^/]+$/.test(path)) {
       const id = path.split("/").at(-1), current = state.books.find(item => item.id === id);
       if (method === "DELETE") { state.deleted = current ?? null; state.books = state.books.filter(item => item.id !== id); return json({ ok: true }); }
@@ -40,6 +90,13 @@ function fixture(initial: Book[] = []) {
     }
     if (path === "/lookup") { state.lookupCount += 1; if (payload.isbn === "invalid") return json({ detail: "ISBN 체크숫자가 올바르지 않습니다." }, 400); return json({ found: true, book: { ...emptyBook(), title: "조회한 다른 제목", author: "조회 저자", publisher: "조회 출판사", isbn: String(payload.isbn), price: 15_000, source: "국립중앙도서관", needs_review: true }, warnings: ["예정가격을 확인해 주세요."] }); }
     if (path === "/imports/preview") return json({ import_id: "import-1", filename: "학교 추천.xlsx", rows: [preview], warnings: [] });
+    if (path === "/lists/list-1/imports/batch") {
+      const rows = (payload.imports as { rows: PreviewRow[] }[]).flatMap(item => item.rows);
+      state.imports = { kind: "recommendations", rows };
+      state.books.push(...rows.map((row, index) => book(`imported-${index}`, row)));
+      return json({ added: rows.length, merged: 0, input_count: rows.length, warnings: [], operation_id: "import-op" });
+    }
+    if (path === "/lists/list-1/operations/import-op/undo") { state.books = state.books.filter(item => !item.id.startsWith("imported-")); return json({ restored: 1 }); }
     if (path === "/lists/list-1/imports") { state.imports = payload as typeof state.imports; const rows = payload.rows as PreviewRow[]; if (payload.kind === "recommendations") state.books.push(...rows.map((row, index) => book(`imported-${index}`, row))); return json({ added: rows.length, warnings: [] }); }
     if (path === "/templates") return json([]);
     if (path === "/lists/list-1/export") { state.exports = payload; return state.failExport ? json({ detail: "선택한 책의 ISBN을 확인해 주세요." }, 400) : new Response("export-content", { headers: { "Content-Disposition": "attachment; filename=order.csv" } }); }

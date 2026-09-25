@@ -1,0 +1,13 @@
+.import-file-list { list-style: none; display: grid; gap: .5rem; padding: 0; margin: 1rem 0; }
+.import-file-list li { display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; border: 1px solid #d5ddd5; border-radius: .65rem; padding: .6rem; }
+.import-file-list li.active { border-color: #356646; background: #f2f7f1; }
+.import-file-open { flex: 1; min-width: 10rem; padding: .3rem .45rem; text-align: left; color: inherit; background: transparent; border: 0; cursor: pointer; }
+.import-file-open strong, .import-file-open span { display: block; overflow-wrap: anywhere; }
+.import-file-open span { font-size: .85rem; margin-top: .25rem; }
+.import-file-open:disabled { cursor: default; }
+.import-file-open:focus-visible { outline: 3px solid #356646; outline-offset: 2px; border-radius: .3rem; }
+.import-file-error { margin: 0; flex-basis: 100%; color: #9b3027; }
+.import-batch-options { border: 1px solid #d5ddd5; background: #f7f9f5; border-radius: .65rem; padding: .85rem 1rem; margin: 1rem 0; }
+.import-batch-options p { margin-bottom: 0; }
+.import-pagination, .import-queue-progress { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin: .9rem 0; }
+.import-pagination span, .import-queue-progress span { font-size: .9rem; overflow-wrap: anywhere; }
