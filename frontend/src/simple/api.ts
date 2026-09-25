@@ -1,4 +1,4 @@
-import type { AcquisitionList, BatchImportResult, Book, BookFields, Bootstrap, BulkAction, BulkResult, ImportPreview, ListDetail, PreviewRow, Settings, Template, UpdateInfo } from "./types";
+import type { AcquisitionList, BatchImportResult, Book, BookFields, Bootstrap, BulkAction, BulkResult, HoldingsPage, ImportPreview, ListDetail, PreviewRow, Settings, Template, UpdateInfo } from "./types";
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export function createLibraryApi(fetcher: Fetcher = (input, init) => fetch(input, init)) {
@@ -39,6 +39,7 @@ export function createLibraryApi(fetcher: Fetcher = (input, init) => fetch(input
   return {
     async bootstrap() { const data = await json<Bootstrap>("/bootstrap"); token = data.csrf_token; return data; },
     list: (id: string) => json<ListDetail>(`/lists/${id}`),
+    holdings: ({ query = "", page = 1, page_size = 50 }: { query?: string; page?: number; page_size?: number } = {}) => json<HoldingsPage>(`/holdings?${new URLSearchParams({ query, page: String(page), page_size: String(page_size) })}`),
     createList: (data: Pick<AcquisitionList, "name" | "year" | "budget" | "discount_percent">) => json<AcquisitionList>("/lists", send(data)),
     updateList: (id: string, data: Partial<AcquisitionList>) => json<AcquisitionList>(`/lists/${id}`, send(data, "PATCH")),
     addBook: (id: string, book: BookFields) => json<Book>(`/lists/${id}/books`, send(book)),

@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -136,6 +136,12 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
     @app.get(PREFIX + '/lists/{list_id}')
     def list_state(list_id: str):
         return store.list_state(list_id)
+
+    @app.get(PREFIX + '/holdings')
+    def holdings(query: str = Query('', max_length=200),
+                 page: int = Query(1, ge=1, le=1_000_000),
+                 page_size: int = Query(50, ge=1, le=100)):
+        return store.list_holdings(query=query, page=page, page_size=page_size)
 
     @app.patch(PREFIX + '/lists/{list_id}')
     def edit_list(list_id: str, values: dict):

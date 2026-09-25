@@ -12,6 +12,7 @@ export interface Book extends BookFields {
   recommendation_count?: number;
   sources?: string[];
   contributions?: { source?: string; filename?: string; provenance?: unknown; raw_text?: string; values?: Record<string, unknown> }[];
+  provenance?: { filename?: string; sheet?: string; row?: number; page?: number; [key: string]: unknown };
   holdings_status?: "held" | "not_held" | "unchecked" | "uncheckable";
   held_match?: "isbn" | "title_author" | null;
 }
@@ -25,6 +26,7 @@ export interface Summary {
   remaining: number; missing_price_count: number; review_count: number; held_count: number; duplicate_count: number;
 }
 export interface ListDetail { list: AcquisitionList; books: Book[]; summary: Summary; holdings_count?: number }
+export interface HoldingsPage { items: BookFields[]; total: number; page: number; page_size: number }
 export interface Settings { school_name: string; nl_api_key_configured: boolean; text_size?: number; row_density?: "comfortable" | "compact" }
 export interface UpdateInfo {
   current_version?: string; latest_version?: string; available: boolean; url?: string; message?: string;

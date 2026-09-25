@@ -1,0 +1,58 @@
+.registered-view {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 18rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.registered-heading,
+.registered-toolbar,
+.registered-footer { display: flex; align-items: center; justify-content: space-between; gap: .75rem 1rem; flex-shrink: 0; }
+.registered-heading { padding: .875rem 1.125rem .625rem; }
+.registered-heading h2 { font-size: 1.125rem; font-weight: 650; }
+.registered-heading p { margin-top: .25rem; color: var(--text-secondary); font-size: .875rem; }
+.registered-toolbar { flex-wrap: wrap; padding: .5rem 1.125rem .75rem; border-bottom: 1px solid var(--line); }
+.registered-search,
+.registered-filters { display: flex; align-items: center; gap: .5rem; min-width: 0; }
+.registered-search { flex: 1 1 24rem; }
+.registered-search input,
+.registered-filter select { min-height: 2.5rem; padding: .4375rem .625rem; border: 1px solid var(--line-strong); border-radius: var(--radius); color: var(--text); background: var(--surface); font-size: .9375rem; }
+.registered-search input { width: 100%; min-width: 0; }
+.registered-filters { flex: 1 1 30rem; flex-wrap: wrap; }
+.registered-filters .registered-search { flex: 1 1 16rem; }
+.registered-filter { display: flex; align-items: center; gap: .5rem; color: var(--text-secondary); font-size: .875rem; white-space: nowrap; }
+.registered-filter select { max-width: min(18rem, 60vw); }
+.registered-count { color: var(--text-secondary); font-size: .875rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.registered-error { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: .75rem 1.125rem 0; padding: .625rem .75rem; border: 1px solid #efbcb7; border-radius: var(--radius); color: #9e2219; background: #fff2f1; font-size: .875rem; }
+.registered-table-wrap { flex: 1 1 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.registered-table { width: 100%; min-width: 48rem; border-collapse: separate; border-spacing: 0; table-layout: fixed; text-align: left; }
+.registered-table th,
+.registered-table td { padding: .5rem .75rem; border-bottom: 1px solid #e8ebf0; font-size: .9375rem; vertical-align: middle; overflow-wrap: anywhere; }
+.registered-table thead th { position: sticky; z-index: 2; top: 0; padding: .625rem .75rem; color: #465263; background: #f5f7fa; border-bottom-color: #d5dce6; font-size: .875rem; font-weight: 600; white-space: nowrap; }
+.registered-table tbody tr:hover:not(.registered-group) { background: #f7f9fd; }
+.registered-title { width: 35%; font-weight: 600; }
+.registered-isbn,
+.registered-price { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.registered-muted { color: var(--text-secondary); }
+.registered-empty { height: 12rem; color: var(--text-secondary); font-weight: 400; text-align: center; }
+.registered-group th { padding: .375rem .75rem; color: #344766; background: #edf2f9; text-align: left; font-size: .875rem; font-weight: 600; }
+.registered-group small { margin-left: .625rem; color: var(--text-secondary); font-size: .8125rem; font-weight: 400; }
+.registered-recommendations-table { min-width: 58rem; }
+.registered-recommendations-table thead th:nth-child(1) { width: 30%; }
+.registered-recommendations-table thead th:nth-child(5) { width: 8rem; }
+.registered-recommendations-table thead th:nth-child(6) { width: 6rem; }
+.registered-footer { min-height: 3.5rem; padding: .5rem 1.125rem; border-top: 1px solid var(--line); color: var(--text-secondary); background: #fafbfd; font-size: .875rem; font-variant-numeric: tabular-nums; }
+.registered-pages { display: flex; align-items: center; gap: .75rem; }
+@media (max-width: 700px) {
+  .registered-heading { align-items: flex-start; flex-wrap: wrap; }
+  .registered-toolbar { align-items: stretch; }
+  .registered-search { flex-wrap: wrap; }
+  .registered-search input { flex: 1 1 100%; }
+  .registered-count { width: 100%; }
+  .registered-footer { flex-wrap: wrap; }
+  .registered-pages { width: 100%; justify-content: space-between; }
+}

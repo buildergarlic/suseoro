@@ -114,6 +114,83 @@ beforeEach(() => {
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(anchorClick);
 });
 
+it("uses the left rail for budget and actions while the book table owns the main workspace", async () => {
+  render(<SimpleLibraryApp api={fixture([book("one")]).api} />);
+  const budget = await screen.findByRole("region", { name: "예산 현황" });
+  const sidebar = budget.closest("aside");
+  expect(sidebar).not.toBeNull();
+  expect(within(sidebar!).getByRole("button", { name: "ISBN 추가" })).toBeInTheDocument();
+  expect(within(sidebar!).getByRole("button", { name: "파일 가져오기" })).toBeInTheDocument();
+  expect(within(sidebar!).getByRole("button", { name: "발주서 저장" })).toBeInTheDocument();
+  expect(within(screen.getByRole("main")).getByRole("table", { name: "도서 목록" })).toBeInTheDocument();
+});
+
+it("opens registered collections from the side menu and returns to the purchase table", async () => {
+  const user = userEvent.setup();
+  render(<SimpleLibraryApp api={fixture([book("one", { source: "교육청 추천.xlsx" })]).api} />);
+  await screen.findByRole("button", { name: "어린 왕자" });
+  await user.click(screen.getByRole("button", { name: "추천도서 목록 열람" }));
+  expect(screen.getByRole("heading", { level: 1, name: "추천도서 목록" })).toBeInTheDocument();
+  expect(screen.queryByRole("table", { name: "도서 목록" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "구입 목록으로 돌아가기" }));
+  expect(screen.getByRole("table", { name: "도서 목록" })).toBeInTheDocument();
+});
+
+it("keeps the recommendations view when the current purchase list is selected", async () => {
+  const user = userEvent.setup();
+  render(<SimpleLibraryApp api={fixture([book("one", { source: "교육청 추천.xlsx" })]).api} />);
+  await screen.findByRole("button", { name: "어린 왕자" });
+  await user.click(screen.getByRole("button", { name: "추천도서 목록 열람" }));
+  await user.click(screen.getByRole("button", { name: "2026 2학기 도서 구입" }));
+  expect(screen.getByRole("heading", { level: 1, name: "추천도서 목록" })).toBeInTheDocument();
+});
+
+it("shows loading and the next list's saved books when switching lists in recommendations", async () => {
+  const user = userEvent.setup();
+  const original = fixture([book("one", { title: "첫 목록 도서" })]).api;
+  const bootstrap = await original.bootstrap();
+  const firstDetail = await original.list("list-1");
+  const secondList = { ...firstDetail.list, id: "list-2", name: "2026 겨울 도서" };
+  let resolveSecond!: (value: typeof firstDetail) => void;
+  const delayed = new Promise<typeof firstDetail>(resolve => { resolveSecond = resolve; });
+  const api = {
+    ...original,
+    bootstrap: async () => ({ ...bootstrap, lists: [...bootstrap.lists, secondList] }),
+    list: (id: string) => id === secondList.id ? delayed : original.list(id),
+  };
+  render(<SimpleLibraryApp api={api} />);
+  await screen.findByRole("button", { name: "첫 목록 도서" });
+  await user.click(screen.getByRole("button", { name: "추천도서 목록 열람" }));
+  await user.click(screen.getByRole("button", { name: "2026 겨울 도서" }));
+  expect(screen.getByRole("status")).toHaveTextContent("추천도서 목록을 불러오고 있습니다.");
+  resolveSecond({ ...firstDetail, list: secondList, books: [book("two", { title: "둘째 목록 도서" })] });
+  expect(await screen.findByText("둘째 목록 도서")).toBeInTheDocument();
+  expect(screen.queryByText("첫 목록 도서")).not.toBeInTheDocument();
+});
+
+it("returns focus after closing the mobile menu and closes it when a task opens", async () => {
+  const user = userEvent.setup();
+  render(<SimpleLibraryApp api={fixture([book("one")]).api} />);
+  await screen.findByRole("button", { name: "어린 왕자" });
+  const open = screen.getByRole("button", { name: "메뉴 열기" });
+  await user.click(open);
+  expect(screen.getByRole("button", { name: "메뉴 닫기" })).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(open).toHaveFocus();
+  await user.click(open);
+  await user.click(screen.getByRole("button", { name: "ISBN 추가" }));
+  expect(document.querySelector(".simple-app")).not.toHaveClass("menu-open");
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "닫기" }));
+  expect(open).toHaveFocus();
+});
+
+it("exposes the full imported source while keeping its table cell compact", async () => {
+  const source = "교육청 · 가을 추천.xlsx · 추천도서 · 129행";
+  render(<SimpleLibraryApp api={fixture([book("one", { source })]).api} />);
+  const label = await screen.findByText(source);
+  expect(label).toHaveAttribute("title", source);
+});
+
 it("opens canonical ISBN search links from an existing book and rejects executable references", async () => {
   const { api } = fixture([book("ten", { isbn: "0-306-40615-2", link: "javascript:alert(1)" })]);
   render(<SimpleLibraryApp api={api} />);

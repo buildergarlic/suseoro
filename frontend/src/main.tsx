@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { SimpleLibraryApp } from "./simple/SimpleLibraryApp";
 import "./simple/simple.css";
+import "./simple/workspace-layout.css";
 
 const rootElement = document.getElementById("root");
 

@@ -362,6 +362,25 @@ class LibraryStore:
             db.executemany('INSERT INTO holdings VALUES (?,?)', [(identifier(), json.dumps(b, ensure_ascii=False)) for b in books])
         return len(books)
 
+    def list_holdings(self, query='', page=1, page_size=50):
+        term = query.strip().lower()
+        search_fields = ('title', 'author', 'isbn', 'publisher', 'source')
+        where = ('WHERE ' + ' OR '.join(
+            f"instr(lower(coalesce(json_extract(data, '$.{field}'), '')), ?) > 0"
+            for field in search_fields
+        )) if term else ''
+        params = (term,) * len(search_fields) if term else ()
+        with self.connection() as db:
+            # Count and rows must describe the same snapshot if an import replaces it.
+            db.execute('BEGIN')
+            total = db.execute(f'SELECT COUNT(*) FROM holdings {where}', params).fetchone()[0]
+            rows = db.execute(
+                f'SELECT data FROM holdings {where} ORDER BY rowid LIMIT ? OFFSET ?',
+                (*params, page_size, (page - 1) * page_size),
+            )
+            items = [json.loads(row['data']) for row in rows]
+        return {'items': items, 'total': total, 'page': page, 'page_size': page_size}
+
     def list_state(self, list_id):
         info = self.get_list(list_id)
         with self.connection() as db:
