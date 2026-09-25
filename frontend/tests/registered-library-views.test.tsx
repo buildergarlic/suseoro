@@ -65,3 +65,31 @@ it("uses an edited recommendation source instead of stale file provenance", () =
   expect(screen.getByRole("combobox", { name: "추천 출처" })).toHaveTextContent("학교장 추천");
   expect(screen.queryByText("가을 추천.xlsx")).not.toBeInTheDocument();
 });
+
+it("shows a merged book under every saved recommendation source without double-counting books", async () => {
+  const user = userEvent.setup();
+  render(<RecommendationsLibraryView books={[{
+    ...savedBook("merged", "함께 추천한 책", "교육청 · 가을 추천.xlsx · 추천도서 · 2행"),
+    recommendation_count: 2,
+    sources: ["교육청 · 가을 추천.xlsx · 추천도서 · 2행", "학교 · 겨울 추천.xlsx · 추천도서 · 4행"],
+    contributions: [
+      { source: "교육청 · 가을 추천.xlsx · 추천도서 · 2행", filename: "가을 추천.xlsx" },
+      { source: "학교 · 겨울 추천.xlsx · 추천도서 · 4행", filename: "겨울 추천.xlsx" },
+    ],
+  }]} listName="2026년 구입목록" />);
+
+  const sourceFilter = screen.getByRole("combobox", { name: "추천 출처" });
+  expect(sourceFilter).toHaveTextContent("교육청 · 가을 추천.xlsx");
+  expect(sourceFilter).toHaveTextContent("학교 · 겨울 추천.xlsx");
+  expect(screen.getAllByText("함께 추천한 책")).toHaveLength(2);
+  expect(screen.getByText("1권 / 전체 1권")).toBeVisible();
+  await user.selectOptions(sourceFilter, "학교 · 겨울 추천.xlsx");
+  expect(screen.getAllByText("함께 추천한 책")).toHaveLength(1);
+  await user.clear(screen.getByRole("searchbox", { name: "추천도서 검색" }));
+  await user.type(screen.getByRole("searchbox", { name: "추천도서 검색" }), "가을 추천.xlsx");
+  expect(screen.getByText("검색 조건에 맞는 도서가 없습니다.")).toBeVisible();
+  await user.selectOptions(sourceFilter, "");
+  await user.clear(screen.getByRole("searchbox", { name: "추천도서 검색" }));
+  expect(screen.getAllByText("함께 추천한 책")).toHaveLength(2);
+  expect(screen.getByText("1권 / 전체 1권")).toBeVisible();
+});

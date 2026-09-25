@@ -38,7 +38,7 @@ npm run lint
 npm run build
 ```
 
-구입 선택·금액·가격 누락·ISBN 판본 일치·파일 해석·학교 양식·백업 원자성·안전한 업데이트를 검사합니다. 2.2.1에서는 교차 파일 병합과 출처 보존, 20,000행 일괄 저장, ISBN 없는 서지 확인, 검색 범위 선택, 재시도와 되돌리기도 검증합니다. 실제 학교 자료 대신 합성 테스트 자료를 사용합니다. 기존 `frontend/e2e`는 이전 다중 사용자 화면의 참고용 테스트입니다.
+구입 선택·금액·가격 누락·ISBN 판본 일치·파일 해석·학교 양식·백업 원자성·안전한 업데이트를 검사합니다. 교차 파일 병합과 출처 보존, 20,000행 일괄 저장, ISBN 없는 서지 확인, 검색 범위 선택, 재시도와 되돌리기, 등록 소장자료 조회도 검증합니다. 실제 학교 자료 대신 합성 테스트 자료를 사용합니다. 기존 `frontend/e2e`는 이전 다중 사용자 화면의 참고용 테스트입니다.
 
 화면 설정은 기본 16px이며 16·18·20·22·24px와 행 간격을 앱의 SQLite 설정에 저장합니다. 기존 저장값과 다른 서버 포트로 재실행한 뒤의 복원을 확인합니다. 표지는 알라딘 공개 상품 페이지의 ISBN·표지 메타데이터를 먼저 확인하고 Open Library·Google Books를 대체 조회합니다. 알라딘 OpenAPI는 사용하지 않습니다. 실패 응답은 캐시하지 않고 자동·수동 재시도를 제공합니다. 큰 글자에서 표의 최소 높이와 내부 가로 스크롤, 창 크기 조절·최대화도 실제 데스크톱 화면에서 확인합니다. 국립중앙도서관 실제 승인키를 이용한 성공 조회는 아직 검증하지 않았습니다.
 
@@ -49,12 +49,12 @@ npm run build
 저장소 루트에서:
 
 ```powershell
-./scripts/build-desktop.ps1 -Version 2.2.1 -TesseractDir ./portable_tesseract -MakensisPath C:\도구\NSIS\makensis.exe -PortableZip
+./scripts/build-desktop.ps1 -Version 2.2.2 -TesseractDir ./portable_tesseract -MakensisPath C:\도구\NSIS\makensis.exe -PortableZip
 ```
 
 `dist`에 설치 파일, Portable ZIP, SHA-256 체크섬이 생깁니다. 설치 파일은 프로그램을 `%LOCALAPPDATA%\Programs\Suseoro`에 설치하고, 자료는 `%LOCALAPPDATA%\Suseoro`에 유지합니다. 제거 프로그램은 자료 폴더를 삭제하지 않습니다.
 
-2.2.1은 다중 추천 파일 통합, 보수적 중복 병합, ISBN 없는 서지 처리, 일괄 확인과 되돌리기를 포함한 공개 배포 버전입니다. 정식 릴리스의 설치 파일과 체크섬은 2.0.2 이상 설치형의 자동 업데이트에 사용됩니다. 빌드만으로 기존 설치가 바뀌지는 않습니다. 기능을 기존 학교 자료와 분리해 시험하려면 무설치 실행 파일에 별도 데이터 경로를 지정합니다.
+2.2.2는 도서 작업 화면과 등록 소장목록·추천도서 열람을 개선하고, 다중 추천 파일 통합·ISBN 없는 서지 처리·일괄 확인·되돌리기를 포함한 공개 배포 버전입니다. 정식 릴리스의 설치 파일과 체크섬은 2.0.2 이상 설치형의 자동 업데이트에 사용됩니다. 빌드만으로 기존 설치가 바뀌지는 않습니다. 기능을 기존 학교 자료와 분리해 시험하려면 무설치 실행 파일에 별도 데이터 경로를 지정합니다.
 
 ```powershell
 ./dist/Suseoro/Suseoro.exe --data-dir C:\SuseoroReview\data
@@ -80,7 +80,7 @@ API는 동일 출처와 실행마다 다른 요청 토큰을 확인합니다. �
 uv run scripts/build-user-guide.py
 ```
 
-릴리스용 오프라인 ZIP과 체크섬도 만들려면 `uv run scripts/build-user-guide.py --zip`을 실행합니다. 결과는 `dist/Suseoro-Guide-2.2.1.zip`에 생성됩니다. 파일명과 HTML의 버전은 Python 프로젝트 버전을 따릅니다.
+릴리스용 오프라인 ZIP과 체크섬도 만들려면 `uv run scripts/build-user-guide.py --zip`을 실행합니다. 결과는 `dist/Suseoro-Guide-2.2.2.zip`에 생성됩니다. 파일명과 HTML의 버전은 Python 프로젝트 버전을 따릅니다.
 
 생성기는 별도 도구 환경에서 지정된 Markdown 버전을 사용합니다. 앱의 의존성을 변경하지 않습니다. `docs/visual-guide.html`은 그림과 예산 연습을 포함하는 독립 HTML이며 직접 수정합니다. 예산 연습은 실제 도서 자료를 저장하거나 발주하지 않습니다.
 

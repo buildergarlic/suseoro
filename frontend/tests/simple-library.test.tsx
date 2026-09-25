@@ -15,6 +15,11 @@ it("confirms 200 ISBN-less books across pages without changing purchase selectio
   render(<SimpleLibraryApp api={api} />);
   await screen.findByRole("button", { name: "검토 도서 0" });
   expect(screen.queryByRole("button", { name: "검토 도서 199" })).not.toBeInTheDocument();
+  expect(screen.getByText("일괄 작업").closest("details")).not.toHaveAttribute("open");
+  await user.click(screen.getByText("일괄 작업"));
+  await user.keyboard("{Escape}");
+  expect(screen.getByText("일괄 작업").closest("details")).not.toHaveAttribute("open");
+  await user.click(screen.getByText("일괄 작업"));
   await user.click(screen.getByRole("button", { name: "검색·필터 결과 200건 전체 선택" }));
   await user.click(screen.getByRole("button", { name: "선택 도서 서지 확인 완료" }));
   await waitFor(() => expect(state.books.every(item => !item.needs_review)).toBe(true));
@@ -29,6 +34,7 @@ it("clears bulk targets when search changes and applies only the new filtered re
   const { api, transport } = fixture([book("a", { title: "사과", isbn: "" }), book("b", { title: "배" })]);
   render(<SimpleLibraryApp api={api} />);
   await screen.findByRole("button", { name: "사과" });
+  await user.click(screen.getByText("일괄 작업"));
   await user.click(screen.getByRole("checkbox", { name: "사과 일괄 작업 선택" }));
   await user.type(screen.getByRole("textbox", { name: "도서 검색" }), "배");
   expect(screen.getByRole("button", { name: "선택 도서 보류" })).toBeDisabled();
@@ -44,6 +50,7 @@ it("drops a bulk target when an ordinary purchase change moves it out of the cur
   const { api } = fixture([book("a", { title: "사과" }), book("b", { title: "배" })]);
   render(<SimpleLibraryApp api={api} />);
   await screen.findByRole("button", { name: "사과" });
+  await user.click(screen.getByText("일괄 작업"));
   await user.click(screen.getByRole("button", { name: /^구입 선택2$/ }));
   await user.click(screen.getByRole("checkbox", { name: "사과 일괄 작업 선택" }));
   await user.click(screen.getByRole("checkbox", { name: "사과 구입 선택" }));

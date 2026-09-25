@@ -16,13 +16,25 @@ function sourceName(book: Pick<BookFields, "source">) {
   return book.source.trim() || UNKNOWN_SOURCE;
 }
 
-function recommendationGroupName(book: Book) {
-  const filename = book.provenance?.filename?.trim();
-  if (!filename) return sourceName(book);
-  const filenameStart = book.source.indexOf(filename);
-  if (filenameStart < 0) return sourceName(book);
-  const institution = book.source.slice(0, filenameStart).replace(/\s*·\s*$/, "").trim();
-  return institution ? `${institution} · ${filename}` : filename;
+function recommendationGroupName(source: string, filename?: string) {
+  const cleanSource = source.trim();
+  const cleanFilename = filename?.trim();
+  if (!cleanFilename) return cleanSource || UNKNOWN_SOURCE;
+  const filenameStart = cleanSource.indexOf(cleanFilename);
+  if (filenameStart < 0) return cleanSource || cleanFilename;
+  const institution = cleanSource.slice(0, filenameStart).replace(/\s*·\s*$/, "").trim();
+  return institution ? `${institution} · ${cleanFilename}` : cleanFilename;
+}
+
+function recommendationGroupNames(book: Book) {
+  const contributions = book.contributions ?? [];
+  if (contributions.length) {
+    return [...new Set(contributions.map(item => recommendationGroupName(item.source ?? "", item.filename)))];
+  }
+  if (book.sources?.length) {
+    return [...new Set(book.sources.map(source => recommendationGroupName(source)))];
+  }
+  return [recommendationGroupName(book.source, book.provenance?.filename)];
 }
 
 export function HoldingsLibraryView({ api, onImport, refreshKey }: HoldingsLibraryViewProps) {
@@ -127,28 +139,29 @@ type RecommendationsLibraryViewProps = { books: Book[]; listName: string };
 export function RecommendationsLibraryView({ books, listName }: RecommendationsLibraryViewProps) {
   const [search, setSearch] = useState("");
   const [selectedSource, setSelectedSource] = useState("");
-  const sources = useMemo(() => [...new Set(books.map(recommendationGroupName))].sort((a, b) => a.localeCompare(b, "ko-KR")), [books]);
+  const sources = useMemo(() => [...new Set(books.flatMap(recommendationGroupNames))].sort((a, b) => a.localeCompare(b, "ko-KR")), [books]);
   const sourceFilter = sources.includes(selectedSource) ? selectedSource : "";
   const groups = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("ko-KR");
     const grouped = new Map<string, Book[]>();
     for (const book of books) {
-      const source = recommendationGroupName(book);
-      if (sourceFilter && source !== sourceFilter) continue;
-      if (query && ![book.title, book.author, book.publisher, book.isbn, book.source, book.category, book.requester, book.note]
-        .some(value => value.toLocaleLowerCase("ko-KR").includes(query))) continue;
-      const items = grouped.get(source) ?? [];
-      items.push(book);
-      grouped.set(source, items);
+      for (const source of recommendationGroupNames(book)) {
+        if (sourceFilter && source !== sourceFilter) continue;
+        if (query && ![book.title, book.author, book.publisher, book.isbn, source, book.category, book.requester, book.note]
+          .some(value => value.toLocaleLowerCase("ko-KR").includes(query))) continue;
+        const items = grouped.get(source) ?? [];
+        items.push(book);
+        grouped.set(source, items);
+      }
     }
     return [...grouped].sort(([a], [b]) => a.localeCompare(b, "ko-KR"));
   }, [books, search, sourceFilter]);
-  const visibleCount = groups.reduce((sum, [, items]) => sum + items.length, 0);
+  const visibleCount = new Set(groups.flatMap(([, items]) => items.map(book => book.id))).size;
 
   return <section className="registered-view" aria-label="저장된 추천도서 조회">
     <header className="registered-heading"><div>
       <h2>출처별 저장 도서</h2>
-      <p>“{listName}”에 저장된 도서를 추천 출처별로 묶었습니다. 원본 업로드 이력이 아닙니다.</p>
+      <p>“{listName}”에 저장된 도서를 추천 출처별로 묶었습니다. 원본 업로드 이력이 아닙니다. 여러 출처의 같은 도서는 각 출처에 표시하고 도서 수는 한 번만 계산합니다.</p>
     </div></header>
     <div className="registered-toolbar">
       <div className="registered-filters">

@@ -1,4 +1,4 @@
-# 수서로 2.2.1 상세 사용설명서
+# 수서로 2.2.2 상세 사용설명서
 
 **학교도서관 사서를 위한 도서 구입 목록 안내서**
 
@@ -6,13 +6,13 @@
 
 **파일 가져오기**에서 추천 파일 여러 개를 함께 선택하세요. 자동으로 열을 맞추며 **같은 책 합치기**로 중복 추천을 한 종으로 모읍니다. 원본과 출처는 보존하고 구입 수량은 합산하지 않습니다. 가격·서지 충돌과 서로 다른 판본은 확인 대상으로 남깁니다.
 
-ISBN이 없어도 제목·저자·출판사·가격이 확인된 구조화 목록은 바로 진행할 수 있습니다. 기존 확인 필요 자료는 **ISBN 없음** 필터 → **검색·필터 결과 N건 전체 선택** → **서지 확인 완료**로 처리하세요. 가격 누락·잘못된 ISBN·식별 정보 부족은 남겨두고 이유를 알려줍니다. **작업** 체크와 **구입** 체크는 별개이며 구입 여부는 유지됩니다.
+ISBN이 없어도 제목·저자·출판사·가격이 확인된 구조화 목록은 바로 진행할 수 있습니다. 기존 확인 필요 자료는 **ISBN 없음** 필터 → 도서 목록 오른쪽 위 **일괄 작업** 열기 → **검색·필터 결과 N건 전체 선택** → **서지 확인 완료**로 처리하세요. 가격 누락·잘못된 ISBN·식별 정보 부족은 남겨두고 이유를 알려줍니다. **작업** 체크와 **구입** 체크는 별개이며 구입 여부는 유지됩니다.
 
 목록과 미리보기는 100건씩 표시하지만 검색 결과 전체를 일괄 처리할 수 있습니다. 가져오기·일괄 작업 뒤 **되돌리기**를 사용할 수 있으며 이후 편집이 있으면 이를 덮어쓰지 않습니다. 원본을 별도 표준 파일로 만들어 재업로드할 필요는 없습니다. 외부 서지 조회는 선택 기능입니다.
 
-대상 버전: 수서로 2.2.1 · Windows 10/11 64비트
+대상 버전: 수서로 2.2.2 · Windows 10/11 64비트
 
-2.2.1은 여러 기관의 추천 파일을 함께 가져와 같은 책을 합치고, ISBN 없는 도서를 포함한 일괄 검토와 되돌리기를 제공합니다. 추천 출처·원문·구입 수량을 보존하며, 별도 전처리나 외부 ISBN 조회 없이 사용할 수 있습니다.
+2.2.2는 왼쪽 메뉴에 목록·예산·작업을 모으고 도서 표를 넓혀 여러 책을 한 번에 확인하기 쉽게 했습니다. 등록한 학교 소장목록과 현재 구입 목록에 저장된 추천도서를 열람할 수 있습니다. 여러 기관의 추천 파일 통합, ISBN 없는 도서의 일괄 검토와 되돌리기도 제공합니다. 추천 출처·원문·구입 수량을 보존하며, 별도 전처리나 외부 ISBN 조회 없이 사용할 수 있습니다.
 
 수서로는 추천받은 책을 한곳에 모으고, 필요한 책을 선택하고, 예산에 맞춘 발주서를 만드는 도구입니다. 회원가입이나 별도 서버 준비 없이 내 PC에서 사용합니다.
 
@@ -88,10 +88,10 @@ ISBN이 없어도 제목·저자·출판사·가격이 확인된 구조화 목�
 <path d="M1 57H599" stroke="#cdd9d2"/><text x="24" y="37" font-size="20" fill="#425b4c">공식 배포 페이지 · 첨부 파일 예시</text>
 <text x="24" y="94" font-size="24" font-weight="700" fill="#17392f">▾ Assets</text>
 <rect x="18" y="111" width="564" height="72" rx="10" fill="#e9f3eb" stroke="#226348" stroke-width="3"/>
-<text x="34" y="142" font-size="22" font-weight="700" fill="#145436">Suseoro-Setup-2.2.1.exe</text>
+<text x="34" y="142" font-size="22" font-weight="700" fill="#145436">Suseoro-Setup-2.2.2.exe</text>
 <text x="34" y="168" font-size="20" fill="#226348">↑ 이 파일을 누르세요 · 기본 설치</text>
-<text x="34" y="222" font-size="21" fill="#52675f">Suseoro-Portable-2.2.1.zip</text>
-<text x="34" y="268" font-size="21" fill="#52675f">Suseoro-Guide-2.2.1.zip</text>
+<text x="34" y="222" font-size="21" fill="#52675f">Suseoro-Portable-2.2.2.zip</text>
+<text x="34" y="268" font-size="21" fill="#52675f">Suseoro-Guide-2.2.2.zip</text>
 <text x="34" y="313" font-size="19" fill="#52675f">Source code · 소스 코드</text>
 </svg>
 <figcaption>그림 1. 여러 파일 중 <strong>Setup … .exe</strong>를 고르세요. Portable은 무설치형, Guide는 설명서입니다.</figcaption>
@@ -130,11 +130,11 @@ ISBN이 없어도 제목·저자·출판사·가격이 확인된 구조화 목�
 <figure class="install-figure install-screen">
 <svg viewBox="0 0 600 430" role="img" aria-labelledby="install-run-title install-run-desc" xmlns="http://www.w3.org/2000/svg">
 <title id="install-run-title">앱 이름을 확인하고 실행을 누릅니다</title>
-<desc id="install-run-desc">추가 정보를 펼친 Windows 경고창 예시입니다. 앱은 Suseoro-Setup-2.2.1.exe, 게시자는 알 수 없는 게시자입니다. 아래 두 버튼 중 왼쪽 실행 버튼을 노란색으로 강조했습니다.</desc>
+<desc id="install-run-desc">추가 정보를 펼친 Windows 경고창 예시입니다. 앱은 Suseoro-Setup-2.2.2.exe, 게시자는 알 수 없는 게시자입니다. 아래 두 버튼 중 왼쪽 실행 버튼을 노란색으로 강조했습니다.</desc>
 <rect width="600" height="430" rx="12" fill="#0067b8"/>
 <text x="28" y="56" font-size="32" fill="#fff">Windows의 PC 보호</text>
 <text x="28" y="105" font-size="21" fill="#fff">실행하기 전에 앱 이름을 확인하세요.</text>
-<text x="28" y="162" font-size="22" fill="#fff">앱: Suseoro-Setup-2.2.1.exe</text>
+<text x="28" y="162" font-size="22" fill="#fff">앱: Suseoro-Setup-2.2.2.exe</text>
 <text x="28" y="200" font-size="22" fill="#fff">게시자: 알 수 없는 게시자</text>
 <text x="28" y="264" font-size="23" font-weight="700" fill="#ffe083">2. 출처와 파일명 확인 후 ‘실행’</text>
 <path d="M315 280V325m0 0-10-13m10 13 10-13" fill="none" stroke="#ffe083" stroke-width="3"/>

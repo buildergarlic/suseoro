@@ -5,7 +5,13 @@ import "./bulk-review.css";
 
 export function BulkReviewToolbar({ bulk, visible, pageBooks }: { bulk: ReturnType<typeof useBulkReview>; visible: Book[]; pageBooks: Book[] }) {
   const blocked = bulk.busy || bulk.refreshNeeded;
-  return <section className="bulk-review" aria-label="도서 일괄 작업">
+  return <details className="bulk-review" onKeyDown={event => {
+    if (event.key !== "Escape") return;
+    event.currentTarget.open = false;
+    event.currentTarget.querySelector("summary")?.focus();
+  }}>
+    <summary><span>일괄 작업</span><span>{bulk.checked.size}건 선택</span>{bulk.error && <span className="bulk-review-alert">확인 필요</span>}</summary>
+    <section className="bulk-review-panel" aria-label="도서 일괄 작업">
     <div className="bulk-review-controls">
       <strong>작업 대상 {bulk.checked.size}건</strong>
       <button className="text-button" disabled={bulk.busy || !pageBooks.length} onClick={() => bulk.setChecked([...bulk.checked, ...pageBooks.map(book => book.id)])}>현재 페이지 선택</button>
@@ -26,5 +32,6 @@ export function BulkReviewToolbar({ bulk, visible, pageBooks }: { bulk: ReturnTy
     {bulk.operation && <div className="bulk-review-controls"><span>최근 작업: {bulk.operation.label}</span><button className="text-button" aria-label="일괄 작업 되돌리기" disabled={blocked} onClick={() => { void bulk.undo(); }}>되돌리기</button><small>이후 수정한 도서는 덮어쓰지 않습니다.</small></div>}
     <InlineError message={bulk.error} />
     {bulk.refreshNeeded && <button className="button secondary small" disabled={bulk.busy} onClick={() => { void bulk.retryRefresh(); }}>목록 다시 불러오기</button>}
-  </section>;
+    </section>
+  </details>;
 }
