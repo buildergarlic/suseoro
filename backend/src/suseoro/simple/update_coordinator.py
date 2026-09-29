@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 import threading
 from typing import Callable
@@ -140,11 +141,12 @@ class UpdateCoordinator:
                     with self._lock:
                         if not self._closing:
                             self._phase = 'manual' if self._info.get('available') else 'idle'
-                except Exception:
+                except Exception as error:
+                    logging.getLogger(__name__).warning("Automatic update failed: %s", updating.failure_code(error))
                     with self._lock:
                         self._ready = None
                         self._phase = 'error'
-                        self._info['message'] = '업데이트를 준비하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.'
+                        self._info['message'] = '업데이트를 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.'
 
     def install_manual(self, callback: Callable[[Path], None]) -> None:
         """The explicit install action waits for/cancels the background operation."""
@@ -179,7 +181,8 @@ class UpdateCoordinator:
                     self._manual_started = True
                     self._ready = None
                     self._phase = 'manual'
-        except Exception:
+        except Exception as error:
+            logging.getLogger(__name__).warning("Manual update failed: %s", updating.failure_code(error))
             with self._lock:
                 self._ready = None
                 self._phase = 'error'
@@ -211,7 +214,8 @@ class UpdateCoordinator:
                 try:
                     updating.verify_download(ready, self.data_dir)
                     return ready
-                except updating.UpdateError:
+                except updating.UpdateError as error:
+                    logging.getLogger(__name__).warning("Prepared update rejected: %s", updating.failure_code(error))
                     with self._lock:
                         self._phase = 'error'
                         self._info['message'] = '준비한 설치 파일이 변경되어 자동 설치하지 않았습니다.'

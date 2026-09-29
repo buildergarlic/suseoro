@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -16,6 +17,7 @@ import time
 from typing import Any
 from threading import Event
 from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from suseoro.simple import VERSION
@@ -36,6 +38,17 @@ class UpdateError(ValueError):
 
 class UpdateCancelled(UpdateError):
     """A download was cancelled before it became an installable update."""
+
+
+def failure_code(error: Exception) -> str:
+    """Log a useful network code without URLs, credentials, or response bodies."""
+    if isinstance(error, HTTPError):
+        return f"HTTP {error.code}"
+    if isinstance(error, URLError):
+        error = error.reason
+    code = type(error).__name__
+    number = getattr(error, "errno", None)
+    return f"{code} {number}" if isinstance(number, int) else code
 
 
 def _check_cancelled(cancel: Event | None) -> None:
@@ -127,9 +140,10 @@ def check_update(current_version: str = VERSION) -> dict[str, Any]:
         elif latest > current:
             result["message"] = "새 버전의 Windows 설치 파일이 아직 준비되지 않았습니다."
         return result
-    except Exception:
+    except Exception as error:
+        logging.getLogger(__name__).warning("GitHub release check failed: %s", failure_code(error))
         result["error"] = True
-        result["message"] = "업데이트 정보를 확인하지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요."
+        result["message"] = "업데이트 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."
         return result
 
 
@@ -215,9 +229,12 @@ def download_update(info: dict[str, Any], data_dir: Path, *, cancel: Event | Non
         _write_verified(destination, expected)
         _check_cancelled(cancel)
         return destination
-    except UpdateError:
+    except UpdateError as error:
+        if not isinstance(error, UpdateCancelled):
+            logging.getLogger(__name__).warning("Update download rejected: %s", failure_code(error))
         raise
     except Exception as error:
+        logging.getLogger(__name__).warning("Update download failed: %s", failure_code(error))
         raise UpdateError("업데이트 파일을 내려받지 못했습니다. 잠시 후 다시 시도해 주세요.") from None
     finally:
         temporary.unlink(missing_ok=True)

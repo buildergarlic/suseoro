@@ -1313,7 +1313,7 @@ wheels = [
 
 [[package]]
 name = "suseoro-v2"
-version = "2.2.5"
+version = "2.2.6"
 source = { editable = "." }
 dependencies = [
     { name = "argon2-cffi" },

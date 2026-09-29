@@ -1,6 +1,7 @@
 import hashlib
 from io import BytesIO
 import threading
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -44,13 +45,21 @@ def test_unsafe_or_incomplete_release_not_offered(monkeypatch, change):
     assert updater().check_update()["available"] is False
 
 
-def test_metadata_failure_returns_korean_message(monkeypatch):
+def test_metadata_failure_returns_korean_message(monkeypatch, caplog):
     def fail(url):
         raise TimeoutError("https://example.com/private")
     monkeypatch.setattr(updater(), "_get_json", fail)
     result = updater().check_update()
     assert result["available"] is False
     assert "private" not in str(result)
+    assert "TimeoutError" in caplog.text
+    assert "private" not in caplog.text
+
+
+def test_network_failure_code_omits_url_and_response_body():
+    error = HTTPError("https://api.github.com/private", 407, "secret", {}, None)
+    assert updater().failure_code(error) == "HTTP 407"
+    assert updater().failure_code(URLError(TimeoutError("private"))) == "TimeoutError"
 
 
 def test_download_hash_verified_before_final_file(monkeypatch, tmp_path):
