@@ -393,3 +393,7 @@ def test_parser_cache_persists_failure_and_retries_it_once_deterministically(
     assert calls == ["failed", "retried"]
     assert retried.cached is False
     assert retried.result == {"rows": 2}
+
+
+def test_product_name_header_maps_to_title():
+    assert infer_mapping(["상품명"], []).mapping["상품명"] == "title"

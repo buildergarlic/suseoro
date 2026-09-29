@@ -38,7 +38,7 @@ def _key(value: object) -> str:
 
 
 ALIASES = {
-    "title": ("title", "제목", "도서명", "자료명", "서명", "책제목", "도서제목", "booktitle", "품명", "도서명서명"),
+    "title": ("title", "제목", "도서명", "자료명", "서명", "책제목", "도서제목", "booktitle", "품명", "상품명", "도서명서명"),
     "author": ("author", "authors", "저자", "지은이", "글쓴이", "작가", "저자명", "저자역자"),
     "publisher": ("publisher", "출판사", "발행처", "출판", "발행사"),
     "isbn": ("isbn", "isbn13", "isbn10", "국제표준도서번호", "도서번호"),

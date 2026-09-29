@@ -47,7 +47,7 @@ export function MappingDialog({
       headers,
       mappingRequired.suggested_mapping,
       "title",
-      ["책이름", "제목", "도서명"],
+      ["책이름", "제목", "도서명", "상품명"],
     ),
   );
   const [authorColumn, setAuthorColumn] = useState(() =>

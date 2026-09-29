@@ -31,6 +31,18 @@ def test_spreadsheet_keeps_invalid_and_missing_rows_with_provenance(tmp_path: Pa
     assert invalid["raw_values"]["정가"] == "=1+1"
 
 
+def test_product_name_header_imports_book_title(tmp_path: Path):
+    path = tmp_path / "추천.xlsx"
+    workbook = Workbook()
+    workbook.active.append(["상품명", "저자"])
+    workbook.active.append(["책 하나", "김작가"])
+    workbook.save(path)
+
+    result = parse_upload(path, path.name)
+    assert result["mapping"]["title"] == "상품명"
+    assert result["rows"][0]["title"] == "책 하나"
+
+
 def test_unknown_csv_headers_are_preserved_and_can_be_mapped(tmp_path: Path):
     path = tmp_path / "custom.csv"
     path.write_text("A,B,C\n책,9788937464010,12000\n다른 책,9788936434267,9000", encoding="utf-8")

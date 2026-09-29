@@ -1,14 +1,14 @@
-# 수서로 2.2.4 상세 사용설명서
+# 수서로 2.2.5 상세 사용설명서
 
 **학교도서관 사서를 위한 도서 구입 목록 안내서**
 
-대상 버전: 수서로 2.2.4 · Windows 10/11 64비트
+대상 버전: 수서로 2.2.5 · Windows 10/11 64비트
 
 수서로는 추천받은 책을 한곳에 모으고, 필요한 책을 선택하고, 예산에 맞춘 발주서를 만드는 도구입니다. 회원가입이나 별도 서버 준비 없이 내 PC에서 사용합니다.
 
 ## 처음이라면: 왼쪽에서 고르고, 오른쪽에서 확인하세요
 
-2.2.4 화면의 왼쪽에는 목록·예산·주요 작업·등록 자료가 있고, 오른쪽에는 책을 여러 권씩 볼 수 있는 도서 표가 있습니다. 처음에는 다음 다섯 걸음만 따라 해 보세요. 실제 화면의 버튼 이름은 **굵게** 적었습니다.
+2.2.5 화면의 왼쪽에는 목록·예산·주요 작업·등록 자료가 있고, 오른쪽에는 책을 여러 권씩 볼 수 있는 도서 표가 있습니다. 처음에는 다음 다섯 걸음만 따라 해 보세요. 실제 화면의 버튼 이름은 **굵게** 적었습니다.
 
 | 걸음 | 누를 곳 | 화면에서 확인할 결과 |
 |---|---|---|
@@ -92,10 +92,10 @@
 <path d="M1 57H599" stroke="#cdd9d2"/><text x="24" y="37" font-size="20" fill="#425b4c">공식 배포 페이지 · 첨부 파일 예시</text>
 <text x="24" y="94" font-size="24" font-weight="700" fill="#17392f">▾ Assets</text>
 <rect x="18" y="111" width="564" height="72" rx="10" fill="#e9f3eb" stroke="#226348" stroke-width="3"/>
-<text x="34" y="142" font-size="22" font-weight="700" fill="#145436">Suseoro-Setup-2.2.4.exe</text>
+<text x="34" y="142" font-size="22" font-weight="700" fill="#145436">Suseoro-Setup-2.2.5.exe</text>
 <text x="34" y="168" font-size="20" fill="#226348">↑ 이 파일을 누르세요 · 기본 설치</text>
-<text x="34" y="222" font-size="21" fill="#52675f">Suseoro-Portable-2.2.4.zip</text>
-<text x="34" y="268" font-size="21" fill="#52675f">Suseoro-Guide-2.2.4.zip</text>
+<text x="34" y="222" font-size="21" fill="#52675f">Suseoro-Portable-2.2.5.zip</text>
+<text x="34" y="268" font-size="21" fill="#52675f">Suseoro-Guide-2.2.5.zip</text>
 <text x="34" y="313" font-size="19" fill="#52675f">Source code · 소스 코드</text>
 </svg>
 <figcaption>그림 1. 여러 파일 중 <strong>Setup … .exe</strong>를 고르세요. Portable은 무설치형, Guide는 설명서입니다.</figcaption>
@@ -134,11 +134,11 @@
 <figure class="install-figure install-screen">
 <svg viewBox="0 0 600 430" role="img" aria-labelledby="install-run-title install-run-desc" xmlns="http://www.w3.org/2000/svg">
 <title id="install-run-title">앱 이름을 확인하고 실행을 누릅니다</title>
-<desc id="install-run-desc">추가 정보를 펼친 Windows 경고창 예시입니다. 앱은 Suseoro-Setup-2.2.4.exe, 게시자는 알 수 없는 게시자입니다. 아래 두 버튼 중 왼쪽 실행 버튼을 노란색으로 강조했습니다.</desc>
+<desc id="install-run-desc">추가 정보를 펼친 Windows 경고창 예시입니다. 앱은 Suseoro-Setup-2.2.5.exe, 게시자는 알 수 없는 게시자입니다. 아래 두 버튼 중 왼쪽 실행 버튼을 노란색으로 강조했습니다.</desc>
 <rect width="600" height="430" rx="12" fill="#0067b8"/>
 <text x="28" y="56" font-size="32" fill="#fff">Windows의 PC 보호</text>
 <text x="28" y="105" font-size="21" fill="#fff">실행하기 전에 앱 이름을 확인하세요.</text>
-<text x="28" y="162" font-size="22" fill="#fff">앱: Suseoro-Setup-2.2.4.exe</text>
+<text x="28" y="162" font-size="22" fill="#fff">앱: Suseoro-Setup-2.2.5.exe</text>
 <text x="28" y="200" font-size="22" fill="#fff">게시자: 알 수 없는 게시자</text>
 <text x="28" y="264" font-size="23" font-weight="700" fill="#ffe083">2. 출처와 파일명 확인 후 ‘실행’</text>
 <path d="M315 280V325m0 0-10-13m10 13 10-13" fill="none" stroke="#ffe083" stroke-width="3"/>
