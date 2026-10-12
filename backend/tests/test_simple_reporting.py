@@ -119,6 +119,33 @@ def test_failed_delivery_keeps_queue_and_retries_later(monkeypatch, tmp_path, ca
         reporter.close()
 
 
+def test_closed_inflight_sender_cannot_overwrite_a_reopened_apps_queue(monkeypatch, tmp_path):
+    entered, release = threading.Event(), threading.Event()
+    def send(report):
+        entered.set()
+        assert release.wait(2)
+    monkeypatch.setattr(reporting, "_send", send)
+    first = reporting.ErrorReporter(tmp_path)
+    first.record(ERROR)
+    first.start()
+    try:
+        assert entered.wait(2)
+        first.close()
+        second = reporting.ErrorReporter(tmp_path)
+        second.record({"stage": "download", "category": "timeout", "code": "TimeoutError"})
+        assert second.status()["queued_count"] == 2
+        release.set()
+        first._worker.join(timeout=2)
+        assert not first._worker.is_alive()
+        saved = json.loads((tmp_path / "error-reports.json").read_text())
+        assert [item["code"] for item in saved["queue"]] == ["HTTP 407", "TimeoutError"]
+        assert saved["last_sent_at"] is None
+        second.close()
+    finally:
+        release.set()
+        first.close()
+
+
 def test_form_post_is_bounded_and_does_not_send_private_local_details(monkeypatch):
     requests = []
     class Response:

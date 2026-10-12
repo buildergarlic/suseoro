@@ -376,10 +376,13 @@ class LibraryStore:
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
             self._list(db, list_id)
-            result = db.execute('UPDATE books SET deleted=0 WHERE id=? AND list_id=?', (book_id, list_id))
-            if not result.rowcount:
+            row = db.execute('SELECT data FROM books WHERE id=? AND list_id=?', (book_id, list_id)).fetchone()
+            if not row:
                 raise KeyError('도서를 찾을 수 없습니다.')
-        return self.update_book(list_id, book_id, {})
+            data = validate_book({}, json.loads(row['data']))
+            db.execute('UPDATE books SET data=?,deleted=0 WHERE id=? AND list_id=?',
+                       (json.dumps(data, ensure_ascii=False), book_id, list_id))
+        return data
 
     def add_holdings(self, rows):
         if len(rows) > 100000:

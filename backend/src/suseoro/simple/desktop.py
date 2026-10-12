@@ -303,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
         analytics = getattr(app.state, 'holdings_analytics', None) if app else None
         if analytics is not None:
             analytics.stop()
-        if reporter is not None and not normal_exit:
+        if reporter is not None:
             reporter.close()
         if server:
             server.stop()
@@ -323,13 +323,9 @@ def main(argv: list[str] | None = None) -> int:
                     reporter.record({'stage': 'install', 'category': failure_category(error), 'code': failure_code(error)})
                 except OSError as report_error:
                     logging.getLogger(__name__).warning("Could not save installer report: %s", failure_code(report_error))
-                finally:
-                    reporter.close()
             if pending_installer:
                 _message("설치 프로그램을 열지 못했습니다. 수서로를 다시 열고 업데이트를 시도해 주세요.")
             return 1
-    if reporter is not None:
-        reporter.close()
     return 0
 
 

@@ -118,6 +118,60 @@ def test_native_window_enables_download_and_stops_server_on_return(monkeypatch, 
     assert callable(fake_app.state.install_update_callback)
 
 
+def test_reporting_closes_before_releasing_the_instance_lock_and_handoff_failure_is_saved(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from suseoro.simple import app as app_module, reporting, update_coordinator
+    reporter = reporting.ErrorReporter(tmp_path)
+    fake_app = SimpleNamespace(state=SimpleNamespace(error_reporter=reporter))
+    monkeypatch.setattr(app_module, 'create_app', lambda **kwargs: fake_app)
+    monkeypatch.setattr(desktop(), 'automatic_update_supported', lambda: True)
+    monkeypatch.setattr(desktop(), '_installer_mutex', lambda: None)
+    monkeypatch.setattr(desktop(), '_message', lambda *args: None)
+    monkeypatch.setattr(reporter, 'start', lambda: None)
+    original_close = reporter.close
+    def close():
+        probe = desktop().InstanceLock(tmp_path)
+        assert not probe.acquire(), 'The reporter must close while this app still holds the instance lock'
+        original_close()
+    monkeypatch.setattr(reporter, 'close', close)
+    class Coordinator:
+        auto_supported = True
+        def __init__(self, *args, **kwargs):
+            pass
+        def start(self):
+            pass
+        def close(self, *, normal_exit):
+            return tmp_path / 'prepared.exe' if normal_exit else None
+    monkeypatch.setattr(update_coordinator, 'UpdateCoordinator', Coordinator)
+    class Event:
+        def __iadd__(self, callback):
+            self.callback = callback
+            return self
+    window = SimpleNamespace(events=SimpleNamespace(closed=Event()), destroy=lambda: None)
+    view = SimpleNamespace(settings={}, create_window=lambda *args, **kwargs: window,
+                           start=lambda **kwargs: window.events.closed.callback())
+    monkeypatch.setitem(desktop().sys.modules, 'webview', view)
+    class Server:
+        url = 'http://127.0.0.1:12345'
+        def __init__(self, *args):
+            pass
+        def start(self):
+            pass
+        def stop(self):
+            pass
+    monkeypatch.setattr(desktop(), 'LocalServer', Server)
+    def fail_handoff(*args, **kwargs):
+        assert reporter._stop.is_set()
+        raise OSError('private installation path')
+    monkeypatch.setattr(desktop(), 'launch_installer', fail_handoff)
+    assert desktop().main(['--data-dir', str(tmp_path)]) == 1
+    saved = json.loads((tmp_path / 'error-reports.json').read_text())
+    assert len(saved['queue']) == 1
+    assert saved['queue'][0]['stage'] == 'install' and saved['queue'][0]['code'] == 'OSError'
+    assert 'private' not in json.dumps(saved)
+    assert reporting.ErrorReporter(tmp_path).status()['queued_count'] == 1
+
+
 def test_bundled_ocr_is_configured_without_running_a_helper(monkeypatch, tmp_path):
     bundle = tmp_path / "portable_tesseract"
     bundle.mkdir()

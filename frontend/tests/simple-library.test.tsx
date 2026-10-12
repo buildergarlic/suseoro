@@ -183,13 +183,17 @@ beforeEach(() => {
 });
 
 it("uses the left rail for budget and actions while the book table owns the main workspace", async () => {
-  render(<SimpleLibraryApp api={fixture([book("one")]).api} />);
+  const original = fixture([book("one")]).api;
+  const api = { ...original, list: async (id: string) => ({ ...await original.list(id), holdings_count: 80 }) };
+  render(<SimpleLibraryApp api={api} />);
   const budget = await screen.findByRole("region", { name: "예산 현황" });
   const sidebar = budget.closest("aside");
   expect(sidebar).not.toBeNull();
   expect(within(sidebar!).getByRole("button", { name: "ISBN 추가" })).toBeInTheDocument();
   expect(within(sidebar!).getByRole("button", { name: "파일 가져오기" })).toBeInTheDocument();
   expect(within(sidebar!).getByRole("button", { name: "발주서 저장" })).toBeInTheDocument();
+  expect(within(screen.getByRole("button", { name: "학교 소장목록 열람" })).getByText("80건")).toBeInTheDocument();
+  expect(within(sidebar!).getByText("소장자료 80건 · 중복 0종")).toBeInTheDocument();
   expect(within(screen.getByRole("main")).getByRole("table", { name: "도서 목록" })).toBeInTheDocument();
 });
 

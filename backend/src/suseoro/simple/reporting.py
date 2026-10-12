@@ -247,6 +247,8 @@ class ErrorReporter:
                 try:
                     _send({key: value for key, value in report.items() if key != "id"})
                     with self._lock:
+                        if self._stop.is_set():
+                            return
                         self._state["queue"] = [item for item in self._state["queue"] if item["id"] != report["id"]]
                         self._state["last_sent_at"] = _now()
                         self._save()
@@ -258,5 +260,6 @@ class ErrorReporter:
             self._wake.wait(wait)
 
     def close(self) -> None:
-        self._stop.set()
-        self._wake.set()
+        with self._lock:
+            self._stop.set()
+            self._wake.set()

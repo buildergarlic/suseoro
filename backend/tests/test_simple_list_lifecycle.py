@@ -1,4 +1,6 @@
 from copy import deepcopy
+from contextlib import contextmanager
+import json
 
 import pytest
 
@@ -97,3 +99,49 @@ def test_invalid_archive_metadata_does_not_change_existing_data(tmp_path):
     damaged['lists'][0]['deleted_at'] = '2026-10-12T00:00:00+00:00'
     with pytest.raises(ValueError, match='사용할 구입 목록'):
         store.restore(damaged)
+
+
+@pytest.mark.parametrize('price', [999, None])
+def test_book_restore_finishes_before_a_list_archive_observes_it(tmp_path, monkeypatch, price):
+    store = LibraryStore(tmp_path)
+    list_id = store.lists()[0]['id']
+    store.create_list({'name': '사용할 목록'})
+    store.update_list(list_id, {'discount_percent': 9.7})
+    book = store.add_book(list_id, {'title': '되돌릴 책', 'price': price, 'quantity': 2})
+    store.delete_book(list_id, book['id'])
+    observer = LibraryStore(tmp_path)
+    original_connection = store.connection
+    archived = False
+
+    @contextmanager
+    def archive_when_restoration_becomes_visible():
+        nonlocal archived
+        with original_connection() as db:
+            yield db
+        if not archived:
+            with observer.connection() as db:
+                restored = db.execute('SELECT deleted FROM books WHERE id=?', (book['id'],)).fetchone()['deleted'] == 0
+            if restored:
+                observer.delete_list(list_id)
+                archived = True
+
+    monkeypatch.setattr(store, 'connection', archive_when_restoration_becomes_visible)
+    assert store.restore_book(list_id, book['id']) == book
+    assert archived
+    observer.restore_list(list_id)
+    state = observer.list_state(list_id)
+    assert state['books'][0]['price'] == price
+    assert state['summary']['order_total'] == (1804 if price is not None else 0)
+    assert state['summary']['missing_price_count'] == (0 if price is not None else 1)
+
+
+def test_failed_book_restore_validation_keeps_the_deleted_record_hidden(tmp_path):
+    store = LibraryStore(tmp_path)
+    list_id = store.lists()[0]['id']
+    book = store.add_book(list_id, {'title': '손상 전 책'})
+    store.delete_book(list_id, book['id'])
+    with store.connection() as db:
+        db.execute('UPDATE books SET data=? WHERE id=?', (json.dumps({**book, 'title': ''}), book['id']))
+    with pytest.raises(ValueError, match='도서명이나 ISBN'):
+        store.restore_book(list_id, book['id'])
+    assert store.list_state(list_id)['books'] == []
