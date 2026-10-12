@@ -272,16 +272,25 @@ class LibraryStore:
                 db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (key, str(value).strip()))
         return self.settings()
 
-    def lists(self):
+    def lists(self, include_deleted=False):
         with self.connection() as db:
-            return [json.loads(r['data']) for r in db.execute('SELECT data FROM lists ORDER BY rowid DESC')]
+            lists = [json.loads(r['data']) for r in db.execute('SELECT data FROM lists ORDER BY rowid DESC')]
+        return lists if include_deleted else [item for item in lists if not item.get('deleted_at')]
+
+    def deleted_lists(self):
+        return [item for item in self.lists(include_deleted=True) if item.get('deleted_at')]
+
+    @staticmethod
+    def _list(db, list_id, include_deleted=False):
+        row = db.execute('SELECT data FROM lists WHERE id=?', (list_id,)).fetchone()
+        data = json.loads(row['data']) if row else None
+        if not data or (data.get('deleted_at') and not include_deleted):
+            raise KeyError('목록을 찾을 수 없습니다.')
+        return data
 
     def get_list(self, list_id):
         with self.connection() as db:
-            row = db.execute('SELECT data FROM lists WHERE id=?', (list_id,)).fetchone()
-        if not row:
-            raise KeyError('목록을 찾을 수 없습니다.')
-        return json.loads(row['data'])
+            return self._list(db, list_id)
 
     def create_list(self, values):
         data = {**validate_list(values), 'id': identifier(), 'created_at': now()}
@@ -290,8 +299,31 @@ class LibraryStore:
         return data
 
     def update_list(self, list_id, values):
-        data = validate_list(values, self.get_list(list_id))
         with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            data = validate_list(values, self._list(db, list_id))
+            db.execute('UPDATE lists SET data=? WHERE id=?', (json.dumps(data, ensure_ascii=False), list_id))
+        return data
+
+    def delete_list(self, list_id):
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            data = self._list(db, list_id, include_deleted=True)
+            if data.get('deleted_at'):
+                return data
+            active_count = sum(not json.loads(row['data']).get('deleted_at')
+                               for row in db.execute('SELECT data FROM lists'))
+            if active_count <= 1:
+                raise ValueError('마지막 구입 목록은 삭제할 수 없습니다. 새 목록을 먼저 만들어 주세요.')
+            data['deleted_at'] = now()
+            db.execute('UPDATE lists SET data=? WHERE id=?', (json.dumps(data, ensure_ascii=False), list_id))
+        return data
+
+    def restore_list(self, list_id):
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            data = self._list(db, list_id, include_deleted=True)
+            data.pop('deleted_at', None)
             db.execute('UPDATE lists SET data=? WHERE id=?', (json.dumps(data, ensure_ascii=False), list_id))
         return data
 
@@ -311,11 +343,12 @@ class LibraryStore:
         return undo_operation(self, list_id, operation_id)
 
     def add_books(self, list_id, values):
-        self.get_list(list_id)
         if len(values) > 20000:
             raise ValueError('한 번에 최대 20,000권까지 가져올 수 있습니다.')
         books = [{**validate_book(v), 'id': identifier()} for v in values]
         with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._list(db, list_id)
             db.executemany('INSERT INTO books (id,list_id,data) VALUES (?,?,?)',
                            [(b['id'], list_id, json.dumps(b, ensure_ascii=False)) for b in books])
         return books
@@ -323,6 +356,7 @@ class LibraryStore:
     def update_book(self, list_id, book_id, values):
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
+            self._list(db, list_id)
             row = db.execute('SELECT data FROM books WHERE id=? AND list_id=? AND deleted=0', (book_id, list_id)).fetchone()
             if not row:
                 raise KeyError('도서를 찾을 수 없습니다.')
@@ -332,12 +366,16 @@ class LibraryStore:
 
     def delete_book(self, list_id, book_id):
         with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._list(db, list_id)
             result = db.execute('UPDATE books SET deleted=1 WHERE id=? AND list_id=?', (book_id, list_id))
             if not result.rowcount:
                 raise KeyError('도서를 찾을 수 없습니다.')
 
     def restore_book(self, list_id, book_id):
         with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._list(db, list_id)
             result = db.execute('UPDATE books SET deleted=0 WHERE id=? AND list_id=?', (book_id, list_id))
             if not result.rowcount:
                 raise KeyError('도서를 찾을 수 없습니다.')
@@ -514,7 +552,19 @@ class LibraryStore:
                 if not isinstance(item['id'], str) or not 1 <= len(item['id']) <= 64 or item['id'] in ids:
                     raise ValueError('목록 식별자가 올바르지 않습니다.')
                 ids.add(item['id'])
-                normalized_lists.append({**validate_list(item), 'id': item['id'], 'created_at': str(item.get('created_at', now()))})
+                normalized = {**validate_list(item), 'id': item['id'], 'created_at': str(item.get('created_at', now()))}
+                if 'deleted_at' in item:
+                    deleted_at = item['deleted_at']
+                    if not isinstance(deleted_at, str) or not 1 <= len(deleted_at) <= 64:
+                        raise ValueError('백업의 목록 삭제 이력이 올바르지 않습니다.')
+                    try:
+                        datetime.fromisoformat(deleted_at)
+                    except ValueError as exc:
+                        raise ValueError('백업의 목록 삭제 이력이 올바르지 않습니다.') from exc
+                    normalized['deleted_at'] = deleted_at
+                normalized_lists.append(normalized)
+            if not any(not item.get('deleted_at') for item in normalized_lists):
+                raise ValueError('사용할 구입 목록이 없는 백업입니다. 기존 자료를 유지합니다.')
             normalized_books = []
             book_ids = set()
             for item in books:

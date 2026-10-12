@@ -12,9 +12,11 @@ from suseoro.simple import updating
 
 
 class UpdateCoordinator:
-    def __init__(self, data_dir: Path, *, auto_supported: bool = False):
+    def __init__(self, data_dir: Path, *, auto_supported: bool = False,
+                 report_error: Callable[[dict], None] | None = None):
         self.data_dir = Path(data_dir)
         self.auto_supported = auto_supported
+        self._report_error = report_error
         self._lock = threading.RLock()
         self._operation = threading.Lock()
         self._worker: threading.Thread | None = None
@@ -39,6 +41,13 @@ class UpdateCoordinator:
     @property
     def _preferences(self) -> Path:
         return self.data_dir / 'update-preferences.json'
+
+    def _report(self, stage: str, category: str, code: str) -> None:
+        if self._report_error is not None:
+            try:
+                self._report_error({'stage': stage, 'category': category, 'code': code})
+            except Exception as error:
+                logging.getLogger(__name__).warning("Update error reporting failed: %s", updating.failure_code(error))
 
     def status(self) -> dict:
         with self._lock:
@@ -117,6 +126,7 @@ class UpdateCoordinator:
                         self._ready = None
                         if info.get('error'):
                             self._phase = 'error'
+                            self._report('check', info.get('error_category', 'network'), info.get('error_code', 'UpdateError'))
                             continue
                         automatic = self.auto_supported and self.auto_enabled
                         compatible = updating.supports_automatic_install(info.get('latest_version'))
@@ -143,10 +153,12 @@ class UpdateCoordinator:
                             self._phase = 'manual' if self._info.get('available') else 'idle'
                 except Exception as error:
                     logging.getLogger(__name__).warning("Automatic update failed: %s", updating.failure_code(error))
+                    self._report('download', updating.failure_category(error), updating.failure_code(error))
                     with self._lock:
                         self._ready = None
                         self._phase = 'error'
-                        self._info['message'] = '업데이트를 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+                        self._info.update(message=updating.failure_message(error),
+                                          error_category=updating.failure_category(error), error_code=updating.failure_code(error))
 
     def install_manual(self, callback: Callable[[Path], None]) -> None:
         """The explicit install action waits for/cancels the background operation."""
@@ -166,8 +178,11 @@ class UpdateCoordinator:
                     self._phase = 'checking'
                 info = updating.check_update(VERSION)
                 updating._check_cancelled(cancel)
+                if info.get('error'):
+                    raise updating.UpdateError(info['message'], category=info.get('error_category', 'network'),
+                                               code=info.get('error_code', 'UpdateError'))
                 if not info.get('available'):
-                    raise ValueError(info.get('message') or '현재 적용할 새 버전이 없습니다.')
+                    raise updating.UpdateError(info.get('message') or '현재 적용할 새 버전이 없습니다.')
                 with self._lock:
                     self._info = info
                     self._phase = 'downloading'
@@ -183,10 +198,13 @@ class UpdateCoordinator:
                     self._phase = 'manual'
         except Exception as error:
             logging.getLogger(__name__).warning("Manual update failed: %s", updating.failure_code(error))
+            if not isinstance(error, updating.UpdateCancelled):
+                self._report('install', updating.failure_category(error), updating.failure_code(error))
             with self._lock:
                 self._ready = None
                 self._phase = 'error'
-                self._info['message'] = '업데이트를 설치하지 못했습니다. 다시 시도해 주세요.'
+                self._info.update(message=updating.failure_message(error),
+                                  error_category=updating.failure_category(error), error_code=updating.failure_code(error))
             raise
         finally:
             with self._lock:
@@ -203,7 +221,7 @@ class UpdateCoordinator:
             worker = self._worker
             ready = self._ready if (normal_exit and self.auto_supported and self.auto_enabled
                                     and not self._manual_started and not self._manual_pending) else None
-        # Each metadata/read operation has at most a 15-second network timeout.
+        # Reads have a 15-second timeout; Windows may retry with system settings.
         # Waiting lets download_update's finally remove its .part before exit.
         if worker is not None and worker is not threading.current_thread():
             worker.join(timeout=20)
@@ -216,6 +234,7 @@ class UpdateCoordinator:
                     return ready
                 except updating.UpdateError as error:
                     logging.getLogger(__name__).warning("Prepared update rejected: %s", updating.failure_code(error))
+                    self._report('verify', updating.failure_category(error), updating.failure_code(error))
                     with self._lock:
                         self._phase = 'error'
                         self._info['message'] = '준비한 설치 파일이 변경되어 자동 설치하지 않았습니다.'

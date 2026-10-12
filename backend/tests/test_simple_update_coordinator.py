@@ -124,6 +124,29 @@ def test_network_failure_is_retryable_without_cached_false_latest(monkeypatch, t
     assert coordinator.status()['phase'] == 'ready'
 
 
+def test_failed_background_check_reports_only_safe_error_fields(monkeypatch, tmp_path):
+    reports = []
+    monkeypatch.setattr(updating, 'check_update', lambda *args: {**info(), 'available': False,
+                       'error': True, 'error_category': 'proxy', 'error_code': 'HTTP 407',
+                       'message': '학교망 프록시 인증을 확인해 주세요.'})
+    coordinator = UpdateCoordinator(tmp_path, auto_supported=True, report_error=reports.append)
+    coordinator.start()
+    finish(coordinator)
+    assert reports == [{'stage': 'check', 'category': 'proxy', 'code': 'HTTP 407'}]
+    assert coordinator.status()['error_category'] == 'proxy'
+    assert coordinator.status()['message'] == '학교망 프록시 인증을 확인해 주세요.'
+
+
+def test_reporting_failure_does_not_stop_the_update_worker(monkeypatch, tmp_path):
+    monkeypatch.setattr(updating, 'check_update', lambda *args: {**info(), 'available': False, 'error': True})
+    def unavailable(payload):
+        raise OSError('private endpoint')
+    coordinator = UpdateCoordinator(tmp_path, auto_supported=True, report_error=unavailable)
+    coordinator.start()
+    finish(coordinator)
+    assert coordinator.status()['phase'] == 'error'
+
+
 def test_download_failure_and_tampering_do_not_produce_an_exit_installer(monkeypatch, tmp_path, available):
     path, _ = available
     coordinator = UpdateCoordinator(tmp_path, auto_supported=True)

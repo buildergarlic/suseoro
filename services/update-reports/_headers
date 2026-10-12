@@ -1,0 +1,4 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Content-Security-Policy: default-src 'none'; form-action 'self'; frame-ancestors 'none'

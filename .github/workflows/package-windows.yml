@@ -5,7 +5,7 @@ on:
       version:
         description: Package version (must match source)
         required: true
-        default: '2.2.6'
+        default: '2.3.0'
 permissions:
   contents: read
 jobs:
@@ -66,5 +66,6 @@ jobs:
             dist/Suseoro-Portable-*.zip
             dist/Suseoro-Guide-*.zip
             dist/*.sha256
+            dist/update.json
             dist/SHA256SUMS
           if-no-files-found: error

@@ -1,7 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { LibraryApi } from "./api";
 import { InlineError, Modal } from "./Modal";
-import { errorMessage, type AcquisitionList, type Settings, type UpdateInfo } from "./types";
+import { errorMessage, type AcquisitionList, type ErrorReportInfo, type Settings, type UpdateInfo } from "./types";
 
 export function ListDialog({ list, api, onClose, onSaved }: { list?: AcquisitionList; api: LibraryApi; onClose: () => void; onSaved: (list: AcquisitionList) => Promise<void> }) {
   const [name, setName] = useState(list?.name ?? `${new Date().getFullYear()} 도서 구입 목록`), [year, setYear] = useState(String(list?.year ?? new Date().getFullYear()));
@@ -16,6 +16,13 @@ export function SettingsDialog({ settings, version, update, api, onClose, onSett
   const [keyConfigured, setKeyConfigured] = useState(settings.nl_api_key_configured);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [restoreFile, setRestoreFile] = useState<File | null>(null), [confirmRestore, setConfirmRestore] = useState(false);
+  const [reports, setReports] = useState<ErrorReportInfo | null>(null), [reportLoadError, setReportLoadError] = useState("");
+  useEffect(() => {
+    if (typeof api.errorReports !== "function") return;
+    let active = true;
+    void api.errorReports().then(result => { if (active) setReports(result); }).catch((caught: unknown) => { if (active) setReportLoadError(errorMessage(caught)); });
+    return () => { active = false; };
+  }, [api]);
   async function action(work: () => Promise<void>) { setError(""); setNotice(""); setBusy(true); try { await work(); } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); } }
   async function save(event: FormEvent) { event.preventDefault(); await action(async () => { const result = await api.settings({ school_name: school.trim(), ...(key.trim() ? { nl_api_key: key.trim() } : {}) }); onSettings(result); setKeyConfigured(result.nl_api_key_configured); setKey(""); setNotice("설정을 저장했습니다."); }); }
   const updateUrl = update?.url && /^https:\/\/github\.com\//i.test(update.url) ? update.url : undefined;
@@ -42,6 +49,14 @@ export function SettingsDialog({ settings, version, update, api, onClose, onSett
           {update.message && update.message !== updateTitle && <p className="field-help">{update.message}</p>}
           {update.available && !updateWorking && <><p className="field-help">{unsavedSettings ? "바꾼 학교 정보를 먼저 설정 저장한 뒤 업데이트해 주세요." : "설치를 누르면 수서로를 닫고 설치 프로그램을 엽니다."}</p><div className="settings-action-row"><button className="button primary small" disabled={busy || unsavedSettings} onClick={() => { void action(async () => { const result = await api.installUpdate(); if (!result.started) throw new Error("설치 프로그램을 시작하지 못했습니다. 다운로드 링크를 이용해 주세요."); onUpdateStarted(); }); }}>{update.phase === "ready" ? "지금 업데이트" : "업데이트 설치"}</button>{updateUrl && <a className="text-button" href={updateUrl} target="_blank" rel="noreferrer">설치 파일 다운로드 ↗</a>}</div></>}
         </div>}
+      </section>
+      <section aria-label="업데이트 오류 자동 보고"><h3>업데이트 오류 자동 보고</h3>
+        <label className="check-label"><input type="checkbox" checked={reports?.enabled === true} disabled={busy || !reports} onChange={event => { const enabled = event.target.checked; void action(async () => { setReports(await api.errorReportPreferences(enabled)); setNotice(enabled ? "업데이트 오류 자동 보고를 켰습니다." : "업데이트 오류 자동 보고를 껐습니다."); }); }} />업데이트 오류를 개발자에게 자동 보고</label>
+        <p className="field-help">오류 단계·분류·코드, 수서로 버전, 운영체제, 임의 설치 ID와 발생 시각을 Netlify 중계 서버를 통해 buildergarlic@gmail.com으로 보냅니다.</p>
+        <p className="field-help">진단 요약을 보내며, 도서 목록·학교 이름·PC 사용자 이름·파일 경로·인증키는 포함하지 않습니다. 인터넷에 연결되지 않으면 이 PC에 보관한 뒤 다시 전송합니다.</p>
+        {reports && <div role="status"><p className="field-help">{reports.message}</p><p className="field-help">전송 대기 {reports.queued_count.toLocaleString("ko-KR")}건{reports.last_sent_at ? ` · 최근 서버 접수 ${new Date(reports.last_sent_at).toLocaleString("ko-KR")}` : ""}</p>{!reports.configured && <p className="field-help">메일 발신 경로를 준비해야 자동 보고를 보낼 수 있습니다.</p>}</div>}
+        {reportLoadError && <p className="field-help">보고 상태를 불러오지 못했습니다. {reportLoadError}</p>}
+        <div className="settings-action-row"><button className="button secondary small" disabled={busy || !reports?.enabled || !reports.configured} onClick={() => { void action(async () => { setReports(await api.testErrorReport()); setNotice("시험 보고를 전송 대기열에 추가했습니다. 보고 상태 새로고침으로 접수 여부를 확인하세요."); }); }}>시험 보고 보내기</button><button className="text-button" disabled={busy || typeof api.errorReports !== "function"} onClick={() => { void action(async () => { setReports(await api.errorReports()); setReportLoadError(""); }); }}>보고 상태 새로고침</button></div>
       </section>
       <InlineError message={error} />{notice && <p className="inline-success" role="status">{notice}</p>}
     </div><footer className="modal-footer"><button className="text-button" disabled={busy} onClick={() => { void action(async () => { await api.shutdown(); onExited(); }); }}>수서로 종료</button><span className="spacer" /><button className="button secondary" onClick={onClose} disabled={busy}>닫기</button></footer>

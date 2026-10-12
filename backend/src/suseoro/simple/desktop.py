@@ -209,6 +209,8 @@ def main(argv: list[str] | None = None) -> int:
     pending_installer: list[Path] = []
     pending_lock = threading.Lock()
     coordinator = None
+    reporter = None
+    app = None
     automatic_installer = None
     normal_exit = False
     exit_requested = threading.Event()
@@ -239,9 +241,13 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(sys, "_MEIPASS") and not (frontend_dir() / "index.html").is_file():
             raise RuntimeError("설치 파일에 화면 파일이 없습니다.")
         app = create_app(data_dir=data_dir, frontend_dir=frontend_dir())
+        from suseoro.simple.reporting import ErrorReporter
+        reporter = getattr(app.state, 'error_reporter', None) or ErrorReporter(data_dir)
+        app.state.error_reporter = reporter
         from suseoro.simple.update_coordinator import UpdateCoordinator
         coordinator = UpdateCoordinator(data_dir, auto_supported=(
-            not (args.headless or args.smoke_test) and automatic_update_supported()))
+            not (args.headless or args.smoke_test) and automatic_update_supported()),
+            report_error=reporter.record)
         app.state.update_coordinator = coordinator
         app.state.shutdown_callback = request_shutdown
         app.state.install_update_callback = install_update
@@ -262,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
             while server.thread.is_alive() and not exit_requested.wait(0.1):
                 pass
         else:
+            reporter.start()
             mutex = _installer_mutex()
             if getattr(sys, 'frozen', False) and _update_in_progress():
                 _message('수서로 업데이트를 설치하고 있습니다. 잠시 후 다시 열어 주세요.')
@@ -293,6 +300,11 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if coordinator is not None:
             automatic_installer = coordinator.close(normal_exit=normal_exit)
+        analytics = getattr(app.state, 'holdings_analytics', None) if app else None
+        if analytics is not None:
+            analytics.stop()
+        if reporter is not None and not normal_exit:
+            reporter.close()
         if server:
             server.stop()
         (data_dir / "desktop-instance.json").unlink(missing_ok=True)
@@ -303,11 +315,21 @@ def main(argv: list[str] | None = None) -> int:
     if installer:
         try:
             launch_installer(installer, data_dir, automatic=not pending_installer)
-        except Exception:
+        except Exception as error:
             logging.getLogger(__name__).exception("Installer handoff failed")
+            if reporter is not None:
+                from suseoro.simple.updating import failure_category, failure_code
+                try:
+                    reporter.record({'stage': 'install', 'category': failure_category(error), 'code': failure_code(error)})
+                except OSError as report_error:
+                    logging.getLogger(__name__).warning("Could not save installer report: %s", failure_code(report_error))
+                finally:
+                    reporter.close()
             if pending_installer:
                 _message("설치 프로그램을 열지 못했습니다. 수서로를 다시 열고 업데이트를 시도해 주세요.")
             return 1
+    if reporter is not None:
+        reporter.close()
     return 0
 
 

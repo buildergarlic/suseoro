@@ -1,6 +1,9 @@
 import hashlib
 from io import BytesIO
 import threading
+import socket
+import ssl
+from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -60,6 +63,111 @@ def test_network_failure_code_omits_url_and_response_body():
     error = HTTPError("https://api.github.com/private", 407, "secret", {}, None)
     assert updater().failure_code(error) == "HTTP 407"
     assert updater().failure_code(URLError(TimeoutError("private"))) == "TimeoutError"
+
+
+@pytest.mark.parametrize("error, category", [
+    (HTTPError("https://private", 407, "private", {}, None), "proxy"),
+    (HTTPError("https://private", 403, "private", {"X-RateLimit-Remaining": "0"}, None), "rate_limit"),
+    (HTTPError("https://private", 403, "private", {}, None), "blocked"),
+    (URLError(ssl.SSLCertVerificationError("private")), "certificate"),
+    (URLError(socket.gaierror(11001, "private")), "dns"),
+    (URLError(TimeoutError("private")), "timeout"),
+])
+def test_failed_checks_explain_the_cause_without_exposing_error_text(monkeypatch, error, category):
+    def fail(url):
+        raise error
+    monkeypatch.setattr(updater(), "_get_json", fail)
+    result = updater().check_update()
+    assert result["error_category"] == category
+    assert result["error_code"] == updater().failure_code(error)
+    assert "private" not in str(result)
+
+
+def test_api_rate_limit_falls_back_to_official_latest_manifest(monkeypatch):
+    calls = []
+    def get(url):
+        calls.append(url)
+        if url == updater().LATEST_API:
+            raise HTTPError(url, 403, "private", {"X-RateLimit-Remaining": "0"}, None)
+        return release("3.0.0")
+    monkeypatch.setattr(updater(), "_get_json", get)
+    result = updater().check_update()
+    assert calls == [updater().LATEST_API, updater().LATEST_MANIFEST]
+    assert result["available"] and result["metadata_source"] == "release_manifest"
+    assert updater()._trusted_url(updater().LATEST_MANIFEST)
+    assert not updater()._trusted_url(updater().LATEST_MANIFEST.replace("buildergarlic", "another"))
+
+
+def test_windows_retries_failed_urllib_with_system_network_settings(monkeypatch):
+    calls = []
+    def fail(*args, **kwargs):
+        raise URLError("private proxy address")
+    monkeypatch.setattr(updater(), "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(updater(), "build_opener", lambda *args: SimpleNamespace(open=fail))
+    monkeypatch.setattr(updater(), "_WindowsResponse", lambda url, timeout: calls.append((url, timeout)) or BytesIO(b"okay"))
+    with updater()._open_url(updater().LATEST_API, 5) as response:
+        assert response.read() == b"okay"
+    assert calls == [(updater().LATEST_API, 5)]
+    with pytest.raises(updater().UpdateError):
+        updater()._open_url("https://evil.example/file", 5)
+    assert len(calls) == 1
+
+
+def test_slow_trickling_metadata_does_not_extend_the_total_read_budget(monkeypatch):
+    timestamps = iter((0, 0, 3, 6))
+    monkeypatch.setattr(updater().time, "monotonic", lambda: next(timestamps))
+    class TricklingStream:
+        def read1(self, size):
+            return b" "
+        def read(self, size):
+            raise AssertionError("A single blocking read has no total-time budget")
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+    monkeypatch.setattr(updater(), "_open_url", lambda *args: TricklingStream())
+    with pytest.raises(TimeoutError):
+        updater()._get_json(updater().LATEST_API)
+
+
+def test_native_windows_transport_checks_redirects_and_closes_handles(monkeypatch):
+    import ctypes
+    opened, closed = [], []
+    content = BytesIO(b"official data")
+    redirects = [f"{updater().RELEASES_URL}/download/v3.0.0/update.json", "https://evil.example/file"]
+    status = [302, 200]
+    def open_url(session, url, headers, length, flags, context):
+        opened.append(url)
+        # Native TLS verification stays on; cookies and automatic redirects stay off.
+        assert flags & 0x00200000 and flags & 0x00080000
+        assert not flags & (0x00002000 | 0x00001000)
+        return len(opened) + 10
+    def query(handle, flag, buffer, length, index):
+        if flag == 19 | 0x20000000:
+            buffer._obj.value = status[len(opened) - 1]
+        elif flag == 33:
+            buffer.value = redirects[0]
+        return True
+    def read(handle, buffer, size, length):
+        data = content.read(min(size, 3))
+        ctypes.memmove(buffer, data, len(data))
+        length._obj.value = len(data)
+        return True
+    native = SimpleNamespace(InternetOpenW=lambda *args: 1, InternetOpenUrlW=open_url,
+                             InternetSetOptionW=lambda *args: True, HttpQueryInfoW=query,
+                             InternetReadFile=read, InternetCloseHandle=lambda handle: closed.append(handle))
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: native, raising=False)
+    with updater()._WindowsResponse(updater().LATEST_MANIFEST, 5) as response:
+        assert response.read(100) == b"official data"
+    assert opened == [updater().LATEST_MANIFEST, redirects[0]]
+    assert closed == [11, 12, 1]
+    opened.clear()
+    closed.clear()
+    redirects[0] = redirects[1]
+    with pytest.raises(updater().UpdateError, match="공식 배포 주소"):
+        updater()._WindowsResponse(updater().LATEST_MANIFEST, 5)
+    assert opened == [updater().LATEST_MANIFEST]
+    assert closed == [11, 1]
 
 
 def test_download_hash_verified_before_final_file(monkeypatch, tmp_path):

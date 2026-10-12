@@ -1,4 +1,4 @@
-import type { AcquisitionList, BatchImportResult, Book, BookFields, Bootstrap, BulkAction, BulkResult, HoldingsPage, ImportPreview, ListDetail, PreviewRow, Settings, Template, UpdateInfo } from "./types";
+import type { AcquisitionList, BatchImportResult, Book, BookFields, Bootstrap, BulkAction, BulkResult, HoldingsPage, HoldingsStatistics, HoldingsEnrichment, ErrorReportInfo, ImportPreview, ListDetail, PreviewRow, Settings, Template, UpdateInfo } from "./types";
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export function createLibraryApi(fetcher: Fetcher = (input, init) => fetch(input, init)) {
@@ -42,6 +42,15 @@ export function createLibraryApi(fetcher: Fetcher = (input, init) => fetch(input
     holdings: ({ query = "", page = 1, page_size = 50 }: { query?: string; page?: number; page_size?: number } = {}) => json<HoldingsPage>(`/holdings?${new URLSearchParams({ query, page: String(page), page_size: String(page_size) })}`),
     createList: (data: Pick<AcquisitionList, "name" | "year" | "budget" | "discount_percent">) => json<AcquisitionList>("/lists", send(data)),
     updateList: (id: string, data: Partial<AcquisitionList>) => json<AcquisitionList>(`/lists/${id}`, send(data, "PATCH")),
+    deleteList: (id: string) => json<AcquisitionList>(`/lists/${id}`, { method: "DELETE" }),
+    restoreList: (id: string) => json<AcquisitionList>(`/lists/${id}/restore`, { method: "POST" }),
+    holdingsStatistics: () => json<HoldingsStatistics>("/holdings/statistics"),
+    enrichHoldings: () => json<HoldingsEnrichment>("/holdings/enrichment", { method: "POST" }),
+    holdingsEnrichment: () => json<HoldingsEnrichment>("/holdings/enrichment"),
+    stopHoldingsEnrichment: () => json<HoldingsEnrichment>("/holdings/enrichment/stop", { method: "POST" }),
+    errorReports: () => json<ErrorReportInfo>("/error-reports"),
+    errorReportPreferences: (enabled: boolean) => json<ErrorReportInfo>("/error-reports", send({ enabled }, "PATCH")),
+    testErrorReport: () => json<ErrorReportInfo>("/error-reports/test", { method: "POST" }),
     addBook: (id: string, book: BookFields) => json<Book>(`/lists/${id}/books`, send(book)),
     updateBook: (id: string, bookId: string, book: Partial<BookFields>) => json<Book>(`/lists/${id}/books/${bookId}`, send(book, "PATCH")),
     deleteBook: (id: string, bookId: string) => json<{ ok: boolean }>(`/lists/${id}/books/${bookId}`, { method: "DELETE" }),

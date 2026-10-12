@@ -287,11 +287,23 @@ def test_transport_does_not_access_an_unapproved_host():
         module()._fetch_json("https://untrusted.example/book")
 
 
+def test_provider_redirect_keeps_https_and_provider_host():
+    from urllib.request import Request
+    request = Request('https://openlibrary.org/isbn/9780140328721.json')
+    handler = module()._ProviderRedirect()
+    for target in ('http://openlibrary.org/book', 'https://evil.example/book', 'https://user@openlibrary.org/book'):
+        with pytest.raises(ValueError):
+            handler.redirect_request(request, None, 302, '', {}, target)
+    target = 'https://openlibrary.org/books/OL7353617M.json'
+    assert handler.redirect_request(request, None, 302, '', {}, target).full_url == target
+
+
 def test_transport_rejects_oversized_response(monkeypatch):
     from io import BytesIO
 
     monkeypatch.setattr(module(), "MAX_RESPONSE_BYTES", 20)
-    monkeypatch.setattr(module(), "urlopen", lambda *args, **kwargs: BytesIO(b"x" * 30))
+    from types import SimpleNamespace
+    monkeypatch.setattr(module(), "build_opener", lambda *a: SimpleNamespace(open=lambda *a, **kw: BytesIO(b"x" * 30)))
     with pytest.raises(ValueError):
         module()._fetch_json("https://www.nl.go.kr/seoji/SearchApi.do")
 
@@ -299,7 +311,8 @@ def test_transport_rejects_oversized_response(monkeypatch):
 def test_transport_decodes_json_utf8_bom(monkeypatch):
     from io import BytesIO
 
-    monkeypatch.setattr(module(), "urlopen", lambda *args, **kwargs: BytesIO('\ufeff{"title":"한글"}'.encode("utf-8")))
+    from types import SimpleNamespace
+    monkeypatch.setattr(module(), "build_opener", lambda *a: SimpleNamespace(open=lambda *a, **kw: BytesIO('\ufeff{"title":"한글"}'.encode("utf-8"))))
     assert module()._fetch_json("https://www.nl.go.kr/seoji/SearchApi.do") == {"title": "한글"}
 
 

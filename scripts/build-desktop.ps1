@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$PythonPath = '',
-    [string]$Version = '2.2.6',
+    [string]$Version = '2.3.0',
     [string]$TesseractDir = '',
     [string]$IsccPath = '',
     [string]$MakensisPath = '',
@@ -202,6 +202,7 @@ if ($PortableZip) {
 }
 
 $checksumLines = @()
+$releaseAssets = @()
 foreach ($name in @("Suseoro-Setup-$Version.exe", "Suseoro-Portable-$Version.zip", "Suseoro-Guide-$Version.zip")) {
     $file = Join-Path $distRoot $name
     if (Test-Path -LiteralPath $file) {
@@ -209,7 +210,13 @@ foreach ($name in @("Suseoro-Setup-$Version.exe", "Suseoro-Portable-$Version.zip
         $line = "$hash  $name"
         Set-Content -LiteralPath ($file + '.sha256') -Value $line -Encoding ascii
         $checksumLines += $line
+        $releaseAssets += @{ name = $name; size = (Get-Item -LiteralPath $file).Length; digest = "sha256:$hash"; browser_download_url = "https://github.com/buildergarlic/suseoro/releases/download/v$Version/$name" }
         Write-Output $file
     }
 }
+$manifest = Join-Path $distRoot 'update.json'
+@{ tag_name = "v$Version"; draft = $false; prerelease = $false; assets = $releaseAssets } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifest -Encoding utf8
+$manifestLine = "$((Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.ToLowerInvariant())  update.json"
+Set-Content -LiteralPath ($manifest + '.sha256') -Value $manifestLine -Encoding ascii
+$checksumLines += $manifestLine
 Set-Content -LiteralPath (Join-Path $distRoot 'SHA256SUMS') -Value $checksumLines -Encoding ascii

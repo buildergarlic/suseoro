@@ -1,5 +1,5 @@
 export interface AcquisitionList {
-  id: string; name: string; year: number; budget: number; discount_percent: number; created_at: string;
+  id: string; name: string; year: number; budget: number; discount_percent: number; created_at: string; deleted_at?: string;
 }
 export interface BookFields {
   title: string; author: string; publisher: string; isbn: string; price: number | null;
@@ -27,13 +27,24 @@ export interface Summary {
 }
 export interface ListDetail { list: AcquisitionList; books: Book[]; summary: Summary; holdings_count?: number }
 export interface HoldingsPage { items: BookFields[]; total: number; page: number; page_size: number }
+export interface HoldingsStatistics {
+  total_records: number; total_copies: number; unique_isbns: number; valid_isbn_records: number;
+  classified_records: number; metadata_records: number;
+  category_counts: { key: string; label: string; count: number; color?: string }[];
+  topics: { label: string; count: number }[]; publication_years: { label: string; count: number }[];
+  top_publishers: { label: string; count: number }[];
+  coverage: { missing_isbn: number; missing_category: number; missing_year: number }; topic_method: string;
+}
+export interface HoldingsEnrichment { phase: "idle" | "running" | "completed" | "error"; total: number; processed: number; found: number; message: string }
+export interface ErrorReportInfo { enabled: boolean; configured: boolean; recipient: string; queued_count: number; last_sent_at?: string | null; message: string }
 export interface Settings { school_name: string; nl_api_key_configured: boolean; text_size?: number; row_density?: "comfortable" | "compact" }
 export interface UpdateInfo {
   current_version?: string; latest_version?: string; available: boolean; url?: string; message?: string;
   phase?: "idle" | "checking" | "downloading" | "ready" | "error" | "manual";
   auto_enabled?: boolean; auto_supported?: boolean;
+  error_category?: string; error_code?: string; metadata_source?: string;
 }
-export interface Bootstrap { version: string; csrf_token: string; settings: Settings; lists: AcquisitionList[]; update: UpdateInfo | null }
+export interface Bootstrap { version: string; csrf_token: string; settings: Settings; lists: AcquisitionList[]; deleted_lists?: AcquisitionList[]; update: UpdateInfo | null }
 export interface ImportDiagnostic { kind: string; sheet?: string; row?: number; page?: number | null; raw_text: string; message: string }
 export interface ImportPreview { import_id: string; filename: string; rows: PreviewRow[]; warnings: string[]; headers?: string[]; mapping?: Record<string, unknown>; diagnostics?: ImportDiagnostic[] }
 export interface BatchImportResult { added: number; merged: number; input_count: number; warnings: string[]; operation_id: string }

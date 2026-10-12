@@ -15,6 +15,8 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from suseoro.simple import VERSION
+from suseoro.simple.analytics import HoldingsAnalytics
+from suseoro.simple.reporting import ErrorReporter
 from suseoro.simple.bibliography import lookup_isbn
 from suseoro.simple.covers import CoverService
 from suseoro.simple.help_pages import default_help_dir, help_policy, manual_response
@@ -44,7 +46,9 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
     app = FastAPI(title='수서로 2.0', version=VERSION, docs_url=None, redoc_url=None)
     app.state.store = store
     app.state.csrf_token = secrets.token_urlsafe(32)
-    app.state.update_coordinator = UpdateCoordinator(store.data_dir)
+    app.state.error_reporter = ErrorReporter(store.data_dir)
+    app.state.update_coordinator = UpdateCoordinator(store.data_dir, report_error=app.state.error_reporter.record)
+    app.state.holdings_analytics = HoldingsAnalytics(store)
     app.state.shutdown_callback = None
     app.state.install_update_callback = None
     app.state.lookup_cache = {}
@@ -121,7 +125,7 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
     @app.get(PREFIX + '/bootstrap')
     def bootstrap():
         return {'version': VERSION, 'csrf_token': app.state.csrf_token, 'settings': store.settings(),
-                'lists': store.lists(), 'update': app.state.update_coordinator.status()}
+                'lists': store.lists(), 'deleted_lists': store.deleted_lists(), 'update': app.state.update_coordinator.status()}
 
     @app.patch(PREFIX + '/settings')
     def settings(values: dict):
@@ -146,6 +150,44 @@ def create_app(data_dir: Path | None = None, frontend_dir: Path | None = None,
     @app.patch(PREFIX + '/lists/{list_id}')
     def edit_list(list_id: str, values: dict):
         return store.update_list(list_id, values)
+
+    @app.delete(PREFIX + '/lists/{list_id}')
+    def remove_list(list_id: str):
+        return store.delete_list(list_id)
+
+    @app.post(PREFIX + '/lists/{list_id}/restore')
+    def restore_list(list_id: str):
+        return store.restore_list(list_id)
+
+    @app.get(PREFIX + '/holdings/statistics')
+    def holdings_statistics():
+        return app.state.holdings_analytics.statistics()
+
+    @app.get(PREFIX + '/holdings/enrichment')
+    def holdings_enrichment_status():
+        return app.state.holdings_analytics.status()
+
+    @app.post(PREFIX + '/holdings/enrichment')
+    def enrich_holdings():
+        return app.state.holdings_analytics.start()
+
+    @app.post(PREFIX + '/holdings/enrichment/stop')
+    def stop_enrichment():
+        return app.state.holdings_analytics.stop()
+
+    @app.get(PREFIX + '/error-reports')
+    def error_reports():
+        return app.state.error_reporter.status()
+
+    @app.patch(PREFIX + '/error-reports')
+    def error_report_preferences(values: dict):
+        if set(values) != {'enabled'} or type(values['enabled']) is not bool:
+            raise ValueError('오류 자동 보고 사용 여부를 확인해 주세요.')
+        return app.state.error_reporter.set_enabled(values['enabled'])
+
+    @app.post(PREFIX + '/error-reports/test')
+    def test_error_report():
+        return app.state.error_reporter.test_report()
 
     @app.post(PREFIX + '/lists/{list_id}/books')
     def add_book(list_id: str, values: dict):

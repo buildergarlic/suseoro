@@ -42,7 +42,7 @@ from html.parser import HTMLParser
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from suseoro.catalog.normalization import canonical_isbn13
 
@@ -53,6 +53,15 @@ _rate_lock = threading.Lock()
 _next_request: dict[str, float] = {}
 _PROVIDER_HOSTS = {"www.nl.go.kr", "www.googleapis.com", "openlibrary.org"}
 _lookup_slots = threading.BoundedSemaphore(4)
+
+
+class _ProviderRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = urlparse(newurl)
+        if (target.scheme != 'https' or target.hostname != urlparse(req.full_url).hostname
+                or target.username or target.password or target.port not in (None, 443)):
+            raise ValueError('Unsupported provider redirect')
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class _PlainText(HTMLParser):
@@ -116,7 +125,8 @@ def _fetch_json(url: str, *, headers: dict[str, str] | None = None,
                 timeout: float = REQUEST_TIMEOUT) -> Any:
     """Only fetch bounded JSON responses from our fixed provider hosts."""
     parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname not in _PROVIDER_HOSTS:
+    if (parsed.scheme != "https" or parsed.hostname not in _PROVIDER_HOSTS
+            or parsed.username or parsed.password or parsed.port not in (None, 443)):
         raise ValueError("Unsupported provider")
     deadline = time.monotonic() + timeout
     _reserve_request(parsed.hostname, deadline)
@@ -126,7 +136,7 @@ def _fetch_json(url: str, *, headers: dict[str, str] | None = None,
     request = Request(url, headers={"Accept": "application/json",
                                    "User-Agent": "SuSeoRo/2.0 (school library ISBN lookup)",
                                    **(headers or {})})
-    with urlopen(request, timeout=remaining) as response:
+    with build_opener(_ProviderRedirect()).open(request, timeout=remaining) as response:
         chunks: list[bytes] = []
         size = 0
         while True:
@@ -200,6 +210,8 @@ def _nl(isbn: str, key: str, deadline: float, warnings: list[str]) -> dict[str, 
                     category=_text(item.get("KDC")) or _text(item.get("SUBJECT")),
                     link="https://www.nl.go.kr/NL/contents/search.do?" + urlencode({"kwd": isbn}),
                     source="국립중앙도서관")
+        if subject := _text(item.get('SUBJECT')):
+            book['subjects'] = [subject]
         if book["price"] is not None:
             warnings.append("국립중앙도서관의 가격은 예정가격입니다. 현재 정가와 발행일을 확인해 주세요.")
         return book
@@ -232,6 +244,7 @@ def _google(isbn: str, key: str, deadline: float, warnings: list[str]) -> dict[s
         book.update(title=_text(info.get("title")), author=", ".join(_strings(info.get("authors"))),
                     publisher=_text(info.get("publisher")), published_date=_text(info.get("publishedDate")),
                     category=", ".join(_strings(info.get("categories"))), link=link, source="Google Books")
+        book['subjects'] = _strings(info.get('categories'))[:20]
         return book
     return None
 
@@ -272,6 +285,19 @@ def _open_library(isbn: str, deadline: float, warnings: list[str]) -> dict[str, 
     book.update(title=_text(payload.get("title")), author=author,
                 publisher=", ".join(_strings(payload.get("publishers"))),
                 published_date=_text(payload.get("publish_date")), link=link, source="Open Library")
+    subjects = _strings(payload.get('subjects'))[:20]
+    works = payload.get('works', [])
+    if not subjects and isinstance(works, list) and works and time.monotonic() + 1.1 < deadline:
+        work_key = works[0].get('key', '') if isinstance(works[0], dict) else ''
+        if isinstance(work_key, str) and re.fullmatch(r'/works/OL\d+W', work_key):
+            try:
+                work = _request(f'https://openlibrary.org{work_key}.json', deadline)
+                subjects = _strings(work.get('subjects'))[:20] if isinstance(work, dict) else []
+            except (HTTPError, URLError, OSError, ValueError):
+                pass  # Edition metadata remains useful when optional subjects are unavailable.
+    if subjects:
+        book['subjects'] = subjects
+    book['category'] = ', '.join(subjects)[:2000]
     return book
 
 
@@ -325,7 +351,8 @@ def _lookup_isbn(isbn: str, *, nl_api_key: str = "", google_api_key: str = "") -
                 warnings.append("확인된 종이책 가격이 없습니다. 정가를 직접 입력해 주세요.")
             return {"found": True, "book": book, "warnings": list(dict.fromkeys(warnings))}
     warnings.append("일치하는 ISBN의 도서 정보를 확인하지 못했습니다. 직접 입력해 주세요.")
-    return {"found": False, "book": _blank(canonical), "warnings": list(dict.fromkeys(warnings))}
+    return {"found": False, "book": _blank(canonical), "warnings": list(dict.fromkeys(warnings)),
+            **({'retryable': True} if len(warnings) > 1 else {})}
 
 
 def lookup_isbn(isbn: str, *, nl_api_key: str = "", google_api_key: str = "") -> dict[str, Any]:
@@ -335,7 +362,7 @@ def lookup_isbn(isbn: str, *, nl_api_key: str = "", google_api_key: str = "") ->
         return {"found": False, "book": _blank(), "warnings": ["유효한 ISBN-10 또는 ISBN-13을 입력해 주세요."]}
     if not _lookup_slots.acquire(blocking=False):
         return {"found": False, "book": _blank(canonical),
-                "warnings": ["도서 조회가 진행 중입니다. 잠시 후 다시 조회하거나 직접 입력해 주세요."]}
+                "warnings": ["도서 조회가 진행 중입니다. 잠시 후 다시 조회하거나 직접 입력해 주세요."], 'retryable': True}
     results: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
 
     def work() -> None:
@@ -344,7 +371,7 @@ def lookup_isbn(isbn: str, *, nl_api_key: str = "", google_api_key: str = "") ->
         except Exception:
             # A result must never expose a key through an unexpected exception.
             results.put({"found": False, "book": _blank(canonical),
-                         "warnings": ["도서 조회를 완료하지 못했습니다. 잠시 후 다시 조회하거나 직접 입력해 주세요."]})
+                         "warnings": ["도서 조회를 완료하지 못했습니다. 잠시 후 다시 조회하거나 직접 입력해 주세요."], 'retryable': True})
         finally:
             _lookup_slots.release()
 
@@ -353,4 +380,4 @@ def lookup_isbn(isbn: str, *, nl_api_key: str = "", google_api_key: str = "") ->
         return results.get(timeout=LOOKUP_BUDGET)
     except queue.Empty:
         return {"found": False, "book": _blank(canonical),
-                "warnings": ["조회 대기 시간이 초과되었습니다. 잠시 후 다시 조회하거나 직접 입력해 주세요."]}
+                "warnings": ["조회 대기 시간이 초과되었습니다. 잠시 후 다시 조회하거나 직접 입력해 주세요."], 'retryable': True}

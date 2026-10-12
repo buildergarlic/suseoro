@@ -14,7 +14,7 @@ import re
 import unicodedata
 
 from suseoro.catalog.normalization import canonical_isbn13, normalize_author, normalize_key
-from suseoro.simple.store import TEXT_FIELDS, identifier, now, validate_book
+from suseoro.simple.store import LibraryStore, TEXT_FIELDS, identifier, now, validate_book
 
 
 MAX_ROWS = 20000
@@ -156,8 +156,9 @@ def _conflicts(left, right):
 
 
 def _require_list(db, list_id):
-    if not isinstance(list_id, str) or not db.execute('SELECT 1 FROM lists WHERE id=?', (list_id,)).fetchone():
+    if not isinstance(list_id, str):
         raise KeyError('목록을 찾을 수 없습니다.')
+    LibraryStore._list(db, list_id)
 
 
 def _contribution(values, *, import_id=None, filename=None, row_number=None, file_sha256=None):

@@ -198,7 +198,7 @@ def test_automatic_update_handoff_happens_after_normal_window_and_server_close_o
     monkeypatch.setattr(desktop(), '_message', lambda *args: None)
     path = tmp_path / 'prepared.exe'
     class Coordinator:
-        def __init__(self, *args, auto_supported=False):
+        def __init__(self, *args, auto_supported=False, report_error=None):
             self.auto_supported = auto_supported
         def start(self):
             calls.append('prepare')
